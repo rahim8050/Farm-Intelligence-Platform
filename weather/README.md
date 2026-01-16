@@ -204,6 +204,7 @@ Weather-related settings are read in `config/settings.py`:
 - `WEATHER_DEFAULT_TZ`
 - `OPEN_METEO_BASE_URL`
 - `NASA_POWER_BASE_URL`
+- `NASA_POWER_DAILY_LAG_DAYS` (default 2; marks recent NASA POWER days as partial when nulls appear)
 - `WEATHER_CACHE_TTL_CURRENT_S`, `WEATHER_CACHE_TTL_DAILY_S`, `WEATHER_CACHE_TTL_WEEKLY_S`
 - `WEATHER_MAX_RANGE_DAYS`
 

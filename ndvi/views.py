@@ -10,6 +10,7 @@ with the standard envelope:
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import Any, cast
 
 from django.conf import settings
@@ -25,7 +26,9 @@ from drf_spectacular.utils import (
 )
 from rest_framework import serializers, status
 from rest_framework.exceptions import Throttled
+from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -186,6 +189,23 @@ raster_query_params = [
         required=False,
     ),
 ]
+
+
+class IgnoreAcceptHeaderNegotiation(BaseContentNegotiation):
+    """Force JSON negotiation so Accept headers never block PNG responses."""
+
+    def select_renderer(
+        self,
+        request: Request,
+        renderers: Iterable[BaseRenderer],
+        format_suffix: str | None = None,
+    ) -> tuple[BaseRenderer, str]:
+        renderer_list = list(renderers)
+        renderer = next(
+            (item for item in renderer_list if isinstance(item, JSONRenderer)),
+            renderer_list[0],
+        )
+        return renderer, renderer.media_type
 
 
 class BaseFarmView(APIView):
@@ -381,11 +401,17 @@ class NdviLatestView(BaseFarmView):
 class NdviRasterPngView(BaseFarmView):
     """Serve NDVI raster PNG for a farm (owner-only)."""
 
+    renderer_classes = [JSONRenderer]
+    content_negotiation_class = IgnoreAcceptHeaderNegotiation
+
     @extend_schema(
         parameters=raster_query_params,
         responses={
-            200: OpenApiTypes.BINARY,
+            (200, "image/png"): OpenApiTypes.BINARY,
             304: OpenApiResponse(response=None, description="Not Modified"),
+            400: ndvi_error_response,
+            401: ndvi_error_response,
+            403: ndvi_error_response,
             404: ndvi_error_response,
         },
     )

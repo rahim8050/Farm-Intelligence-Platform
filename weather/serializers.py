@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import ClassVar
 
 from django.conf import settings
+from django.utils import timezone as dj_timezone
 from rest_framework import serializers
 
 from config.api.responses import JSONValue
@@ -13,6 +14,51 @@ from .timeutils import get_zone, isoformat_with_tz
 
 DEFAULT_TZ = getattr(settings, "WEATHER_DEFAULT_TZ", "Africa/Nairobi")
 MAX_RANGE_DAYS = int(getattr(settings, "WEATHER_MAX_RANGE_DAYS", 366))
+_DAILY_REQUIRED_FIELDS = ("t_min_c", "t_max_c", "precipitation_mm")
+
+
+def _nasa_power_daily_lag_days() -> int:
+    try:
+        lag_days = int(getattr(settings, "NASA_POWER_DAILY_LAG_DAYS", 2))
+    except (TypeError, ValueError):
+        lag_days = 2
+    return max(lag_days, 0)
+
+
+def _nasa_power_cutoff_date() -> date:
+    return dj_timezone.localdate() - timedelta(
+        days=_nasa_power_daily_lag_days()
+    )
+
+
+def _missing_fields(obj: object) -> list[str]:
+    missing: list[str] = []
+    for field in _DAILY_REQUIRED_FIELDS:
+        if getattr(obj, field, None) is None:
+            missing.append(field)
+    return missing
+
+
+def _is_missing_day(obj: object) -> bool:
+    return all(
+        getattr(obj, field, None) is None for field in _DAILY_REQUIRED_FIELDS
+    )
+
+
+def _is_recent_nasa_gap(obj: object, missing: list[str]) -> bool:
+    if not missing:
+        return False
+    if getattr(obj, "source", None) != "nasa_power":
+        return False
+    day = getattr(obj, "day", None)
+    if not isinstance(day, date):
+        return False
+    return day > _nasa_power_cutoff_date()
+
+
+def _is_partial_day(obj: object) -> bool:
+    missing = _missing_fields(obj)
+    return bool(missing) or _is_recent_nasa_gap(obj, missing)
 
 
 class BaseWeatherParamsSerializer(serializers.Serializer):
@@ -95,7 +141,19 @@ class DailyForecastSerializer(serializers.Serializer):
     precipitation_mm: ClassVar[serializers.FloatField] = (
         serializers.FloatField(allow_null=True)
     )
+    is_partial: ClassVar[serializers.SerializerMethodField] = (
+        serializers.SerializerMethodField()
+    )
+    missing_fields: ClassVar[serializers.SerializerMethodField] = (
+        serializers.SerializerMethodField()
+    )
     source: ClassVar[serializers.CharField] = serializers.CharField()  # type: ignore[misc,assignment]
+
+    def get_is_partial(self, obj: object) -> bool:
+        return _is_partial_day(obj)
+
+    def get_missing_fields(self, obj: object) -> list[str]:
+        return _missing_fields(obj)
 
 
 class WeeklyReportSerializer(serializers.Serializer):
@@ -113,7 +171,21 @@ class WeeklyReportSerializer(serializers.Serializer):
     days: ClassVar[DailyForecastSerializer] = DailyForecastSerializer(
         many=True
     )
+    is_partial: ClassVar[serializers.SerializerMethodField] = (
+        serializers.SerializerMethodField()
+    )
+    missing_days_count: ClassVar[serializers.SerializerMethodField] = (
+        serializers.SerializerMethodField()
+    )
     source: ClassVar[serializers.CharField] = serializers.CharField()  # type: ignore[misc,assignment]
+
+    def get_is_partial(self, obj: object) -> bool:
+        days = getattr(obj, "days", None) or []
+        return any(_is_partial_day(day) for day in days)
+
+    def get_missing_days_count(self, obj: object) -> int:
+        days = getattr(obj, "days", None) or []
+        return sum(1 for day in days if _is_missing_day(day))
 
 
 def serialize_current(payload: object) -> dict[str, JSONValue]:

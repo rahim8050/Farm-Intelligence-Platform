@@ -29,3 +29,4 @@ logs/
 # Local/generated artifacts
 cloc_no_migrations.txt
 ndvi/rasters/**
+celerybeat-schedule

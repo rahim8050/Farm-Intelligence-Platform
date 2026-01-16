@@ -86,9 +86,54 @@ def test_sentinelhub_raster_build_payload() -> None:
         engine="sentinelhub",
     )
     payload = engine._build_payload(request)
+    data_filter = payload["input"]["data"][0]["dataFilter"]
     assert payload["input"]["bounds"]["bbox"] == [2.0, 1.0, 4.0, 3.0]
     assert payload["output"]["width"] == 256
     assert payload["output"]["height"] == 256
+    assert "aggregation" not in payload
+    assert payload["evalscript"]
+    assert data_filter["maxCloudCoverage"] == 10
+    assert "timeRange" in data_filter
+    assert data_filter["timeRange"]["from"].endswith("Z")
+    assert data_filter["timeRange"]["to"].endswith("Z")
+
+
+def test_sentinelhub_raster_render_png_sends_process_payload() -> None:
+    engine = SentinelHubRasterEngine(
+        client_id="cid",
+        client_secret=CLIENT_SECRET,
+        base_url="https://example.com",
+    )
+    engine._stats._get_access_token = MagicMock(return_value="token")  # type: ignore[assignment]
+
+    class FakeResponse:
+        content = b"png-bytes"
+
+    engine._request_with_retry = MagicMock(return_value=FakeResponse())  # type: ignore[assignment]
+    request = RasterRequest(
+        bbox=BBox(
+            south=Decimal("0.0"),
+            west=Decimal("0.0"),
+            north=Decimal("0.1"),
+            east=Decimal("0.1"),
+        ),
+        date=date(2025, 1, 1),
+        size=128,
+        max_cloud=20,
+        engine="sentinelhub",
+    )
+    result = engine.render_png(request)
+    assert result == b"png-bytes"
+
+    engine._request_with_retry.assert_called_once()
+    method, url = engine._request_with_retry.call_args.args[:2]
+    payload = engine._request_with_retry.call_args.kwargs["json"]
+    assert method == "POST"
+    assert url == engine.process_url
+    assert "aggregation" not in payload
+    assert payload["evalscript"]
+    data_filter = payload["input"]["data"][0]["dataFilter"]
+    assert "timeRange" in data_filter
 
 
 def test_sentinelhub_raster_request_retries_on_http_error(

@@ -10,9 +10,6 @@ import httpx
 from django.core.cache import caches
 
 from ndvi.engines.sentinelhub import (
-    DEFAULT_LOOKBACK_DAYS as SH_LOOKBACK,
-)
-from ndvi.engines.sentinelhub import (
     DEFAULT_MAX_CLOUD as SH_MAX_CLOUD,
 )
 from ndvi.engines.sentinelhub import (
@@ -97,6 +94,11 @@ class SentinelHubRasterEngine(NdviRasterEngine):
 
     def render_png(self, request: RasterRequest) -> bytes:
         payload = self._build_payload(request)
+        logger.debug(
+            "ndvi.raster.payload keys=%s evalscript_len=%s",
+            sorted(payload.keys()),
+            len(RASTER_EVALSCRIPT),
+        )
         token = self._stats._get_access_token()  # pylint: disable=protected-access
         headers = {
             "Authorization": f"Bearer {token}",
@@ -120,6 +122,7 @@ class SentinelHubRasterEngine(NdviRasterEngine):
         day_start = datetime.combine(request.date, datetime.min.time())
         day_end = datetime.combine(request.date, datetime.max.time())
         return {
+            "evalscript": RASTER_EVALSCRIPT,
             "input": {
                 "bounds": {
                     "bbox": bounds,
@@ -133,6 +136,10 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                         "dataFilter": {
                             "maxCloudCoverage": request.max_cloud
                             or SH_MAX_CLOUD,
+                            "timeRange": {
+                                "from": day_start.isoformat() + "Z",
+                                "to": day_end.isoformat() + "Z",
+                            },
                         },
                     }
                 ],
@@ -143,14 +150,6 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                 "responses": [
                     {"identifier": "default", "format": {"type": "image/png"}}
                 ],
-            },
-            "aggregation": {
-                "timeRange": {
-                    "from": day_start.isoformat() + "Z",
-                    "to": day_end.isoformat() + "Z",
-                },
-                "aggregationInterval": {"of": f"P{int(SH_LOOKBACK)}D"},
-                "evalscript": RASTER_EVALSCRIPT,
             },
         }
 

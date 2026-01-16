@@ -474,6 +474,10 @@ NASA_POWER_BASE_URL = env(
     "NASA_POWER_BASE_URL",
     default="https://power.larc.nasa.gov/api/temporal/daily/point",
 )
+NASA_POWER_DAILY_LAG_DAYS = env.int(
+    "NASA_POWER_DAILY_LAG_DAYS",
+    default=2,
+)
 WEATHER_CACHE_TTL_CURRENT_S = env.int(
     "WEATHER_CACHE_TTL_CURRENT_S",
     default=120,

@@ -523,6 +523,91 @@ def test_serialization_helpers() -> None:
     assert weekly_data[0]["week_start"] == date(2025, 1, 1).isoformat()
 
 
+def test_partial_flags_for_complete_days(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: LazySettings,
+) -> None:
+    settings.NASA_POWER_DAILY_LAG_DAYS = 2
+    monkeypatch.setattr(dj_timezone, "localdate", lambda: date(2025, 1, 10))
+    forecasts = [
+        DailyForecast(
+            day=date(2025, 1, 6),
+            t_min_c=10.0,
+            t_max_c=20.0,
+            precipitation_mm=1.0,
+            source="nasa_power",
+        ),
+        DailyForecast(
+            day=date(2025, 1, 7),
+            t_min_c=12.0,
+            t_max_c=22.0,
+            precipitation_mm=0.5,
+            source="nasa_power",
+        ),
+    ]
+
+    daily_data = serialize_daily(forecasts)
+    assert daily_data[0]["is_partial"] is False
+    assert daily_data[0]["missing_fields"] == []
+    assert daily_data[1]["is_partial"] is False
+    assert daily_data[1]["missing_fields"] == []
+
+    weekly_reports = _aggregate_weekly(forecasts, "nasa_power")
+    weekly_data = serialize_weekly(weekly_reports)
+    report = weekly_data[0]
+    assert report["is_partial"] is False
+    assert report["missing_days_count"] == 0
+    assert report["t_min_avg_c"] == pytest.approx((10.0 + 12.0) / 2)
+    assert report["t_max_avg_c"] == pytest.approx((20.0 + 22.0) / 2)
+    assert report["precipitation_sum_mm"] == pytest.approx(1.5)
+
+
+def test_partial_flags_for_recent_nasa_nulls(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: LazySettings,
+) -> None:
+    settings.NASA_POWER_DAILY_LAG_DAYS = 2
+    today = date(2025, 1, 10)
+    monkeypatch.setattr(dj_timezone, "localdate", lambda: today)
+    forecasts = [
+        DailyForecast(
+            day=today - timedelta(days=1),
+            t_min_c=11.0,
+            t_max_c=21.0,
+            precipitation_mm=0.8,
+            source="nasa_power",
+        ),
+        DailyForecast(
+            day=today,
+            t_min_c=None,
+            t_max_c=None,
+            precipitation_mm=None,
+            source="nasa_power",
+        ),
+    ]
+
+    daily_data = serialize_daily(forecasts)
+    today_payload = next(
+        entry for entry in daily_data if entry["day"] == today.isoformat()
+    )
+    assert today_payload["is_partial"] is True
+    missing_fields = cast(list[str], today_payload["missing_fields"])
+    assert set(missing_fields) == {
+        "t_min_c",
+        "t_max_c",
+        "precipitation_mm",
+    }
+
+    weekly_reports = _aggregate_weekly(forecasts, "nasa_power")
+    weekly_data = serialize_weekly(weekly_reports)
+    report = weekly_data[0]
+    assert report["is_partial"] is True
+    assert report["missing_days_count"] == 1
+    assert report["t_min_avg_c"] == pytest.approx(11.0)
+    assert report["t_max_avg_c"] == pytest.approx(21.0)
+    assert report["precipitation_sum_mm"] == pytest.approx(0.8)
+
+
 def test_open_meteo_current_fallbacks_to_now(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

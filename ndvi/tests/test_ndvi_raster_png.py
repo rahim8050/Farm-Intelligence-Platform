@@ -56,6 +56,25 @@ class NdviRasterApiTests(APITestCase):
         self.queue_url = f"/api/v1/farms/{self.farm.id}/ndvi/raster/queue"
         self.raster_url = f"/api/v1/farms/{self.farm.id}/ndvi/raster.png"
 
+    def _create_artifact(
+        self,
+        *,
+        day: date,
+        content: bytes = PNG_BYTES,
+        content_hash: str = "hash",
+    ) -> NdviRasterArtifact:
+        artifact = NdviRasterArtifact.objects.create(
+            farm=self.farm,
+            owner_id=self.user.id,
+            engine=getattr(settings, "NDVI_RASTER_ENGINE_NAME", "sentinelhub"),
+            date=day,
+            size=512,
+            max_cloud=30,
+            content_hash=content_hash,
+        )
+        artifact.image.save("raster.png", ContentFile(content), save=True)
+        return artifact
+
     def test_queue_success_and_cooldown(self) -> None:
         self.client.force_authenticate(user=self.user)
         payload = {"date": "2024-02-01", "size": 256, "max_cloud": 20}
@@ -75,16 +94,10 @@ class NdviRasterApiTests(APITestCase):
         self.assertEqual(second.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
 
     def test_raster_get_with_etag_and_owner_isolation(self) -> None:
-        artifact = NdviRasterArtifact.objects.create(
-            farm=self.farm,
-            owner_id=self.user.id,
-            engine=getattr(settings, "NDVI_RASTER_ENGINE_NAME", "sentinelhub"),
-            date=date(2024, 2, 2),
-            size=512,
-            max_cloud=30,
+        self._create_artifact(
+            day=date(2024, 2, 2),
             content_hash="hash123",
         )
-        artifact.image.save("raster.png", ContentFile(PNG_BYTES), save=True)
 
         self.client.force_authenticate(user=self.user)
         resp = self.client.get(
@@ -122,16 +135,11 @@ class NdviRasterApiTests(APITestCase):
         self.assertEqual(resp.json()["status"], 1)
 
     def test_raster_get_empty_content_returns_404(self) -> None:
-        artifact = NdviRasterArtifact.objects.create(
-            farm=self.farm,
-            owner_id=self.user.id,
-            engine=getattr(settings, "NDVI_RASTER_ENGINE_NAME", "sentinelhub"),
-            date=date(2024, 2, 3),
-            size=512,
-            max_cloud=30,
+        self._create_artifact(
+            day=date(2024, 2, 3),
+            content=b"",
             content_hash="hash-empty",
         )
-        artifact.image.save("empty.png", ContentFile(b""), save=True)
         self.client.force_authenticate(user=self.user)
         resp = self.client.get(
             self.raster_url,
@@ -139,18 +147,47 @@ class NdviRasterApiTests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_raster_accept_header_png_returns_png(self) -> None:
+        self._create_artifact(day=date(2024, 2, 5), content_hash="hash-png")
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            self.raster_url,
+            {"date": "2024-02-05", "size": "512", "max_cloud": "30"},
+            HTTP_ACCEPT="image/png",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp["Content-Type"], "image/png")
+        self.assertTrue(resp.content.startswith(b"\x89PNG"))
+
+    def test_raster_accept_header_json_returns_png(self) -> None:
+        self._create_artifact(day=date(2024, 2, 6), content_hash="hash-json")
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            self.raster_url,
+            {"date": "2024-02-06", "size": "512", "max_cloud": "30"},
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp["Content-Type"], "image/png")
+        self.assertTrue(resp.content.startswith(b"\x89PNG"))
+
+    def test_raster_error_returns_json_even_with_png_accept(self) -> None:
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            self.raster_url,
+            {"date": "2024-02-11", "size": "512", "max_cloud": "30"},
+            HTTP_ACCEPT="image/png",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(resp["Content-Type"], "application/json")
+        self.assertEqual(resp.json()["status"], 1)
+
     def test_raster_lookup_caches_artifact_id(self) -> None:
         caches["default"].clear()
-        artifact = NdviRasterArtifact.objects.create(
-            farm=self.farm,
-            owner_id=self.user.id,
-            engine=getattr(settings, "NDVI_RASTER_ENGINE_NAME", "sentinelhub"),
-            date=date(2024, 2, 4),
-            size=512,
-            max_cloud=30,
+        artifact = self._create_artifact(
+            day=date(2024, 2, 4),
             content_hash="hash-cache",
         )
-        artifact.image.save("raster.png", ContentFile(PNG_BYTES), save=True)
         self.client.force_authenticate(user=self.user)
         resp = self.client.get(
             self.raster_url,
