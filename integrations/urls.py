@@ -12,6 +12,8 @@ from .views import (
     IntegrationTokenView,
     IntegrationWhoAmIView,
     NextcloudPingView,
+    NextcloudPreviewView,
+    NextcloudStatusView,
 )
 
 router = DefaultRouter()
@@ -31,6 +33,16 @@ urlpatterns = [
         "integrations/nextcloud/ping/",
         NextcloudPingView.as_view(),
         name="nextcloud-ping",
+    ),
+    path(
+        "integrations/nextcloud/status/",
+        NextcloudStatusView.as_view(),
+        name="nextcloud-status",
+    ),
+    path(
+        "integrations/nextcloud/preview.png",
+        NextcloudPreviewView.as_view(),
+        name="nextcloud-preview",
     ),
     path("ping/", IntegrationPingView.as_view(), name="integration-ping"),
     path("token/", IntegrationTokenView.as_view(), name="integration-token"),

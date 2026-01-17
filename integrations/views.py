@@ -16,12 +16,15 @@ by `config.api.responses.success_response`:
 
 from __future__ import annotations
 
+import base64
 import logging
+from collections.abc import Iterable
 from datetime import timedelta
 from typing import Any, cast
 
 from django.conf import settings
 from django.db import transaction
+from django.http import HttpResponse
 from django.utils import timezone
 from drf_spectacular.utils import (
     OpenApiParameter,
@@ -31,7 +34,9 @@ from drf_spectacular.utils import (
 )
 from rest_framework import serializers, status
 from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
+from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.settings import api_settings
@@ -77,6 +82,29 @@ DEFAULT_THROTTLE_CLASSES: tuple[type[BaseThrottle], ...] = cast(
     tuple(api_settings.DEFAULT_THROTTLE_CLASSES),
 )
 
+PREVIEW_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+    "AAAADUlEQVR4nGNgYGBgAAAABQABJzQnCgAAAABJRU5ErkJggg=="
+)
+
+
+class IgnoreAcceptHeaderNegotiation(BaseContentNegotiation):
+    """Force JSON negotiation so Accept headers never block PNG errors."""
+
+    def select_renderer(
+        self,
+        request: Request,
+        renderers: Iterable[BaseRenderer],
+        format_suffix: str | None = None,
+    ) -> tuple[BaseRenderer, str]:
+        renderer_list = list(renderers)
+        renderer = next(
+            (item for item in renderer_list if isinstance(item, JSONRenderer)),
+            renderer_list[0],
+        )
+        return renderer, renderer.media_type
+
+
 nextcloud_ping_data_schema = inline_serializer(
     name="NextcloudPingData",
     fields={
@@ -90,6 +118,26 @@ nextcloud_ping_success_schema = success_envelope_serializer(
 )
 nextcloud_ping_error_schema = error_envelope_serializer(
     "NextcloudPingErrorResponse"
+)
+
+nextcloud_status_capabilities_schema = inline_serializer(
+    name="NextcloudStatusCapabilities",
+    fields={
+        "png_preview": serializers.BooleanField(),
+    },
+)
+nextcloud_status_data_schema = inline_serializer(
+    name="NextcloudStatusData",
+    fields={
+        "ok": serializers.BooleanField(),
+        "server_time": serializers.DateTimeField(),
+        "version": serializers.CharField(),
+        "capabilities": nextcloud_status_capabilities_schema,
+    },
+)
+nextcloud_status_success_schema = success_envelope_serializer(
+    "NextcloudStatusSuccessResponse",
+    data=nextcloud_status_data_schema,
 )
 
 integration_ping_data_schema = inline_serializer(
@@ -259,6 +307,79 @@ class NextcloudPingView(APIView):
 
         client_id = getattr(request, "nc_hmac_client_id", "")
         return success_response({"ok": True, "client_id": client_id})
+
+
+@extend_schema(auth=cast(list[str], [{"BearerAuth": []}]))
+class NextcloudStatusView(APIView):
+    """Return a signed-in integration status payload for diagnostics.
+
+    Authentication: BearerAuth (integration JWT).
+    Permissions: IsAuthenticated.
+    Request body: none.
+    Response data: ok, server_time, version, capabilities.
+    """
+
+    authentication_classes = (IntegrationJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
+    renderer_classes = [JSONRenderer]
+    content_negotiation_class = IgnoreAcceptHeaderNegotiation
+
+    @extend_schema(
+        responses={
+            200: nextcloud_status_success_schema,
+            401: integration_auth_error_schema,
+            403: integration_auth_error_schema,
+        }
+    )
+    def get(self, request: Request) -> Response:
+        """Inputs: Authorization header (Bearer token).
+
+        Output: success envelope with status metadata for diagnostics.
+        Side effects: none.
+        """
+
+        version = str(settings.SPECTACULAR_SETTINGS.get("VERSION", ""))
+        data: dict[str, JSONValue] = {
+            "ok": True,
+            "server_time": timezone.now().isoformat(),
+            "version": version,
+            "capabilities": {"png_preview": True},
+        }
+        return success_response(data, message="Integration status")
+
+
+@extend_schema(auth=cast(list[str], [{"BearerAuth": []}]))
+class NextcloudPreviewView(APIView):
+    """Serve a tiny PNG preview for diagnostics.
+
+    Authentication: BearerAuth (integration JWT).
+    Permissions: IsAuthenticated.
+    Request body: none.
+    Response: image/png with Cache-Control: no-store.
+    """
+
+    authentication_classes = (IntegrationJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
+    renderer_classes = [JSONRenderer]
+    content_negotiation_class = IgnoreAcceptHeaderNegotiation
+
+    @extend_schema(
+        responses={
+            (200, "image/png"): OpenApiTypes.BINARY,
+            401: integration_auth_error_schema,
+            403: integration_auth_error_schema,
+        }
+    )
+    def get(self, request: Request) -> HttpResponse:
+        """Inputs: Authorization header (Bearer token).
+
+        Output: image/png response with Cache-Control: no-store.
+        Side effects: none.
+        """
+
+        response = HttpResponse(PREVIEW_PNG_BYTES, content_type="image/png")
+        response["Cache-Control"] = "no-store"
+        return response
 
 
 class IntegrationPingView(APIView):

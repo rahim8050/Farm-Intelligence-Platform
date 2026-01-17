@@ -366,13 +366,31 @@ paths:
       responses:
         '200':
           content:
-            application/json:
+            image/png:
               schema:
                 type: string
                 format: binary
           description: ''
         '304':
           description: Not Modified
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
         '404':
           content:
             application/json:
@@ -1715,10 +1733,20 @@ components:
           type: number
           format: double
           nullable: true
+        is_partial:
+          type: boolean
+          readOnly: true
+        missing_fields:
+          type: array
+          items:
+            type: string
+          readOnly: true
         source:
           type: string
       required:
       - day
+      - is_partial
+      - missing_fields
       - precipitation_mm
       - source
       - t_max_c
@@ -2464,6 +2492,46 @@ components:
       - errors
       - message
       - status
+    NextcloudStatusCapabilities:
+      type: object
+      properties:
+        png_preview:
+          type: boolean
+      required:
+      - png_preview
+    NextcloudStatusData:
+      type: object
+      properties:
+        capabilities:
+          $ref: '#/components/schemas/NextcloudStatusCapabilities'
+        ok:
+          type: boolean
+        server_time:
+          type: string
+          format: date-time
+        version:
+          type: string
+      required:
+      - capabilities
+      - ok
+      - server_time
+      - version
+    NextcloudStatusSuccessResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/NextcloudStatusData'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
     PasswordChange:
       type: object
       properties:
@@ -2841,10 +2909,18 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DailyForecast'
+        is_partial:
+          type: boolean
+          readOnly: true
+        missing_days_count:
+          type: integer
+          readOnly: true
         source:
           type: string
       required:
       - days
+      - is_partial
+      - missing_days_count
       - precipitation_sum_mm
       - source
       - t_max_avg_c
