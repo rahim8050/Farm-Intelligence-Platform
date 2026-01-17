@@ -930,6 +930,69 @@ paths:
               schema:
                 $ref: '#/components/schemas/NextcloudPingErrorResponse'
           description: ''
+  /api/v1/integrations/nextcloud/preview.png:
+    get:
+      operationId: v1_integrations_nextcloud_preview.png_retrieve
+      description: |-
+        Inputs: Authorization header (Bearer token).
+
+        Output: image/png response with Cache-Control: no-store.
+        Side effects: none.
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationAuthErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationAuthErrorResponse'
+          description: ''
+  /api/v1/integrations/nextcloud/status/:
+    get:
+      operationId: v1_integrations_nextcloud_status_retrieve
+      description: |-
+        Inputs: Authorization header (Bearer token).
+
+        Output: success envelope with status metadata for diagnostics.
+        Side effects: none.
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NextcloudStatusSuccessResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationAuthErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationAuthErrorResponse'
+          description: ''
   /api/v1/integrations/ping/:
     get:
       operationId: v1_integrations_ping_retrieve

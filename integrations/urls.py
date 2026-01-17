@@ -1,5 +1,7 @@
 # Routes (prefix: /api/v1/):
 # - GET /integrations/nextcloud/ping/ -> NextcloudPingView
+# - GET /integrations/nextcloud/status/ -> NextcloudStatusView
+# - GET /integrations/nextcloud/preview.png -> NextcloudPreviewView
 
 from __future__ import annotations
 
@@ -30,17 +32,12 @@ urlpatterns = [
         name="nextcloud-hmac",
     ),
     path(
-        "integrations/nextcloud/ping/",
-        NextcloudPingView.as_view(),
-        name="nextcloud-ping",
-    ),
-    path(
-        "integrations/nextcloud/status/",
+        "nextcloud/status/",
         NextcloudStatusView.as_view(),
         name="nextcloud-status",
     ),
     path(
-        "integrations/nextcloud/preview.png",
+        "nextcloud/preview.png",
         NextcloudPreviewView.as_view(),
         name="nextcloud-preview",
     ),
