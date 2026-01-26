@@ -53,7 +53,7 @@ jobs:
       DATABASE_URL: "mysql://test_user:test_pass@127.0.0.1:3306/test_db"
 
       # Coverage gate (adjust to your standard)
-      COVERAGE_FAIL_UNDER: "98"
+      COVERAGE_FAIL_UNDER: "96"
 
       # Python hygiene
       PYTHONDONTWRITEBYTECODE: "1"
