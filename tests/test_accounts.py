@@ -11,10 +11,11 @@ from django.core.cache import caches
 from django.test import override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.test import APITestCase
 
 from accounts.auth_backends import UsernameOrEmailBackend
+from accounts.serializers import PasswordChangeSerializer
 
 JSONScalar: TypeAlias = str | int | float | bool | None
 JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
@@ -306,6 +307,70 @@ class AccountsTests(APITestCase):
         relogin = self._login(u, new_pw)
         self.assertEqual(relogin.status_code, status.HTTP_200_OK)
 
+    def test_password_change_serializer_rejects_invalid_context(self) -> None:
+        serializer = PasswordChangeSerializer(
+            data={
+                "old_password": "irrelevant",
+                "new_password": "NewPass123!",
+                "new_password2": "NewPass123!",
+            },
+            context={"user": "not-a-user"},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertEqual(
+            serializer.errors["non_field_errors"][0], "Invalid user context."
+        )
+
+    def test_password_change_serializer_rejects_mismatched_new_password(
+        self,
+    ) -> None:
+        password = self._pw()
+        user = get_user_model().objects.create_user(
+            username=self._user(),
+            email=self._email("pw-change"),
+            password=password,
+        )
+        serializer = PasswordChangeSerializer(
+            data={
+                "old_password": password,
+                "new_password": "NewPass123!",
+                "new_password2": "Mismatch123!",
+            },
+            context={"user": user},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertEqual(
+            serializer.errors["new_password2"][0], "Passwords do not match."
+        )
+
+    def test_password_change_serializer_save_rejects_invalid_context(
+        self,
+    ) -> None:
+        password = self._pw()
+        user = get_user_model().objects.create_user(
+            username=self._user(),
+            email=self._email("pw-save"),
+            password=password,
+        )
+        serializer = PasswordChangeSerializer(
+            data={
+                "old_password": password,
+                "new_password": "NewPass123!",
+                "new_password2": "NewPass123!",
+            },
+            context={"user": user},
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        serializer.context["user"] = "invalid"
+
+        with self.assertRaisesMessage(
+            serializers.ValidationError, "Invalid user context."
+        ):
+            serializer.save()
+
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
         FRONTEND_RESET_URL="https://frontend.example/reset",
@@ -330,6 +395,15 @@ class AccountsTests(APITestCase):
         self.assertIsNone(body.get("data"))
         self.assertIsNone(body.get("errors"))
         self.assertEqual(len(mail.outbox), 1)
+
+    def test_password_reset_request_invalid_email_returns_error(self) -> None:
+        resp = self._password_reset_request("not-an-email")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+        body = resp.json()
+        self.assertEqual(body.get("status"), 1)
+        errors = self._as_dict(body.get("errors"), "errors")
+        self.assertIn("email", errors)
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
@@ -373,6 +447,42 @@ class AccountsTests(APITestCase):
 
         user.refresh_from_db()
         self.assertTrue(user.check_password(new_pw))
+
+    def test_password_reset_confirm_invalid_uid_returns_error(self) -> None:
+        resp = self._password_reset_confirm("not-base64", "token", self._pw())
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+        body = resp.json()
+        self.assertEqual(body.get("status"), 1)
+        self.assertEqual(body.get("message"), "Invalid or expired reset link.")
+
+    def test_password_reset_confirm_invalid_password_returns_error(
+        self,
+    ) -> None:
+        username = self._user()
+        email = self._email(username)
+        user = get_user_model().objects.create_user(
+            username=username,
+            email=email,
+            password=self._pw(),
+        )
+
+        uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+
+        resp = self._password_reset_confirm(uidb64, token, "short")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+        body = resp.json()
+        self.assertEqual(body.get("status"), 1)
+        errors = self._as_dict(body.get("errors"), "errors")
+        self.assertIn("new_password", errors)
+        new_password_errors = cast(
+            list[JSONValue], errors.get("new_password", [])
+        )
+        self.assertTrue(new_password_errors)
+        message = cast(str, new_password_errors[0])
+        self.assertIn("too short", message.lower())
 
     def test_password_reset_confirm_invalid_token_returns_error(self) -> None:
         username = self._user()

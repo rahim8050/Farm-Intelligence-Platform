@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from datetime import timedelta
 from uuid import UUID
 
@@ -158,3 +159,11 @@ def test_integration_client_rotate_secret_disabled_client_conflict() -> None:
         rotate_resp.content
     )
     assert rotate_resp.json()["status"] == 1
+
+
+@pytest.mark.django_db
+def test_integration_client_str_returns_name() -> None:
+    client = IntegrationClient.objects.create(
+        name="Integration A", secret=secrets.token_urlsafe(12)
+    )
+    assert str(client) == "Integration A"

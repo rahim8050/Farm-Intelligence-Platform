@@ -141,6 +141,53 @@ def test_farm_serializer_bbox_and_centroid_validation() -> None:
 
 
 @pytest.mark.django_db
+def test_farm_serializer_rejects_duplicate_name() -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="dup-name",
+        email="dup-name@example.com",
+        password=password,
+    )
+    Farm.objects.create(owner=user, name="My Farm", slug="my-farm")
+    factory = APIRequestFactory()
+    drf_request = Request(factory.post("/"))
+    drf_request.user = user
+
+    serializer = FarmSerializer(
+        data={"name": "My Farm"},
+        context={"request": drf_request},
+    )
+
+    assert not serializer.is_valid()
+    assert serializer.errors["name"][0] == "Farm name already exists."
+
+
+@pytest.mark.django_db
+def test_farm_serializer_rejects_slug_conflict() -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="dup-slug",
+        email="dup-slug@example.com",
+        password=password,
+    )
+    Farm.objects.create(owner=user, name="My Farm", slug="my-farm")
+    factory = APIRequestFactory()
+    drf_request = Request(factory.post("/"))
+    drf_request.user = user
+
+    serializer = FarmSerializer(
+        data={"name": "My Farm!"},
+        context={"request": drf_request},
+    )
+
+    assert not serializer.is_valid()
+    assert (
+        serializer.errors["name"][0]
+        == "Farm name conflicts with an existing slug."
+    )
+
+
+@pytest.mark.django_db
 def test_is_farm_owner_permission() -> None:
     password = secrets.token_urlsafe(12)
     user = get_user_model().objects.create_user(

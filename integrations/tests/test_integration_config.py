@@ -76,3 +76,19 @@ def test_load_integration_hmac_clients_returns_decoded_secrets(
     clients = load_integration_hmac_clients()
 
     assert clients == {"client-1": b"shared-secret"}
+
+
+def test_load_integration_hmac_clients_rejects_empty_decoded_bytes(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NEXTCLOUD_HMAC_CLIENTS_JSON", raising=False)
+    settings.INTEGRATION_LEGACY_CONFIG_ALLOWED = True
+    settings.INTEGRATION_HMAC_CLIENTS_JSON = json.dumps({"client-1": "YWJj"})
+
+    monkeypatch.setattr(base64, "b64decode", lambda *_, **__: b"")
+
+    with pytest.raises(IntegrationHMACConfigError) as exc:
+        load_integration_hmac_clients()
+
+    assert exc.value.code == "bad_base64"

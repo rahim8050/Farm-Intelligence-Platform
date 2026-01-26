@@ -34,6 +34,7 @@ from api_keys.authentication import ApiKeyAuthentication
 from api_keys.models import ApiKey, ApiKeyScope
 from api_keys.openapi import ApiKeyAuthenticationScheme
 from api_keys.permissions import ApiKeyScopePermission, HasValidApiKey
+from api_keys.serializers import ApiKeyCreateSerializer
 from api_keys.throttling import ApiKeyRateThrottle
 from api_keys.views import _client_ip as view_client_ip
 
@@ -199,6 +200,35 @@ class ApiKeyTests(APITestCase):
             expired_resp.status_code,
             status.HTTP_401_UNAUTHORIZED,
         )
+
+    def test_api_key_str_and_pepper_property(self) -> None:
+        password = secrets.token_urlsafe(12)
+        user = get_user_model().objects.create_user(
+            username="pepper",
+            email="pepper@example.com",
+            password=password,
+        )
+        api_key = ApiKey.objects.create(
+            user=user,
+            name="Service Key",
+            key_hash="hash",
+            prefix="wk_live",
+            last4="1234",
+            scope=ApiKeyScope.READ,
+        )
+        self.assertEqual(str(api_key), "Service Key (wk_live…1234)")
+        self.assertEqual(api_key.pepper, settings.DJANGO_API_KEY_PEPPER)
+
+    def test_api_key_create_serializer_rejects_past_expiry(self) -> None:
+        serializer = ApiKeyCreateSerializer(
+            data={
+                "name": "Expired Key",
+                "expires_at": timezone.now() - timedelta(days=1),
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("expires_at", serializer.errors)
 
     def test_api_key_auth_cannot_manage_keys(self) -> None:
         access, _ = self._register_and_login("onlyjwt")
