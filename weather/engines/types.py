@@ -41,3 +41,23 @@ class WeeklyReport:
     precipitation_sum_mm: float | None
     days: Sequence[DailyForecast]
     source: ProviderName
+
+
+@dataclass(frozen=True)
+class HourlyForecast:
+    timestamp: datetime
+    temperature_c: float | None
+    precipitation_mm: float | None
+    wind_speed_mps: float | None
+    cloud_cover_pct: float | None
+    source: ProviderName
+
+
+@dataclass(frozen=True)
+class DailySummary:
+    day: date
+    t_min_c: float | None
+    t_max_c: float | None
+    precipitation_mm: float | None
+    wind_speed_max_mps: float | None
+    source: ProviderName

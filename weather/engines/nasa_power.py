@@ -14,7 +14,14 @@ from rest_framework.exceptions import APIException
 
 from ..timeutils import ensure_aware, get_zone
 from .base import WeatherProvider
-from .types import CurrentWeather, DailyForecast, Location, ProviderName
+from .types import (
+    CurrentWeather,
+    DailyForecast,
+    DailySummary,
+    HourlyForecast,
+    Location,
+    ProviderName,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +139,29 @@ class NasaPowerProvider(WeatherProvider):
                 )
             )
         return forecasts
+
+    async def daily_summary(
+        self, loc: Location, start: date, end: date
+    ) -> Sequence[DailySummary]:
+        forecasts = await self.daily(loc, start, end)
+        return [
+            DailySummary(
+                day=forecast.day,
+                t_min_c=forecast.t_min_c,
+                t_max_c=forecast.t_max_c,
+                precipitation_mm=forecast.precipitation_mm,
+                wind_speed_max_mps=None,
+                source=self.name,
+            )
+            for forecast in forecasts
+        ]
+
+    async def hourly(
+        self, loc: Location, hours: int
+    ) -> Sequence[HourlyForecast]:
+        raise NotImplementedError(
+            "NASA POWER does not provide hourly forecasts."
+        )
 
     async def _request(self, params: dict[str, Any]) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=self.timeout) as client:

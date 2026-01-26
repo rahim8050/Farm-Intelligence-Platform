@@ -12,7 +12,14 @@ from django.utils import timezone
 
 from ..timeutils import ensure_aware, get_zone
 from .base import WeatherProvider
-from .types import CurrentWeather, DailyForecast, Location, ProviderName
+from .types import (
+    CurrentWeather,
+    DailyForecast,
+    DailySummary,
+    HourlyForecast,
+    Location,
+    ProviderName,
+)
 
 
 class OpenMeteoProvider(WeatherProvider):
@@ -104,6 +111,91 @@ class OpenMeteoProvider(WeatherProvider):
                     t_min_c=t_min,
                     t_max_c=t_max,
                     precipitation_mm=precip,
+                    source=self.name,
+                )
+            )
+        return forecasts
+
+    async def daily_summary(
+        self, loc: Location, start: date, end: date
+    ) -> Sequence[DailySummary]:
+        params = {
+            "latitude": loc.lat,
+            "longitude": loc.lon,
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "daily": (
+                "temperature_2m_min,temperature_2m_max,"
+                "precipitation_sum,wind_speed_10m_max"
+            ),
+            "timezone": loc.tz,
+        }
+        payload = await self._request(params)
+        daily_block = (
+            payload.get("daily", {}) if isinstance(payload, dict) else {}
+        )
+        dates = daily_block.get("time") or []
+        t_min_list = daily_block.get("temperature_2m_min") or []
+        t_max_list = daily_block.get("temperature_2m_max") or []
+        precip_list = daily_block.get("precipitation_sum") or []
+        wind_list = daily_block.get("wind_speed_10m_max") or []
+
+        summaries: list[DailySummary] = []
+        for idx, raw_day in enumerate(dates):
+            day = self._parse_date(raw_day)
+            if day is None:
+                continue
+            summaries.append(
+                DailySummary(
+                    day=day,
+                    t_min_c=self._list_value(t_min_list, idx),
+                    t_max_c=self._list_value(t_max_list, idx),
+                    precipitation_mm=self._list_value(precip_list, idx),
+                    wind_speed_max_mps=self._list_value(wind_list, idx),
+                    source=self.name,
+                )
+            )
+        return summaries
+
+    async def hourly(
+        self, loc: Location, hours: int
+    ) -> Sequence[HourlyForecast]:
+        zone = get_zone(loc.tz)
+        params = {
+            "latitude": loc.lat,
+            "longitude": loc.lon,
+            "hourly": (
+                "temperature_2m,precipitation,wind_speed_10m,cloudcover"
+            ),
+            "forecast_hours": hours,
+            "timezone": loc.tz,
+        }
+        payload = await self._request(params)
+        hourly_block = (
+            payload.get("hourly", {}) if isinstance(payload, dict) else {}
+        )
+        times = hourly_block.get("time") or []
+        temps = hourly_block.get("temperature_2m") or []
+        precips = hourly_block.get("precipitation") or []
+        winds = hourly_block.get("wind_speed_10m") or []
+        clouds = (
+            hourly_block.get("cloudcover")
+            or hourly_block.get("cloud_cover")
+            or []
+        )
+
+        forecasts: list[HourlyForecast] = []
+        for idx, raw_time in enumerate(times):
+            timestamp = self._parse_datetime(raw_time, zone)
+            if timestamp is None:
+                continue
+            forecasts.append(
+                HourlyForecast(
+                    timestamp=timestamp,
+                    temperature_c=self._list_value(temps, idx),
+                    precipitation_mm=self._list_value(precips, idx),
+                    wind_speed_mps=self._list_value(winds, idx),
+                    cloud_cover_pct=self._list_value(clouds, idx),
                     source=self.name,
                 )
             )

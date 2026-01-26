@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any, cast
 
@@ -8,6 +9,22 @@ from rest_framework import serializers
 
 from .models import NdviJob, NdviObservation
 from .services import normalize_latest_params, normalize_timeseries_params
+
+
+class FlexibleDateField(serializers.DateField):
+    """Accept ISO dates plus MM/DD/YYYY inputs and normalize to ISO."""
+
+    def to_internal_value(self, value: object) -> date:
+        normalized = value
+        if isinstance(value, str):
+            raw = value.strip()
+            match = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", raw)
+            if match:
+                month = int(match.group(1))
+                day = int(match.group(2))
+                year = int(match.group(3))
+                normalized = f"{year:04d}-{month:02d}-{day:02d}"
+        return super().to_internal_value(cast(str | date, normalized))
 
 
 class NdviObservationSerializer(serializers.ModelSerializer):
@@ -24,8 +41,8 @@ class NdviObservationSerializer(serializers.ModelSerializer):
 
 
 class TimeseriesRequestSerializer(serializers.Serializer):
-    start = serializers.DateField()
-    end = serializers.DateField()
+    start = FlexibleDateField()
+    end = FlexibleDateField()
     step_days = serializers.IntegerField(
         required=False, min_value=1, max_value=30
     )
@@ -66,7 +83,7 @@ class LatestRequestSerializer(serializers.Serializer):
 
 
 class RasterPngRequestSerializer(serializers.Serializer):
-    date = serializers.DateField()
+    date = FlexibleDateField()
     size = serializers.IntegerField(required=False)
     max_cloud = serializers.IntegerField(
         required=False, min_value=0, max_value=100

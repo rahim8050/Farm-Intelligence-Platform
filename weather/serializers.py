@@ -117,6 +117,18 @@ class RangeWeatherParamsSerializer(BaseWeatherParamsSerializer):
         return attrs
 
 
+class FarmHourlyParamsSerializer(serializers.Serializer):
+    hours: ClassVar[serializers.IntegerField] = serializers.IntegerField(
+        required=False, min_value=1, max_value=168, default=48
+    )
+
+
+class FarmDailyParamsSerializer(serializers.Serializer):
+    days: ClassVar[serializers.IntegerField] = serializers.IntegerField(
+        required=False, min_value=1, max_value=14, default=7
+    )
+
+
 class CurrentWeatherSerializer(serializers.Serializer):
     observed_at: ClassVar[serializers.DateTimeField] = (
         serializers.DateTimeField()
@@ -154,6 +166,42 @@ class DailyForecastSerializer(serializers.Serializer):
 
     def get_missing_fields(self, obj: object) -> list[str]:
         return _missing_fields(obj)
+
+
+class HourlyForecastSerializer(serializers.Serializer):
+    timestamp: ClassVar[serializers.DateTimeField] = (
+        serializers.DateTimeField()
+    )
+    temperature_c: ClassVar[serializers.FloatField] = serializers.FloatField(
+        allow_null=True
+    )
+    precipitation_mm: ClassVar[serializers.FloatField] = (
+        serializers.FloatField(allow_null=True)
+    )
+    wind_speed_mps: ClassVar[serializers.FloatField] = serializers.FloatField(
+        allow_null=True
+    )
+    cloud_cover_pct: ClassVar[serializers.FloatField] = serializers.FloatField(
+        allow_null=True
+    )
+    source: ClassVar[serializers.CharField] = serializers.CharField()  # type: ignore[misc,assignment]
+
+
+class DailySummarySerializer(serializers.Serializer):
+    day: ClassVar[serializers.DateField] = serializers.DateField()
+    t_min_c: ClassVar[serializers.FloatField] = serializers.FloatField(
+        allow_null=True
+    )
+    t_max_c: ClassVar[serializers.FloatField] = serializers.FloatField(
+        allow_null=True
+    )
+    precipitation_mm: ClassVar[serializers.FloatField] = (
+        serializers.FloatField(allow_null=True)
+    )
+    wind_speed_max_mps: ClassVar[serializers.FloatField] = (
+        serializers.FloatField(allow_null=True)
+    )
+    source: ClassVar[serializers.CharField] = serializers.CharField()  # type: ignore[misc,assignment]
 
 
 class WeeklyReportSerializer(serializers.Serializer):
@@ -197,6 +245,18 @@ def serialize_current(payload: object) -> dict[str, JSONValue]:
     return data
 
 
+def serialize_hourly(
+    forecasts: Sequence[object],
+) -> list[dict[str, JSONValue]]:
+    serializer = HourlyForecastSerializer(forecasts, many=True)
+    data = list(serializer.data)
+    for idx, forecast in enumerate(forecasts):
+        timestamp = getattr(forecast, "timestamp", None)
+        if isinstance(timestamp, datetime):
+            data[idx]["timestamp"] = isoformat_with_tz(timestamp)
+    return data
+
+
 def serialize_daily(
     forecasts: Sequence[object],
 ) -> list[dict[str, JSONValue]]:
@@ -208,4 +268,11 @@ def serialize_weekly(
     reports: Sequence[object],
 ) -> list[dict[str, JSONValue]]:
     serializer = WeeklyReportSerializer(reports, many=True)
+    return list(serializer.data)
+
+
+def serialize_daily_summary(
+    summaries: Sequence[object],
+) -> list[dict[str, JSONValue]]:
+    serializer = DailySummarySerializer(summaries, many=True)
     return list(serializer.data)

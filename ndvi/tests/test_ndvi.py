@@ -75,6 +75,23 @@ class NdviApiTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     @patch("ndvi.views.run_ndvi_job.delay")
+    def test_timeseries_accepts_mmddyyyy(self, mock_delay: MagicMock) -> None:
+        """MM/DD/YYYY dates are normalized and accepted."""
+
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            self.timeseries_url,
+            {"start": "01/02/2024", "end": "01/10/2024"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        body = resp.json()
+        data = body.get("data", {})
+        self.assertEqual(data.get("start"), "2024-01-02")
+        self.assertEqual(data.get("end"), "2024-01-10")
+        mock_delay.assert_called_once()
+
+    @patch("ndvi.views.run_ndvi_job.delay")
     def test_gap_detection_enqueues_job(self, mock_delay: MagicMock) -> None:
         """Gap detection schedules a gap-fill job without blocking."""
 

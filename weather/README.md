@@ -41,6 +41,19 @@ All successful responses use the project envelope produced by
 | GET | `/api/v1/weather/daily/` | JWT or `X-API-Key` | Daily min/max/precip | query: `lat`, `lon`, `start`, `end`, optional `tz`, optional `provider` |
 | GET | `/api/v1/weather/weekly/` | JWT or `X-API-Key` | Weekly aggregates | query: `lat`, `lon`, `start`, `end`, optional `tz`, optional `provider` |
 
+### Farm weather endpoints
+
+Base path: `/api/v1/farms/<farm_id>/weather/` (from code: `weather/urls.py`).
+
+Authentication: Integration JWT (Bearer token minted by
+`/api/v1/integrations/token/`).
+
+| Method | Path | Auth | Purpose | Key params |
+| --- | --- | --- | --- | --- |
+| GET | `/api/v1/farms/<farm_id>/weather/current/` | Bearer (integration JWT) | Current conditions for the farm centroid or bbox center | none |
+| GET | `/api/v1/farms/<farm_id>/weather/hourly/` | Bearer (integration JWT) | Hourly forecasts | query: `hours` (default 48, max 168) |
+| GET | `/api/v1/farms/<farm_id>/weather/daily/` | Bearer (integration JWT) | Daily summaries | query: `days` (default 7, max 14) |
+
 ### Examples
 
 #### Current
@@ -98,6 +111,35 @@ Response:
   "status": 0,
   "message": "OK",
   "data": { "reports": [{ "week_start": "2024-12-30", "week_end": "2025-01-05" }] },
+  "errors": null
+}
+```
+
+#### Farm hourly
+
+```bash
+curl -sS 'http://localhost:8000/api/v1/farms/1/weather/hourly/?hours=48' \
+  -H "Authorization: Bearer $INTEGRATION_TOKEN"
+```
+
+Response:
+
+```json
+{
+  "status": 0,
+  "message": "OK",
+  "data": {
+    "hours": [
+      {
+        "timestamp": "2025-01-02T10:00:00+03:00",
+        "temperature_c": 24.2,
+        "precipitation_mm": 0.2,
+        "wind_speed_mps": 3.5,
+        "cloud_cover_pct": 40,
+        "source": "open_meteo"
+      }
+    ]
+  },
   "errors": null
 }
 ```

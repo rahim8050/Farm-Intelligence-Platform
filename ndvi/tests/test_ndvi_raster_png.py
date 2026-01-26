@@ -125,6 +125,20 @@ class NdviRasterApiTests(APITestCase):
         )
         self.assertEqual(forbidden.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_raster_get_accepts_mmddyyyy(self) -> None:
+        self._create_artifact(
+            day=date(2024, 2, 2),
+            content_hash="hash456",
+        )
+
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            self.raster_url,
+            {"date": "02/02/2024", "size": "512", "max_cloud": "30"},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp["Content-Type"], "image/png")
+
     def test_raster_get_missing_returns_404(self) -> None:
         self.client.force_authenticate(user=self.user)
         resp = self.client.get(

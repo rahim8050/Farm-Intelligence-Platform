@@ -218,6 +218,30 @@ class BaseFarmView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    def finalize_response(
+        self,
+        request: Request,
+        response: Response,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Response:
+        response = super().finalize_response(
+            request, response, *args, **kwargs
+        )
+        request_id = (
+            request.headers.get("X-Request-Id")
+            or request.META.get("HTTP_X_REQUEST_ID")
+            or "-"
+        )
+        logger.info(
+            "ndvi request: method=%s path=%s status=%s request_id=%s",
+            request.method,
+            request.path,
+            response.status_code,
+            request_id,
+        )
+        return response
+
     def _get_farm(self, farm_id: int, user_id: int) -> Farm:
         return get_object_or_404(
             Farm, id=farm_id, owner_id=user_id, is_active=True

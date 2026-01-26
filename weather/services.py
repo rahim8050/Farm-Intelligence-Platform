@@ -6,14 +6,21 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TypedDict
 
+import httpx
 from django.conf import settings
 from django.core.cache import caches
-from rest_framework.exceptions import ValidationError
+from django.utils import timezone as dj_timezone
+from rest_framework.exceptions import APIException, ValidationError
 
+from farms.models import Farm
+
+from .engines.nasa_power import NasaPowerUpstreamError
 from .engines.registry import build_registry, validate_provider
 from .engines.types import (
     CurrentWeather,
     DailyForecast,
+    DailySummary,
+    HourlyForecast,
     Location,
     ProviderName,
     WeeklyReport,
@@ -32,8 +39,17 @@ CACHE_TTL_CURRENT = int(getattr(settings, "WEATHER_CACHE_TTL_CURRENT_S", 120))
 CACHE_TTL_DAILY = int(getattr(settings, "WEATHER_CACHE_TTL_DAILY_S", 900))
 CACHE_TTL_WEEKLY = int(getattr(settings, "WEATHER_CACHE_TTL_WEEKLY_S", 1800))
 MAX_RANGE_DAYS = int(getattr(settings, "WEATHER_MAX_RANGE_DAYS", 366))
+FARM_CACHE_TTL_CURRENT = 60
+FARM_CACHE_TTL_HOURLY = 600
+FARM_CACHE_TTL_DAILY = 1800
 
 PROVIDER_REGISTRY = build_registry()
+
+
+class WeatherUpstreamError(APIException):
+    status_code = 502
+    default_detail = "Weather upstream error"
+    default_code = "weather_upstream_error"
 
 
 @dataclass(frozen=True)
@@ -58,11 +74,58 @@ class CacheKey:
         )
 
 
+@dataclass(frozen=True)
+class FarmCacheKey:
+    endpoint: str
+    provider: ProviderName
+    farm_id: int
+    lat: float
+    lon: float
+    tz: str
+    hours: int | None = None
+    days: int | None = None
+
+    def as_string(self) -> str:
+        rounded_lat = f"{self.lat:.4f}"
+        rounded_lon = f"{self.lon:.4f}"
+        hours_part = str(self.hours) if self.hours is not None else "-"
+        days_part = str(self.days) if self.days is not None else "-"
+        return (
+            f"farm-weather:{self.endpoint}:{self.provider}:{self.farm_id}:"
+            f"{rounded_lat}:{rounded_lon}:{self.tz}:{hours_part}:{days_part}"
+        )
+
+
 def _select_provider(name: str | None) -> ProviderName:
     try:
         return validate_provider(name, PROVIDER_REGISTRY)
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
+
+
+def _resolve_farm_location(farm: Farm) -> Location:
+    if farm.centroid_lat is not None and farm.centroid_lon is not None:
+        lat = float(farm.centroid_lat)
+        lon = float(farm.centroid_lon)
+        return Location(lat=lat, lon=lon, tz=DEFAULT_TZ)
+
+    if (
+        farm.bbox_south is not None
+        and farm.bbox_west is not None
+        and farm.bbox_north is not None
+        and farm.bbox_east is not None
+    ):
+        lat = float((farm.bbox_south + farm.bbox_north) / 2)
+        lon = float((farm.bbox_west + farm.bbox_east) / 2)
+        return Location(lat=lat, lon=lon, tz=DEFAULT_TZ)
+
+    raise ValidationError(
+        "Farm must have a centroid or bounding box for weather."
+    )
+
+
+def _handle_upstream_error(exc: Exception) -> None:
+    raise WeatherUpstreamError() from exc
 
 
 async def get_current_weather(
@@ -114,6 +177,171 @@ async def get_current_weather(
         ).observe(duration)
 
     cache.set(key.as_string(), result, CACHE_TTL_CURRENT)
+    return result
+
+
+async def get_farm_current_weather(
+    farm: Farm, provider: str | None = None
+) -> CurrentWeather:
+    location = _resolve_farm_location(farm)
+    provider_name = _select_provider(provider)
+    key = FarmCacheKey(
+        endpoint="current",
+        provider=provider_name,
+        farm_id=farm.id,
+        lat=location.lat,
+        lon=location.lon,
+        tz=location.tz,
+    )
+    cache = caches["default"]
+    cached = cache.get(key.as_string())
+    if cached:
+        weather_cache_hits_total.labels(
+            provider=provider_name, endpoint="farm_current"
+        ).inc()
+        return cached
+
+    weather_cache_misses_total.labels(
+        provider=provider_name, endpoint="farm_current"
+    ).inc()
+    provider_impl = PROVIDER_REGISTRY[provider_name]
+    start_time = time.perf_counter()
+    weather_provider_requests_total.labels(
+        provider=provider_name, endpoint="farm_current"
+    ).inc()
+    try:
+        result = await provider_impl.current(location)
+    except (
+        httpx.HTTPError,
+        NasaPowerUpstreamError,
+        NotImplementedError,
+        ValueError,
+    ) as exc:
+        weather_provider_errors_total.labels(
+            provider=provider_name,
+            endpoint="farm_current",
+            error_type=exc.__class__.__name__,
+        ).inc()
+        _handle_upstream_error(exc)
+    finally:
+        duration = time.perf_counter() - start_time
+        weather_provider_latency_seconds.labels(
+            provider=provider_name, endpoint="farm_current"
+        ).observe(duration)
+
+    cache.set(key.as_string(), result, FARM_CACHE_TTL_CURRENT)
+    return result
+
+
+async def get_farm_hourly_forecast(
+    farm: Farm, hours: int, provider: str | None = None
+) -> Sequence[HourlyForecast]:
+    location = _resolve_farm_location(farm)
+    provider_name = _select_provider(provider)
+    key = FarmCacheKey(
+        endpoint="hourly",
+        provider=provider_name,
+        farm_id=farm.id,
+        lat=location.lat,
+        lon=location.lon,
+        tz=location.tz,
+        hours=hours,
+    )
+    cache = caches["default"]
+    cached = cache.get(key.as_string())
+    if cached:
+        weather_cache_hits_total.labels(
+            provider=provider_name, endpoint="farm_hourly"
+        ).inc()
+        return cached
+
+    weather_cache_misses_total.labels(
+        provider=provider_name, endpoint="farm_hourly"
+    ).inc()
+    provider_impl = PROVIDER_REGISTRY[provider_name]
+    start_time = time.perf_counter()
+    weather_provider_requests_total.labels(
+        provider=provider_name, endpoint="farm_hourly"
+    ).inc()
+    try:
+        result = await provider_impl.hourly(location, hours)
+    except (
+        httpx.HTTPError,
+        NasaPowerUpstreamError,
+        NotImplementedError,
+        ValueError,
+    ) as exc:
+        weather_provider_errors_total.labels(
+            provider=provider_name,
+            endpoint="farm_hourly",
+            error_type=exc.__class__.__name__,
+        ).inc()
+        _handle_upstream_error(exc)
+    finally:
+        duration = time.perf_counter() - start_time
+        weather_provider_latency_seconds.labels(
+            provider=provider_name, endpoint="farm_hourly"
+        ).observe(duration)
+
+    cache.set(key.as_string(), result, FARM_CACHE_TTL_HOURLY)
+    return result
+
+
+async def get_farm_daily_summary(
+    farm: Farm, days: int, provider: str | None = None
+) -> Sequence[DailySummary]:
+    location = _resolve_farm_location(farm)
+    provider_name = _select_provider(provider)
+    key = FarmCacheKey(
+        endpoint="daily",
+        provider=provider_name,
+        farm_id=farm.id,
+        lat=location.lat,
+        lon=location.lon,
+        tz=location.tz,
+        days=days,
+    )
+    cache = caches["default"]
+    cached = cache.get(key.as_string())
+    if cached:
+        weather_cache_hits_total.labels(
+            provider=provider_name, endpoint="farm_daily"
+        ).inc()
+        return cached
+
+    weather_cache_misses_total.labels(
+        provider=provider_name, endpoint="farm_daily"
+    ).inc()
+    provider_impl = PROVIDER_REGISTRY[provider_name]
+    zone = get_zone(location.tz)
+    today = dj_timezone.localtime(dj_timezone.now(), zone).date()
+    end = today + timedelta(days=days - 1)
+
+    start_time = time.perf_counter()
+    weather_provider_requests_total.labels(
+        provider=provider_name, endpoint="farm_daily"
+    ).inc()
+    try:
+        result = await provider_impl.daily_summary(location, today, end)
+    except (
+        httpx.HTTPError,
+        NasaPowerUpstreamError,
+        NotImplementedError,
+        ValueError,
+    ) as exc:
+        weather_provider_errors_total.labels(
+            provider=provider_name,
+            endpoint="farm_daily",
+            error_type=exc.__class__.__name__,
+        ).inc()
+        _handle_upstream_error(exc)
+    finally:
+        duration = time.perf_counter() - start_time
+        weather_provider_latency_seconds.labels(
+            provider=provider_name, endpoint="farm_daily"
+        ).observe(duration)
+
+    cache.set(key.as_string(), result, FARM_CACHE_TTL_DAILY)
     return result
 
 

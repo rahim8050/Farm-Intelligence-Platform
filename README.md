@@ -15,6 +15,7 @@ first-party API keys (`X-API-Key`) for service-to-service calls.
 - Farms: CRUD for user-owned farms (`/api/v1/farms/`)
 - NDVI: timeseries/latest, raster retrieval and queueing, job status (`/api/v1/…/ndvi/`)
 - Weather: current/daily/weekly with provider selection (`/api/v1/weather/…`)
+- Farm weather: current/hourly/daily by farm id (`/api/v1/farms/<id>/weather/…`)
 - Caching: Redis (recommended/required in production) or local-memory cache
 - Background jobs: Celery tasks for NDVI refresh/backfill and raster rendering
 - Observability: Prometheus metrics via `django-prometheus` at `/metrics`
