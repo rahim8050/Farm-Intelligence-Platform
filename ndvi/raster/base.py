@@ -16,6 +16,7 @@ class RasterRequest:
     size: int
     max_cloud: int
     engine: str
+    job_id: int | None = None
 
 
 class NdviRasterEngine(Protocol):

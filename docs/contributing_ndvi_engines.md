@@ -106,23 +106,31 @@ window (see `ndvi/engines/sentinelhub.py`).
 
 `ndvi/services.py`:
 
-- `DEFAULT_ENGINE` comes from `settings.NDVI_ENGINE`.
-- `get_engine()` returns a concrete engine instance based on the name.
+- `resolve_ndvi_engine_name()` reads defaults at call time from
+  `settings.NDVI_ENGINE` (no import-time defaults).
+- `SUPPORTED_ENGINES` + `ENGINE_FACTORIES` map engine names to constructors.
+- `get_engine()` instantiates the engine from the registry mapping.
 
-To add a new engine, update `get_engine()` to recognize your engine name and
-instantiate your class.
+To add a new engine, update **exactly**:
+- `SUPPORTED_ENGINES` (one list), and
+- `ENGINE_FACTORIES` (one registry mapping).
 
 ### Raster engine selection
 
 `ndvi/raster/registry.py`:
 
-- `NDVI_RASTER_ENGINE_PATH` is a dotted Python path to the raster engine class.
-- The registry caches an instance via `lru_cache`.
+- `resolve_raster_engine_name()` reads defaults at call time from
+  `settings.NDVI_RASTER_ENGINE_NAME` (no import-time defaults).
+- `SUPPORTED_RASTER_ENGINES` + `RASTER_ENGINE_PATHS` map names to import paths.
+- The registry caches engine instances by resolved name via `lru_cache`.
 
-`ndvi/views.py` and `ndvi/tasks.py` use `NDVI_RASTER_ENGINE_NAME` to label
-artifacts, cache keys, and jobs. If you introduce a new raster engine, set both
-`NDVI_RASTER_ENGINE_PATH` (implementation) and `NDVI_RASTER_ENGINE_NAME`
-(identifier).
+If you introduce a new raster engine, update **exactly**:
+- `SUPPORTED_RASTER_ENGINES` (one list), and
+- `RASTER_ENGINE_PATHS` (one registry mapping).
+
+Note the **two separate knobs**:
+- `NDVI_ENGINE` controls metrics (timeseries/latest).
+- `NDVI_RASTER_ENGINE_NAME` controls raster PNGs.
 
 ### Settings and secrets
 

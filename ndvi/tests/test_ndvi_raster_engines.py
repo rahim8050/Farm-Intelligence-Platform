@@ -2,13 +2,18 @@ from __future__ import annotations
 
 # ruff: noqa: S101
 import secrets
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import cast
 from unittest.mock import MagicMock
 
 import httpx
+import numpy as np
 import pytest
+from django.test import override_settings
+from rest_framework.exceptions import ValidationError
 
+import ndvi.raster.stac_compute_engine as stac_compute_engine
 from ndvi.engines.base import BBox
 from ndvi.raster.base import RasterRequest
 from ndvi.raster.sentinelhub_engine import (
@@ -17,13 +22,21 @@ from ndvi.raster.sentinelhub_engine import (
     SentinelHubRasterError,
 )
 from ndvi.raster.stac_compute_engine import StacComputeRasterEngine
+from ndvi.stac_client import NdviStats, StacClient, StacItem
 
 CLIENT_SECRET = secrets.token_urlsafe(12)
 
 
-def test_stac_compute_engine_not_implemented() -> None:
+@override_settings(NDVI_STAC_COLLECTION="collection")
+def test_stac_compute_engine_encodes_png() -> None:
     engine = StacComputeRasterEngine()
-    request = RasterRequest(
+    ndvi = np.array([[0.0, 0.5], [1.0, -1.0]], dtype=np.float32)
+    png = engine._encode_png(ndvi)
+    assert png.startswith(b"\x89PNG")
+
+
+def _raster_request() -> RasterRequest:
+    return RasterRequest(
         bbox=BBox(
             south=Decimal("0.0"),
             west=Decimal("0.0"),
@@ -31,12 +44,157 @@ def test_stac_compute_engine_not_implemented() -> None:
             east=Decimal("0.1"),
         ),
         date=date(2025, 1, 1),
-        size=256,
-        max_cloud=30,
+        size=128,
+        max_cloud=20,
         engine="stac",
     )
-    with pytest.raises(NotImplementedError):
-        engine.render_png(request)
+
+
+def _stac_item(*, item_date: date, assets: dict[str, str]) -> StacItem:
+    return StacItem(
+        id="item-1",
+        datetime=datetime(
+            item_date.year,
+            item_date.month,
+            item_date.day,
+            tzinfo=UTC,
+        ),
+        assets=assets,
+        cloud_cover=5.0,
+    )
+
+
+def test_stac_compute_engine_no_items_raises_not_found() -> None:
+    class FakeClient:
+        def search(
+            self, *, bbox: object, start: object, end: object, max_cloud: int
+        ) -> list[StacItem]:
+            return []
+
+    engine = StacComputeRasterEngine(client=cast(StacClient, FakeClient()))
+
+    with pytest.raises(ValidationError) as exc:
+        engine.render_png(_raster_request())
+
+    detail = cast(dict[str, str], exc.value.detail)
+    assert detail["detail"] == "Raster not found"
+    assert detail["code"] == "raster_not_found"
+    assert detail["reason"] == "no_items"
+
+
+def test_stac_compute_engine_no_best_item_raises_not_found() -> None:
+    class FakeClient:
+        def search(
+            self, *, bbox: object, start: object, end: object, max_cloud: int
+        ) -> list[StacItem]:
+            return [
+                _stac_item(
+                    item_date=date(2025, 2, 1),
+                    assets={"B04": "red.tif", "B08": "nir.tif"},
+                )
+            ]
+
+    engine = StacComputeRasterEngine(client=cast(StacClient, FakeClient()))
+
+    with pytest.raises(ValidationError) as exc:
+        engine.render_png(_raster_request())
+
+    detail = cast(dict[str, str], exc.value.detail)
+    assert detail["detail"] == "Raster not found"
+    assert detail["code"] == "raster_not_found"
+    assert detail["reason"] == "no_best_item"
+
+
+def test_stac_compute_engine_missing_assets_raises_not_found() -> None:
+    class FakeClient:
+        def search(
+            self, *, bbox: object, start: object, end: object, max_cloud: int
+        ) -> list[StacItem]:
+            return [
+                _stac_item(
+                    item_date=date(2025, 1, 1),
+                    assets={"B04": "red.tif"},
+                )
+            ]
+
+    engine = StacComputeRasterEngine(client=cast(StacClient, FakeClient()))
+
+    with pytest.raises(ValidationError) as exc:
+        engine.render_png(_raster_request())
+
+    detail = cast(dict[str, str], exc.value.detail)
+    assert detail["detail"] == "Raster not found"
+    assert detail["code"] == "raster_not_found"
+    assert detail["reason"] == "missing_assets"
+
+
+def test_stac_compute_engine_missing_stats_raises_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def search(
+            self, *, bbox: object, start: object, end: object, max_cloud: int
+        ) -> list[StacItem]:
+            return [
+                _stac_item(
+                    item_date=date(2025, 1, 1),
+                    assets={"B04": "red.tif", "B08": "nir.tif"},
+                )
+            ]
+
+    monkeypatch.setattr(
+        stac_compute_engine,
+        "load_ndvi_array",
+        lambda **_kwargs: np.array([[0.2]], dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        stac_compute_engine,
+        "compute_ndvi_stats",
+        lambda _ndvi: None,
+    )
+    engine = StacComputeRasterEngine(client=cast(StacClient, FakeClient()))
+
+    with pytest.raises(ValidationError) as exc:
+        engine.render_png(_raster_request())
+
+    detail = cast(dict[str, str], exc.value.detail)
+    assert detail["detail"] == "Raster not found"
+    assert detail["code"] == "raster_not_found"
+    assert detail["reason"] == "missing_assets"
+
+
+def test_stac_compute_engine_renders_png_with_stats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def search(
+            self, *, bbox: object, start: object, end: object, max_cloud: int
+        ) -> list[StacItem]:
+            return [
+                _stac_item(
+                    item_date=date(2025, 1, 1),
+                    assets={"B04": "red.tif", "B08": "nir.tif"},
+                )
+            ]
+
+    monkeypatch.setattr(
+        stac_compute_engine,
+        "load_ndvi_array",
+        lambda **_kwargs: np.array([[0.2]], dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        stac_compute_engine,
+        "compute_ndvi_stats",
+        lambda _ndvi: NdviStats(
+            mean=0.2,
+            min=0.1,
+            max=0.3,
+            sample_count=1,
+        ),
+    )
+    engine = StacComputeRasterEngine(client=cast(StacClient, FakeClient()))
+    png = engine.render_png(_raster_request())
+    assert png.startswith(b"\x89PNG")
 
 
 def test_sentinelhub_raster_render_png_uses_token() -> None:

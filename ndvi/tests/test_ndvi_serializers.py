@@ -7,15 +7,26 @@ from ndvi.serializers import (
     LatestRequestSerializer,
     RasterPngRequestSerializer,
 )
-from ndvi.services import DEFAULT_LOOKBACK_DAYS, DEFAULT_MAX_CLOUD
+from ndvi.services import get_default_lookback_days, get_default_max_cloud
 
 
 def test_latest_request_serializer_defaults() -> None:
     serializer = LatestRequestSerializer(data={})
 
     assert serializer.is_valid(), serializer.errors
-    assert serializer.validated_data["lookback_days"] == DEFAULT_LOOKBACK_DAYS
-    assert serializer.validated_data["max_cloud"] == DEFAULT_MAX_CLOUD
+    assert (
+        serializer.validated_data["lookback_days"]
+        == get_default_lookback_days()
+    )
+    assert serializer.validated_data["max_cloud"] == get_default_max_cloud()
+
+
+def test_latest_request_serializer_stac_defaults(settings: Any) -> None:
+    settings.NDVI_STAC_MAX_CLOUD_DEFAULT = 15
+    serializer = LatestRequestSerializer(data={}, context={"engine": "stac"})
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["max_cloud"] == 15
 
 
 def test_raster_png_serializer_accepts_flexible_date_and_defaults(

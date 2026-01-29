@@ -9,15 +9,17 @@ from django.utils import timezone
 from farms.models import Farm
 
 
+def default_ndvi_engine_name() -> str:
+    return str(getattr(settings, "NDVI_ENGINE", "sentinelhub")).lower()
+
+
 class NdviObservation(models.Model):
     """Materialized NDVI observation for a farm and date bucket."""
 
     farm = models.ForeignKey(
         Farm, on_delete=models.CASCADE, related_name="ndvi_observations"
     )
-    engine = models.CharField(
-        max_length=64, default=settings.NDVI_RASTER_ENGINE_NAME
-    )
+    engine = models.CharField(max_length=64, default=default_ndvi_engine_name)
     bucket_date = models.DateField()
     mean = models.FloatField()
     min = models.FloatField(null=True, blank=True)

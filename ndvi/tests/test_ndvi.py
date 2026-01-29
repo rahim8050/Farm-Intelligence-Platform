@@ -14,7 +14,11 @@ from farms.models import Farm
 from ndvi.engines.base import NdviPoint
 from ndvi.engines.sentinelhub import SentinelHubEngine
 from ndvi.models import NdviJob, NdviObservation
-from ndvi.services import DEFAULT_ENGINE, TimeseriesParams, hash_request
+from ndvi.services import (
+    TimeseriesParams,
+    get_default_ndvi_engine_name,
+    hash_request,
+)
 from ndvi.tasks import run_ndvi_job
 
 
@@ -46,6 +50,7 @@ class NdviApiTests(APITestCase):
         self.latest_url = f"/api/v1/farms/{self.farm.id}/ndvi/latest/"
         self.refresh_url = f"/api/v1/farms/{self.farm.id}/ndvi/refresh/"
         self.job_status_base = "/api/v1/ndvi/jobs/"
+        self.default_engine = get_default_ndvi_engine_name()
 
     def test_owner_isolation(self) -> None:
         """Users cannot read NDVI for farms they do not own."""
@@ -92,12 +97,47 @@ class NdviApiTests(APITestCase):
         mock_delay.assert_called_once()
 
     @patch("ndvi.views.run_ndvi_job.delay")
+    def test_timeseries_engine_override(self, mock_delay: MagicMock) -> None:
+        """Query param engine overrides the default engine."""
+
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            self.timeseries_url,
+            {"start": "2024-01-01", "end": "2024-01-10", "engine": "stac"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.json().get("data", {})
+        self.assertEqual(data.get("engine"), "stac")
+        job = NdviJob.objects.filter(job_type=NdviJob.JobType.GAP_FILL).first()
+        self.assertIsNotNone(job)
+        if job:
+            self.assertEqual(job.engine, "stac")
+        mock_delay.assert_called_once()
+
+    @patch("ndvi.views.run_ndvi_job.delay")
+    def test_latest_response_contract_shape(
+        self, mock_delay: MagicMock
+    ) -> None:
+        """Latest endpoint returns the standard response envelope."""
+
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(self.latest_url, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        body = resp.json()
+        self.assertIn("status", body)
+        self.assertIn("message", body)
+        self.assertIn("data", body)
+        self.assertIn("errors", body)
+        mock_delay.assert_called_once()
+
+    @patch("ndvi.views.run_ndvi_job.delay")
     def test_gap_detection_enqueues_job(self, mock_delay: MagicMock) -> None:
         """Gap detection schedules a gap-fill job without blocking."""
 
         NdviObservation.objects.create(
             farm=self.farm,
-            engine=DEFAULT_ENGINE,
+            engine=self.default_engine,
             bucket_date=date(2024, 1, 1),
             mean=0.1,
         )
@@ -149,7 +189,7 @@ class NdviApiTests(APITestCase):
             max_cloud=30,
         )
         request_hash = hash_request(
-            engine=DEFAULT_ENGINE,
+            engine=self.default_engine,
             owner_id=self.user.id,
             farm_id=self.farm.id,
             params={
@@ -162,7 +202,7 @@ class NdviApiTests(APITestCase):
         job = NdviJob.objects.create(
             owner=self.user,
             farm=self.farm,
-            engine=DEFAULT_ENGINE,
+            engine=self.default_engine,
             job_type=NdviJob.JobType.GAP_FILL,
             start=params.start,
             end=params.end,
@@ -257,19 +297,19 @@ class NdviApiTests(APITestCase):
         self.client.force_authenticate(user=self.user)
         NdviObservation.objects.create(
             farm=self.farm,
-            engine=DEFAULT_ENGINE,
+            engine=self.default_engine,
             bucket_date=date(2024, 1, 1),
             mean=0.1,
         )
         NdviObservation.objects.create(
             farm=self.farm,
-            engine=DEFAULT_ENGINE,
+            engine=self.default_engine,
             bucket_date=date(2024, 1, 8),
             mean=0.2,
         )
         NdviObservation.objects.create(
             farm=self.farm,
-            engine=DEFAULT_ENGINE,
+            engine=self.default_engine,
             bucket_date=date(2024, 1, 15),
             mean=0.3,
         )
@@ -291,7 +331,7 @@ class NdviApiTests(APITestCase):
     ) -> None:
         NdviObservation.objects.create(
             farm=self.farm,
-            engine=DEFAULT_ENGINE,
+            engine=self.default_engine,
             bucket_date=date(2020, 1, 1),
             mean=0.1,
         )
@@ -314,7 +354,7 @@ class NdviApiTests(APITestCase):
     ) -> None:
         NdviObservation.objects.create(
             farm=self.farm,
-            engine=DEFAULT_ENGINE,
+            engine=self.default_engine,
             bucket_date=date.today(),
             mean=0.1,
         )
@@ -332,13 +372,13 @@ class NdviApiTests(APITestCase):
         self.client.force_authenticate(user=self.user)
         cached_payload = {
             "observation": None,
-            "engine": DEFAULT_ENGINE,
+            "engine": self.default_engine,
             "lookback_days": 7,
             "max_cloud": 30,
             "stale": True,
         }
         caches["default"].set(
-            f"ndvi:cache:latest:{self.user.id}:{self.farm.id}:{DEFAULT_ENGINE}:7:30",
+            f"ndvi:cache:latest:{self.user.id}:{self.farm.id}:{self.default_engine}:7:30",
             cached_payload,
         )
         resp = self.client.get(self.latest_url, {"lookback_days": "7"})
@@ -369,7 +409,7 @@ class NdviApiTests(APITestCase):
         job = NdviJob.objects.create(
             owner=self.user,
             farm=self.farm,
-            engine=DEFAULT_ENGINE,
+            engine=self.default_engine,
             job_type=NdviJob.JobType.GAP_FILL,
             request_hash="status-hash",
         )

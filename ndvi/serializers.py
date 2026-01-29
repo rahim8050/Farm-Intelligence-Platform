@@ -8,7 +8,17 @@ from django.conf import settings
 from rest_framework import serializers
 
 from .models import NdviJob, NdviObservation
-from .services import normalize_latest_params, normalize_timeseries_params
+from .services import (
+    get_default_max_cloud,
+    normalize_latest_params,
+    normalize_timeseries_params,
+)
+
+
+def _default_max_cloud_for_engine(engine: str | None) -> int:
+    if engine == "stac":
+        return int(getattr(settings, "NDVI_STAC_MAX_CLOUD_DEFAULT", 30))
+    return get_default_max_cloud()
 
 
 class FlexibleDateField(serializers.DateField):
@@ -51,11 +61,16 @@ class TimeseriesRequestSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        engine = self.context.get("engine")
+        default_max_cloud = _default_max_cloud_for_engine(
+            cast(str | None, engine)
+        )
         params = normalize_timeseries_params(
             start=cast(date, attrs["start"]),
             end=cast(date, attrs["end"]),
             step_days=cast(int | None, attrs.get("step_days")),
             max_cloud=cast(int | None, attrs.get("max_cloud")),
+            default_max_cloud=default_max_cloud,
         )
         return {
             "start": params.start,
@@ -72,9 +87,14 @@ class LatestRequestSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        engine = self.context.get("engine")
+        default_max_cloud = _default_max_cloud_for_engine(
+            cast(str | None, engine)
+        )
         params = normalize_latest_params(
             lookback_days=cast(int | None, attrs.get("lookback_days")),
             max_cloud=cast(int | None, attrs.get("max_cloud")),
+            default_max_cloud=default_max_cloud,
         )
         return {
             "lookback_days": params.lookback_days,
@@ -90,6 +110,10 @@ class RasterPngRequestSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        engine = self.context.get("engine")
+        default_max_cloud = _default_max_cloud_for_engine(
+            cast(str | None, engine)
+        )
         size_default = int(getattr(settings, "NDVI_RASTER_DEFAULT_SIZE", 512))
         size_max = int(getattr(settings, "NDVI_RASTER_MAX_SIZE", 1024))
         size = cast(int | None, attrs.get("size")) or size_default
@@ -103,7 +127,7 @@ class RasterPngRequestSerializer(serializers.Serializer):
             )
         max_cloud = cast(int | None, attrs.get("max_cloud"))
         if max_cloud is None:
-            max_cloud = int(getattr(settings, "NDVI_DEFAULT_MAX_CLOUD", 30))
+            max_cloud = default_max_cloud
 
         return {
             "date": cast(date, attrs["date"]),

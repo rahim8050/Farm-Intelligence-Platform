@@ -180,12 +180,35 @@ Jobs and idempotency:
   upstream calls (from code: `ndvi/tasks.py` and `ndvi/services.py`).
 
 Provider engines:
-- Timeseries/latest engine: `ndvi/engines/sentinelhub.py` (Statistics API).
-  - Uses UTC `Z` time ranges in request payloads (from code:
-    `ndvi/engines/sentinelhub.py`).
-- Raster engine: configured by `NDVI_RASTER_ENGINE_PATH` and resolved in
-  `ndvi/raster/registry.py`; default is the Sentinel Hub raster engine (from
-  code: `ndvi/raster/registry.py` and `config/settings.py`).
+- Timeseries/latest engines:
+  - `sentinelhub`: `ndvi/engines/sentinelhub.py` (Statistics API).
+  - `stac`: `ndvi/engines/stac.py` (STAC search + local NDVI compute).
+- Raster engines:
+  - `sentinelhub`: `ndvi/raster/sentinelhub_engine.py` (Process API).
+  - `stac`: `ndvi/raster/stac_compute_engine.py` (STAC search + local render).
+
+## Engines: sentinelhub vs stac
+
+Default engine selection is driven by `NDVI_ENGINE` (env var). You can
+optionally override per request with `?engine=sentinelhub` or `?engine=stac`
+(query param). Raster endpoints use `NDVI_RASTER_ENGINE_NAME` by default; it
+defaults to `NDVI_ENGINE` unless explicitly overridden.
+
+Engine resolution guardrails:
+- **No import-time defaults**: defaults are read from Django settings at call
+  time via `resolve_ndvi_engine_name()` (metrics) and
+  `resolve_raster_engine_name()` (raster).
+- **Two separate knobs**: metrics use `NDVI_ENGINE`; raster uses
+  `NDVI_RASTER_ENGINE_NAME`.
+- **Registry mapping only**: add new engines by updating one `SUPPORTED_*`
+  list and one registry mapping (`ENGINE_FACTORIES` in `ndvi/services.py` for
+  metrics, `RASTER_ENGINE_PATHS` in `ndvi/raster/registry.py` for raster).
+
+Behavior highlights:
+- `sentinelhub`: upstream processing (Statistics/Process APIs) and requires
+  Sentinel Hub credentials.
+- `stac`: searches a STAC API for Sentinel-2 assets, downloads COGs, and
+  computes NDVI locally for timeseries/latest and raster rendering.
 
 ## AuthZ / permissions
 
@@ -206,15 +229,46 @@ list):
 - `NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS`
 - Raster settings:
   - `NDVI_RASTER_ENGINE_PATH`, `NDVI_RASTER_ENGINE_NAME`
+  - `NDVI_RASTER_ENGINE_PATH_STAC`
   - `NDVI_RASTER_DEFAULT_SIZE`, `NDVI_RASTER_MAX_SIZE`
   - `NDVI_RASTER_MANUAL_QUEUE_COOLDOWN_SECONDS`
   - `NDVI_RASTER_CACHE_TTL_SECONDS`
+
+STAC settings (used when `NDVI_ENGINE=stac` or `engine=stac`):
+- `NDVI_STAC_API_URL` (default: `https://stac.dataspace.copernicus.eu/v1/`)
+- `NDVI_STAC_COLLECTION` (default: `SENTINEL-2-L2A`; override for your STAC)
+- `NDVI_STAC_MAX_CLOUD_DEFAULT` (default: 30)
+- `NDVI_STAC_DATE_WINDOW_DAYS` (default: 3)
+- `NDVI_STAC_ASSET_RED` (default: `B04`)
+- `NDVI_STAC_ASSET_NIR` (default: `B08`)
+- `NDVI_STAC_TIMEOUT_SECS` (default: 30)
 
 Sentinel Hub credentials are read from environment variables (from code:
 `ndvi/engines/sentinelhub.py`):
 - `SENTINELHUB_CLIENT_ID`
 - `SENTINELHUB_CLIENT_SECRET`
 - `SENTINELHUB_BASE_URL` (optional; defaults to `https://services.sentinel-hub.com`)
+
+## Raster flow
+
+- `POST /ndvi/raster/queue` creates a `raster_png` job.
+- Celery executes the job and stores an `NdviRasterArtifact` on success.
+- `GET /ndvi/raster.png` returns the stored PNG or `404` if missing.
+- If a raster job fails, check `GET /ndvi/jobs/<job_id>/` for `last_error`.
+
+## Failure modes
+
+- Sentinel Hub auth failures (401/403) produce a clear `last_error` message
+  suggesting switching to `NDVI_ENGINE=stac` or updating credentials.
+- STAC search failures or raster processing errors surface in `last_error`.
+- No imagery returns empty observations for latest/timeseries endpoints
+  (`observation` is null or `observations` is empty).
+- Raster PNG endpoints return `Raster not found` (404) with
+  `errors.code="raster_not_found"` and `errors.reason`:
+  - `no_items`: STAC search returned no items in the date window.
+  - `no_best_item`: items returned but none matched the window/cloud filter.
+  - `missing_assets`: selected item missing required assets (B04/B08) or
+    NDVI stats are empty.
 
 ## Background jobs
 
@@ -242,4 +296,3 @@ Prometheus metrics (from code: `ndvi/metrics.py`):
 - API tests: `ndvi/tests/test_ndvi.py`
 - Raster tests: `ndvi/tests/test_ndvi_raster_png.py`
 - Run: `pytest ndvi/tests/`
-
