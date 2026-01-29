@@ -38,6 +38,7 @@ repos:
           - redis
           - httpx
           - numpy
+          - mysqlclient
           - pytest-django
           - django-extensions
           

@@ -13,6 +13,7 @@ import pytest
 from django.test import override_settings
 from rest_framework.exceptions import ValidationError
 
+import ndvi.raster.stac_compute_engine as stac_compute_engine
 from ndvi.engines.base import BBox
 from ndvi.raster.base import RasterRequest
 from ndvi.raster.sentinelhub_engine import (
@@ -21,7 +22,7 @@ from ndvi.raster.sentinelhub_engine import (
     SentinelHubRasterError,
 )
 from ndvi.raster.stac_compute_engine import StacComputeRasterEngine
-from ndvi.stac_client import StacClient, StacItem
+from ndvi.stac_client import NdviStats, StacClient, StacItem
 
 CLIENT_SECRET = secrets.token_urlsafe(12)
 
@@ -125,6 +126,75 @@ def test_stac_compute_engine_missing_assets_raises_not_found() -> None:
     assert detail["detail"] == "Raster not found"
     assert detail["code"] == "raster_not_found"
     assert detail["reason"] == "missing_assets"
+
+
+def test_stac_compute_engine_missing_stats_raises_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def search(
+            self, *, bbox: object, start: object, end: object, max_cloud: int
+        ) -> list[StacItem]:
+            return [
+                _stac_item(
+                    item_date=date(2025, 1, 1),
+                    assets={"B04": "red.tif", "B08": "nir.tif"},
+                )
+            ]
+
+    monkeypatch.setattr(
+        stac_compute_engine,
+        "load_ndvi_array",
+        lambda **_kwargs: np.array([[0.2]], dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        stac_compute_engine,
+        "compute_ndvi_stats",
+        lambda _ndvi: None,
+    )
+    engine = StacComputeRasterEngine(client=cast(StacClient, FakeClient()))
+
+    with pytest.raises(ValidationError) as exc:
+        engine.render_png(_raster_request())
+
+    detail = cast(dict[str, str], exc.value.detail)
+    assert detail["detail"] == "Raster not found"
+    assert detail["code"] == "raster_not_found"
+    assert detail["reason"] == "missing_assets"
+
+
+def test_stac_compute_engine_renders_png_with_stats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def search(
+            self, *, bbox: object, start: object, end: object, max_cloud: int
+        ) -> list[StacItem]:
+            return [
+                _stac_item(
+                    item_date=date(2025, 1, 1),
+                    assets={"B04": "red.tif", "B08": "nir.tif"},
+                )
+            ]
+
+    monkeypatch.setattr(
+        stac_compute_engine,
+        "load_ndvi_array",
+        lambda **_kwargs: np.array([[0.2]], dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        stac_compute_engine,
+        "compute_ndvi_stats",
+        lambda _ndvi: NdviStats(
+            mean=0.2,
+            min=0.1,
+            max=0.3,
+            sample_count=1,
+        ),
+    )
+    engine = StacComputeRasterEngine(client=cast(StacClient, FakeClient()))
+    png = engine.render_png(_raster_request())
+    assert png.startswith(b"\x89PNG")
 
 
 def test_sentinelhub_raster_render_png_uses_token() -> None:
