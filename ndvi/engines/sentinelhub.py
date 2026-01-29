@@ -24,18 +24,35 @@ from .base import BBox, NDVIEngine, NdviPoint
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_TIMEOUT: Final[float] = float(
-    getattr(settings, "NDVI_REQUEST_TIMEOUT_SECONDS", 20)
-)
-DEFAULT_MAX_CLOUD: Final[int] = int(
-    getattr(settings, "NDVI_DEFAULT_MAX_CLOUD", 30)
-)
-DEFAULT_STEP_DAYS: Final[int] = int(
-    getattr(settings, "NDVI_DEFAULT_STEP_DAYS", 7)
-)
-DEFAULT_LOOKBACK_DAYS: Final[int] = int(
-    getattr(settings, "NDVI_DEFAULT_LOOKBACK_DAYS", 14)
-)
+DEFAULT_TIMEOUT_SECONDS: Final[float] = 20.0
+DEFAULT_MAX_CLOUD: Final[int] = 30
+DEFAULT_STEP_DAYS: Final[int] = 7
+DEFAULT_LOOKBACK_DAYS: Final[int] = 14
+
+
+def get_default_timeout_seconds() -> float:
+    return float(
+        getattr(
+            settings,
+            "NDVI_REQUEST_TIMEOUT_SECONDS",
+            DEFAULT_TIMEOUT_SECONDS,
+        )
+    )
+
+
+def get_default_max_cloud() -> int:
+    return int(getattr(settings, "NDVI_DEFAULT_MAX_CLOUD", DEFAULT_MAX_CLOUD))
+
+
+def get_default_step_days() -> int:
+    return int(getattr(settings, "NDVI_DEFAULT_STEP_DAYS", DEFAULT_STEP_DAYS))
+
+
+def get_default_lookback_days() -> int:
+    return int(
+        getattr(settings, "NDVI_DEFAULT_LOOKBACK_DAYS", DEFAULT_LOOKBACK_DAYS)
+    )
+
 
 NDVI_EVALSCRIPT: Final[str] = """
 //VERSION=3
@@ -61,6 +78,20 @@ function evaluatePixel(sample) {
   return { ndvi: [ndvi], dataMask: [mask] };
 }
 """
+
+
+class SentinelHubAuthError(RuntimeError):
+    """Signals Sentinel Hub authentication/authorization failures."""
+
+    def __init__(self, status_code: int | None) -> None:
+        message = "Sentinel Hub authentication failed"
+        if status_code:
+            message = f"{message} (status={status_code})"
+        message = (
+            f"{message}. Switch NDVI_ENGINE=stac or update Sentinel Hub "
+            "credentials."
+        )
+        super().__init__(message)
 
 
 class SentinelHubEngine(NDVIEngine):
@@ -90,7 +121,7 @@ class SentinelHubEngine(NDVIEngine):
         self.token_url = f"{self.base_url}/oauth/token"
         self.statistics_url = f"{self.base_url}/api/v1/statistics"
         self.cache = caches[cache_alias]
-        self.timeout_seconds = timeout_seconds or DEFAULT_TIMEOUT
+        self.timeout_seconds = timeout_seconds or get_default_timeout_seconds()
         self._http = httpx.Client(timeout=self.timeout_seconds)
 
     def get_timeseries(
@@ -99,15 +130,17 @@ class SentinelHubEngine(NDVIEngine):
         bbox: BBox,
         start: date,
         end: date,
-        step_days: int = DEFAULT_STEP_DAYS,
-        max_cloud: int = DEFAULT_MAX_CLOUD,
+        step_days: int | None = None,
+        max_cloud: int | None = None,
     ) -> list[NdviPoint]:
+        step = step_days if step_days is not None else get_default_step_days()
+        cloud = max_cloud if max_cloud is not None else get_default_max_cloud()
         payload = self._build_statistics_payload(
             bbox=bbox,
             start=start,
             end=end,
-            step_days=step_days,
-            max_cloud=max_cloud,
+            step_days=step,
+            max_cloud=cloud,
         )
         token = self._get_access_token()
         headers = {
@@ -126,17 +159,23 @@ class SentinelHubEngine(NDVIEngine):
         self,
         *,
         bbox: BBox,
-        lookback_days: int = DEFAULT_LOOKBACK_DAYS,
-        max_cloud: int = DEFAULT_MAX_CLOUD,
+        lookback_days: int | None = None,
+        max_cloud: int | None = None,
     ) -> NdviPoint | None:
+        lookback = (
+            lookback_days
+            if lookback_days is not None
+            else get_default_lookback_days()
+        )
+        cloud = max_cloud if max_cloud is not None else get_default_max_cloud()
         today = date.today()
-        start = today - timedelta(days=lookback_days)
+        start = today - timedelta(days=lookback)
         points = self.get_timeseries(
             bbox=bbox,
             start=start,
             end=today,
-            step_days=lookback_days,
-            max_cloud=max_cloud,
+            step_days=lookback,
+            max_cloud=cloud,
         )
         if not points:
             return None
@@ -176,10 +215,19 @@ class SentinelHubEngine(NDVIEngine):
                 return response
             except httpx.HTTPStatusError as exc:
                 last_error = exc
+                status_code = (
+                    exc.response.status_code if exc.response else None
+                )
                 ndvi_upstream_requests_total.labels(
                     engine=self.engine_name, outcome="error"
                 ).inc()
-                if exc.response.status_code >= 500 and attempt < max_attempts:
+                if status_code in (401, 403):
+                    raise SentinelHubAuthError(status_code) from exc
+                if (
+                    status_code is not None
+                    and status_code >= 500
+                    and attempt < max_attempts
+                ):
                     time.sleep(0.5 * attempt)
                     continue
                 raise

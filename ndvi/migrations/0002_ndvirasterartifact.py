@@ -13,7 +13,15 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="NdviRasterArtifact",
             fields=[
-                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
                 ("owner_id", models.IntegerField(db_index=True)),
                 (
                     "engine",
@@ -24,8 +32,14 @@ class Migration(migrations.Migration):
                 ("date", models.DateField()),
                 ("size", models.PositiveSmallIntegerField()),
                 ("max_cloud", models.PositiveSmallIntegerField()),
-                ("content_hash", models.CharField(db_index=True, max_length=64)),
-                ("image", models.FileField(upload_to="ndvi/rasters/%Y/%m/%d/")),
+                (
+                    "content_hash",
+                    models.CharField(db_index=True, max_length=64),
+                ),
+                (
+                    "image",
+                    models.FileField(upload_to="ndvi/rasters/%Y/%m/%d/"),
+                ),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("last_error", models.TextField(blank=True, null=True)),
                 (
@@ -39,8 +53,14 @@ class Migration(migrations.Migration):
             ],
             options={
                 "indexes": [
-                    models.Index(fields=["owner_id", "date"], name="ndvi_ndvir_owner_id_5f4203_idx"),
-                    models.Index(fields=["engine", "date"], name="ndvi_ndvir_engine__a0225e_idx"),
+                    models.Index(
+                        fields=["owner_id", "date"],
+                        name="ndvi_ndvir_owner_id_5f4203_idx",
+                    ),
+                    models.Index(
+                        fields=["engine", "date"],
+                        name="ndvi_ndvir_engine__a0225e_idx",
+                    ),
                 ],
                 "constraints": [
                     models.UniqueConstraint(

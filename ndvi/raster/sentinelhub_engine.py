@@ -10,11 +10,10 @@ import httpx
 from django.core.cache import caches
 
 from ndvi.engines.sentinelhub import (
-    DEFAULT_MAX_CLOUD as SH_MAX_CLOUD,
-)
-from ndvi.engines.sentinelhub import (
-    DEFAULT_TIMEOUT,
+    SentinelHubAuthError,
     SentinelHubEngine,
+    get_default_max_cloud,
+    get_default_timeout_seconds,
 )
 
 from .base import NdviRasterEngine, RasterRequest
@@ -77,7 +76,7 @@ class SentinelHubRasterEngine(NdviRasterEngine):
         client_id: str | None = None,
         client_secret: str | None = None,
     ) -> None:
-        self._timeout = timeout_seconds or DEFAULT_TIMEOUT
+        self._timeout = timeout_seconds or get_default_timeout_seconds()
         self.base_url = base_url or os.getenv(
             "SENTINELHUB_BASE_URL", "https://services.sentinel-hub.com"
         )
@@ -135,7 +134,7 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                         "type": "sentinel-2-l2a",
                         "dataFilter": {
                             "maxCloudCoverage": request.max_cloud
-                            or SH_MAX_CLOUD,
+                            or get_default_max_cloud(),
                             "timeRange": {
                                 "from": day_start.isoformat() + "Z",
                                 "to": day_end.isoformat() + "Z",
@@ -195,6 +194,8 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                 status_code = (
                     exc.response.status_code if exc.response else None
                 )
+                if status_code in (401, 403):
+                    raise SentinelHubAuthError(status_code) from exc
                 snippet = self._response_snippet(exc.response)
                 logger.warning(
                     "Sentinel Hub raster upstream error status=%s body=%s",
