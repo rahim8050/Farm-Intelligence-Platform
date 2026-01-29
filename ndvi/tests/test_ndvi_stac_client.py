@@ -17,7 +17,7 @@ def test_stac_client_search_filters_and_selects(
         collection="collection",
         timeout_seconds=1,
     )
-    response_data = {
+    response_data: dict[str, object] = {
         "features": [
             {
                 "id": "low-cloud-close",

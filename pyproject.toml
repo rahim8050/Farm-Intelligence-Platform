@@ -82,3 +82,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["celery", "celery.schedules"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["rasterio", "rasterio.*", "PIL", "PIL.*"]
+ignore_missing_imports = true

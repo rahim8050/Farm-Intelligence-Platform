@@ -37,6 +37,7 @@ repos:
           - celery
           - redis
           - httpx
+          - numpy
           - pytest-django
           - django-extensions
           

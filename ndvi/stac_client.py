@@ -5,13 +5,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Final
 from urllib.parse import urljoin
 
 import httpx
 import numpy as np
 import rasterio
-from dateutil.parser import isoparse
 from django.conf import settings
 from rasterio.enums import Resampling
 from rasterio.errors import RasterioError
@@ -24,6 +23,7 @@ MAX_ERROR_SNIPPET_CHARS = 1600
 DEFAULT_MAX_ITEMS = 500
 DEFAULT_LIMIT = 200
 DEFAULT_STATS_SAMPLE_SIZE = 128
+DEFAULT_STAC_API_URL: Final[str] = "https://stac.dataspace.copernicus.eu/v1/"
 
 
 class StacError(RuntimeError):
@@ -129,6 +129,20 @@ def normalize_cloud_fraction(cloud_cover: float | None) -> float | None:
     if cloud_cover > 1.0:
         return cloud_cover / 100.0
     return cloud_cover
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def load_ndvi_array(
@@ -238,11 +252,14 @@ class StacClient:
         timeout_seconds: float | None = None,
         max_items: int | None = None,
     ) -> None:
-        api_url = base_url or getattr(
+        api_url_raw = base_url or getattr(
             settings,
             "NDVI_STAC_API_URL",
-            "https://stac.dataspace.copernicus.eu/v1/",
+            DEFAULT_STAC_API_URL,
         )
+        api_url = str(api_url_raw).strip()
+        if not api_url:
+            raise ValueError("NDVI_STAC_API_URL is required")
         self.base_url = api_url.rstrip("/") + "/"
         self.search_url = urljoin(self.base_url, "search")
         self.collection = collection or getattr(
@@ -357,9 +374,8 @@ class StacClient:
             )
             if not raw_dt:
                 continue
-            try:
-                dt = isoparse(str(raw_dt))
-            except (TypeError, ValueError):
+            dt = _parse_datetime(raw_dt)
+            if dt is None:
                 continue
             cloud_val = properties.get("eo:cloud_cover")
             if cloud_val is None:

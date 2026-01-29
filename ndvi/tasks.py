@@ -12,20 +12,21 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from farms.models import Farm
+from ndvi.engines.sentinelhub import SentinelHubAuthError
+from ndvi.stac_client import StacProcessingError, StacUpstreamError
 
 from .metrics import ndvi_jobs_total
 from .models import NdviJob, NdviRasterArtifact
 from .raster.service import render_ndvi_png
 from .services import (
-    DEFAULT_ENGINE,
-    DEFAULT_LOOKBACK_DAYS,
-    DEFAULT_MAX_CLOUD,
-    DEFAULT_STEP_DAYS,
-    LOCK_TIMEOUT_SECONDS,
     acquire_lock,
     enforce_quota,
     enqueue_job,
+    get_default_lookback_days,
+    get_default_max_cloud,
+    get_default_step_days,
     get_engine,
+    get_lock_timeout_seconds,
     normalize_bbox,
     normalize_latest_params,
     normalize_timeseries_params,
@@ -38,7 +39,8 @@ logger = logging.getLogger(__name__)
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def run_ndvi_job(self: Any, job_id: int) -> str:
     job = NdviJob.objects.select_related("farm", "owner").get(id=job_id)
-    if not acquire_lock(job.request_hash, timeout=LOCK_TIMEOUT_SECONDS):
+    lock_timeout = get_lock_timeout_seconds()
+    if not acquire_lock(job.request_hash, timeout=lock_timeout):
         logger.info("ndvi.lock.skipped job_id=%s", job.id)
         return "locked"
 
@@ -48,15 +50,14 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
 
         with transaction.atomic():
             job.mark_running(
-                locked_until=timezone.now()
-                + timedelta(seconds=LOCK_TIMEOUT_SECONDS)
+                locked_until=timezone.now() + timedelta(seconds=lock_timeout)
             )
 
         if job.job_type == NdviJob.JobType.REFRESH_LATEST:
             engine = get_engine(job.engine)
             latest_params = normalize_latest_params(
-                lookback_days=job.lookback_days or DEFAULT_LOOKBACK_DAYS,
-                max_cloud=job.max_cloud or DEFAULT_MAX_CLOUD,
+                lookback_days=job.lookback_days or get_default_lookback_days(),
+                max_cloud=job.max_cloud or get_default_max_cloud(),
             )
             point = engine.get_latest(
                 bbox=bbox,
@@ -80,7 +81,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 )
             if raster_size * raster_size > 1024 * 1024:
                 raise ValidationError("Raster size exceeds pixel limit.")
-            max_cloud = job.max_cloud or DEFAULT_MAX_CLOUD
+            max_cloud = job.max_cloud or get_default_max_cloud()
             content, content_hash = render_ndvi_png(
                 farm=job.farm,
                 bbox=bbox,
@@ -88,6 +89,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 size=raster_size,
                 max_cloud=max_cloud,
                 engine_name=job.engine,
+                job_id=job.id,
             )
             filename = (
                 f"ndvi_raster_{job.farm_id}_{raster_date}_{raster_size}_"
@@ -113,10 +115,10 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             engine = get_engine(job.engine)
             timeseries_params = normalize_timeseries_params(
                 start=job.start
-                or date.today() - timedelta(days=DEFAULT_STEP_DAYS),
+                or date.today() - timedelta(days=get_default_step_days()),
                 end=job.end or date.today(),
-                step_days=job.step_days or DEFAULT_STEP_DAYS,
-                max_cloud=job.max_cloud or DEFAULT_MAX_CLOUD,
+                step_days=job.step_days or get_default_step_days(),
+                max_cloud=job.max_cloud or get_default_max_cloud(),
             )
             points = engine.get_timeseries(
                 bbox=bbox,
@@ -136,6 +138,39 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             engine=job.engine,
         ).inc()
         return "ok"
+    except SentinelHubAuthError as exc:
+        logger.warning("ndvi.job.auth_failed job_id=%s err=%s", job.id, exc)
+        job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
+        ndvi_jobs_total.labels(
+            status=NdviJob.JobStatus.FAILED,
+            type=job.job_type,
+            engine=job.engine,
+        ).inc()
+        return "invalid"
+    except StacUpstreamError as exc:
+        logger.warning("ndvi.job.stac_failed job_id=%s err=%s", job.id, exc)
+        job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
+        ndvi_jobs_total.labels(
+            status=NdviJob.JobStatus.FAILED,
+            type=job.job_type,
+            engine=job.engine,
+        ).inc()
+        if exc.retryable:
+            raise self.retry(exc=exc) from exc
+        return "invalid"
+    except StacProcessingError as exc:
+        logger.warning(
+            "ndvi.job.stac_processing_failed job_id=%s err=%s",
+            job.id,
+            exc,
+        )
+        job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
+        ndvi_jobs_total.labels(
+            status=NdviJob.JobStatus.FAILED,
+            type=job.job_type,
+            engine=job.engine,
+        ).inc()
+        return "invalid"
     except ValidationError as exc:
         logger.warning("ndvi.job.invalid job_id=%s err=%s", job.id, exc)
         job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
@@ -170,11 +205,11 @@ def enqueue_daily_refresh() -> int:
         job = enqueue_job(
             owner_id=farm.owner_id,
             farm=farm,
-            engine=DEFAULT_ENGINE,
+            engine_name=None,
             job_type=NdviJob.JobType.REFRESH_LATEST,
             params={
-                "lookback_days": DEFAULT_LOOKBACK_DAYS,
-                "max_cloud": DEFAULT_MAX_CLOUD,
+                "lookback_days": get_default_lookback_days(),
+                "max_cloud": get_default_max_cloud(),
             },
         )
         run_ndvi_job.delay(job.id)
@@ -198,13 +233,13 @@ def enqueue_weekly_gap_fill() -> int:
         job = enqueue_job(
             owner_id=farm.owner_id,
             farm=farm,
-            engine=DEFAULT_ENGINE,
+            engine_name=None,
             job_type=NdviJob.JobType.GAP_FILL,
             params={
                 "start": start,
                 "end": end,
                 "step_days": 7,
-                "max_cloud": DEFAULT_MAX_CLOUD,
+                "max_cloud": get_default_max_cloud(),
             },
         )
         run_ndvi_job.delay(job.id)

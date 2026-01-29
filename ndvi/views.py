@@ -9,9 +9,11 @@ with the standard envelope:
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterable
-from typing import Any, cast
+from datetime import date
+from typing import Any, Final, cast
 
 from django.conf import settings
 from django.core.cache import caches
@@ -25,7 +27,7 @@ from drf_spectacular.utils import (
     inline_serializer,
 )
 from rest_framework import serializers, status
-from rest_framework.exceptions import Throttled
+from rest_framework.exceptions import Throttled, ValidationError
 from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer, JSONRenderer
@@ -37,11 +39,12 @@ from config.api.openapi import (
     error_envelope_serializer,
     success_envelope_serializer,
 )
-from config.api.responses import error_response, success_response
+from config.api.responses import JSONValue, error_response, success_response
 from farms.models import Farm
 
 from .metrics import ndvi_farms_stale_total
 from .models import NdviJob, NdviObservation, NdviRasterArtifact
+from .raster.registry import resolve_raster_engine_name
 from .serializers import (
     LatestRequestSerializer,
     NdviJobSerializer,
@@ -50,9 +53,6 @@ from .serializers import (
     TimeseriesRequestSerializer,
 )
 from .services import (
-    DEFAULT_ENGINE,
-    DEFAULT_LOOKBACK_DAYS,
-    DEFAULT_MAX_CLOUD,
     LatestParams,
     TimeseriesParams,
     cache_latest_response,
@@ -63,14 +63,89 @@ from .services import (
     expected_buckets,
     get_cached_latest_response,
     get_cached_timeseries_response,
+    get_default_lookback_days,
+    get_default_max_cloud,
+    hash_request,
     is_stale,
     normalize_bbox,
+    resolve_ndvi_engine_name,
 )
 from .tasks import run_ndvi_job
 
 logger = logging.getLogger(__name__)
 
 ndvi_error_response = error_envelope_serializer("NdviErrorResponse")
+RASTER_NOT_FOUND_MESSAGE: Final[str] = "Raster not found"
+RASTER_NOT_FOUND_CODE: Final[str] = "raster_not_found"
+RASTER_NOT_FOUND_REASONS: Final[tuple[str, ...]] = (
+    "no_items",
+    "no_best_item",
+    "missing_assets",
+)
+
+
+def _extract_raster_not_found_reason(
+    last_error: str | None,
+) -> str | None:
+    if not last_error:
+        return None
+    try:
+        payload = json.loads(last_error)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        reason = payload.get("reason")
+        if isinstance(reason, str):
+            return reason
+    for reason in RASTER_NOT_FOUND_REASONS:
+        if reason in last_error:
+            return reason
+    return None
+
+
+def _lookup_raster_not_found_reason(
+    *,
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    raster_date: date,
+    size: int,
+    max_cloud: int,
+) -> str | None:
+    request_hash = hash_request(
+        engine=engine,
+        owner_id=owner_id,
+        farm_id=farm_id,
+        params={
+            "start": raster_date,
+            "end": raster_date,
+            "step_days": size,
+            "max_cloud": max_cloud,
+        },
+    )
+    job = (
+        NdviJob.objects.filter(
+            owner_id=owner_id,
+            farm_id=farm_id,
+            engine=engine,
+            request_hash=request_hash,
+            status=NdviJob.JobStatus.FAILED,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    return _extract_raster_not_found_reason(job.last_error if job else None)
+
+
+def _build_raster_not_found_errors(
+    reason: str | None,
+) -> dict[str, JSONValue]:
+    return {
+        "detail": RASTER_NOT_FOUND_MESSAGE,
+        "code": RASTER_NOT_FOUND_CODE,
+        "reason": reason,
+    }
+
 
 ndvi_observation_schema = NdviObservationSerializer()
 timeseries_data_schema = inline_serializer(
@@ -125,6 +200,14 @@ raster_queue_success_response = success_envelope_serializer(
     ),
 )
 
+engine_query_param = OpenApiParameter(
+    name="engine",
+    type=OpenApiTypes.STR,
+    location=OpenApiParameter.QUERY,
+    required=False,
+    description="Override NDVI engine (sentinelhub or stac).",
+)
+
 timeseries_query_params = [
     OpenApiParameter(
         name="start",
@@ -152,6 +235,7 @@ timeseries_query_params = [
         required=False,
         description="Maximum cloud coverage percent (0-100)",
     ),
+    engine_query_param,
 ]
 
 latest_query_params = [
@@ -167,6 +251,7 @@ latest_query_params = [
         location=OpenApiParameter.QUERY,
         required=False,
     ),
+    engine_query_param,
 ]
 
 raster_query_params = [
@@ -188,6 +273,7 @@ raster_query_params = [
         location=OpenApiParameter.QUERY,
         required=False,
     ),
+    engine_query_param,
 ]
 
 
@@ -265,14 +351,22 @@ class NdviTimeseriesView(BaseFarmView):
     def get(self, request: Request, farm_id: int) -> Response:
         """Return NDVI observations for the requested range.
 
-        Query params: start, end, optional step_days, optional max_cloud.
+        Query params: start, end, optional step_days, optional max_cloud,
+        optional engine.
         Success: envelope containing observations + metadata
         (is_partial, missing_buckets_count).
         Side effects: schedules gap-fill job when buckets are missing.
         """
 
         farm = self._get_farm(farm_id, cast(int, request.user.id))
-        serializer = TimeseriesRequestSerializer(data=request.query_params)
+        engine_override = request.query_params.get("engine")
+        try:
+            engine_name = resolve_ndvi_engine_name(engine_override)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        serializer = TimeseriesRequestSerializer(
+            data=request.query_params, context={"engine": engine_name}
+        )
         serializer.is_valid(raise_exception=True)
         params = TimeseriesParams(**serializer.validated_data)
 
@@ -282,7 +376,7 @@ class NdviTimeseriesView(BaseFarmView):
         cached = get_cached_timeseries_response(
             owner_id=cast(int, request.user.id),
             farm_id=farm.id,
-            engine=DEFAULT_ENGINE,
+            engine=engine_name,
             params=params,
         )
         if cached:
@@ -293,7 +387,7 @@ class NdviTimeseriesView(BaseFarmView):
         observations = list(
             NdviObservation.objects.filter(
                 farm=farm,
-                engine=DEFAULT_ENGINE,
+                engine=engine_name,
                 bucket_date__gte=params.start,
                 bucket_date__lte=params.end,
             ).order_by("bucket_date")
@@ -311,7 +405,7 @@ class NdviTimeseriesView(BaseFarmView):
             job = enqueue_job(
                 owner_id=cast(int, request.user.id),
                 farm=farm,
-                engine=DEFAULT_ENGINE,
+                engine_name=engine_override,
                 job_type=NdviJob.JobType.GAP_FILL,
                 params={
                     "start": params.start,
@@ -324,7 +418,7 @@ class NdviTimeseriesView(BaseFarmView):
 
         payload: dict[str, Any] = {
             "observations": serialized,
-            "engine": DEFAULT_ENGINE,
+            "engine": engine_name,
             "start": params.start,
             "end": params.end,
             "step_days": params.step_days,
@@ -335,7 +429,7 @@ class NdviTimeseriesView(BaseFarmView):
         cache_timeseries_response(
             owner_id=cast(int, request.user.id),
             farm_id=farm.id,
-            engine=DEFAULT_ENGINE,
+            engine=engine_name,
             params=params,
             payload=payload,
         )
@@ -356,13 +450,21 @@ class NdviLatestView(BaseFarmView):
     def get(self, request: Request, farm_id: int) -> Response:
         """Return the most recent NDVI observation if present.
 
-        Query params: lookback_days (optional), max_cloud (optional).
+        Query params: lookback_days (optional), max_cloud (optional),
+        engine (optional).
         Success: envelope with `observation` or null, plus stale flag.
         Side effects: enqueues refresh_latest job when missing/stale.
         """
 
         farm = self._get_farm(farm_id, cast(int, request.user.id))
-        serializer = LatestRequestSerializer(data=request.query_params)
+        engine_override = request.query_params.get("engine")
+        try:
+            engine_name = resolve_ndvi_engine_name(engine_override)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        serializer = LatestRequestSerializer(
+            data=request.query_params, context={"engine": engine_name}
+        )
         serializer.is_valid(raise_exception=True)
         params = LatestParams(**serializer.validated_data)
 
@@ -372,25 +474,25 @@ class NdviLatestView(BaseFarmView):
         cached = get_cached_latest_response(
             owner_id=cast(int, request.user.id),
             farm_id=farm.id,
-            engine=DEFAULT_ENGINE,
+            engine=engine_name,
             params=params,
         )
         if cached:
             return success_response(cached, message="NDVI latest (cached)")
 
         observation = (
-            NdviObservation.objects.filter(farm=farm, engine=DEFAULT_ENGINE)
+            NdviObservation.objects.filter(farm=farm, engine=engine_name)
             .order_by("-bucket_date")
             .first()
         )
 
         stale = is_stale(observation, params.lookback_days)
         if stale:
-            ndvi_farms_stale_total.labels(engine=DEFAULT_ENGINE).set(1)
+            ndvi_farms_stale_total.labels(engine=engine_name).set(1)
             job = enqueue_job(
                 owner_id=cast(int, request.user.id),
                 farm=farm,
-                engine=DEFAULT_ENGINE,
+                engine_name=engine_override,
                 job_type=NdviJob.JobType.REFRESH_LATEST,
                 params={
                     "lookback_days": params.lookback_days,
@@ -399,7 +501,7 @@ class NdviLatestView(BaseFarmView):
             )
             run_ndvi_job.delay(job.id)
         else:
-            ndvi_farms_stale_total.labels(engine=DEFAULT_ENGINE).set(0)
+            ndvi_farms_stale_total.labels(engine=engine_name).set(0)
 
         payload: dict[str, Any] = {
             "observation": (
@@ -407,7 +509,7 @@ class NdviLatestView(BaseFarmView):
                 if observation
                 else None
             ),
-            "engine": DEFAULT_ENGINE,
+            "engine": engine_name,
             "lookback_days": params.lookback_days,
             "max_cloud": params.max_cloud,
             "stale": stale,
@@ -415,7 +517,7 @@ class NdviLatestView(BaseFarmView):
         cache_latest_response(
             owner_id=cast(int, request.user.id),
             farm_id=farm.id,
-            engine=DEFAULT_ENGINE,
+            engine=engine_name,
             params=params,
             payload=payload,
         )
@@ -442,22 +544,23 @@ class NdviRasterPngView(BaseFarmView):
     def get(self, request: Request, farm_id: int) -> HttpResponse | Response:
         """Return a cached NDVI raster PNG or 404 if missing.
 
-        Query params: date (required), optional size and max_cloud.
+        Query params: date (required), optional size, max_cloud, engine.
         Success: binary image/png with ETag + Cache-Control.
         Errors: standard error envelope.
         """
 
         farm = self._get_farm(farm_id, cast(int, request.user.id))
-        serializer = RasterPngRequestSerializer(data=request.query_params)
+        engine_override = request.query_params.get("engine")
+        engine_name = resolve_raster_engine_name(engine_override)
+        serializer = RasterPngRequestSerializer(
+            data=request.query_params, context={"engine": engine_name}
+        )
         serializer.is_valid(raise_exception=True)
         params = serializer.validated_data
 
         bbox = normalize_bbox(farm)
         enforce_quota(farm, bbox)
 
-        engine_name = getattr(
-            settings, "NDVI_RASTER_ENGINE_NAME", DEFAULT_ENGINE
-        )
         cache_key = (
             f"ndvi:raster:ptr:{farm.id}:{engine_name}:"
             f"{params['date']}:{params['size']}:{params['max_cloud']}"
@@ -484,8 +587,17 @@ class NdviRasterPngView(BaseFarmView):
                     getattr(settings, "NDVI_RASTER_CACHE_TTL_SECONDS", 86400),
                 )
         if artifact is None:
+            reason = _lookup_raster_not_found_reason(
+                owner_id=cast(int, request.user.id),
+                farm_id=farm.id,
+                engine=engine_name,
+                raster_date=cast(date, params["date"]),
+                size=cast(int, params["size"]),
+                max_cloud=cast(int, params["max_cloud"]),
+            )
             return error_response(
-                "Raster not found",
+                RASTER_NOT_FOUND_MESSAGE,
+                errors=_build_raster_not_found_errors(reason),
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
@@ -500,8 +612,17 @@ class NdviRasterPngView(BaseFarmView):
         content = artifact.image.read()
         artifact.image.close()
         if not content:
+            reason = _lookup_raster_not_found_reason(
+                owner_id=cast(int, request.user.id),
+                farm_id=farm.id,
+                engine=engine_name,
+                raster_date=cast(date, params["date"]),
+                size=cast(int, params["size"]),
+                max_cloud=cast(int, params["max_cloud"]),
+            )
             return error_response(
-                "Raster not found",
+                RASTER_NOT_FOUND_MESSAGE,
+                errors=_build_raster_not_found_errors(reason),
                 status_code=status.HTTP_404_NOT_FOUND,
             )
         response = HttpResponse(content, content_type="image/png")
@@ -524,6 +645,7 @@ class NdviRasterQueueView(BaseFarmView):
 
     @extend_schema(
         request=RasterPngRequestSerializer,
+        parameters=[engine_query_param],
         responses={
             202: raster_queue_success_response,
             400: ndvi_error_response,
@@ -532,10 +654,17 @@ class NdviRasterQueueView(BaseFarmView):
         },
     )
     def post(self, request: Request, farm_id: int) -> Response:
-        """Enqueue a raster render job for the specified date."""
+        """Enqueue a raster render job for the specified date.
+
+        Query params: optional engine override.
+        """
 
         farm = self._get_farm(farm_id, cast(int, request.user.id))
-        serializer = RasterPngRequestSerializer(data=request.data)
+        engine_override = request.query_params.get("engine")
+        engine_name = resolve_raster_engine_name(engine_override)
+        serializer = RasterPngRequestSerializer(
+            data=request.data, context={"engine": engine_name}
+        )
         serializer.is_valid(raise_exception=True)
         params = serializer.validated_data
 
@@ -548,13 +677,10 @@ class NdviRasterQueueView(BaseFarmView):
             raise Throttled(detail="Raster already queued recently.")
         throttle_cache.set(key, "1", self.throttle_cooldown)
 
-        engine_name = getattr(
-            settings, "NDVI_RASTER_ENGINE_NAME", DEFAULT_ENGINE
-        )
         job = enqueue_job(
             owner_id=cast(int, request.user.id),
             farm=farm,
-            engine=engine_name,
+            engine_name=engine_override,
             job_type=NdviJob.JobType.RASTER_PNG,
             params={
                 "start": params["date"],
@@ -608,11 +734,11 @@ class NdviRefreshView(BaseFarmView):
         job = enqueue_job(
             owner_id=cast(int, request.user.id),
             farm=farm,
-            engine=DEFAULT_ENGINE,
+            engine_name=None,
             job_type=NdviJob.JobType.REFRESH_LATEST,
             params={
-                "lookback_days": DEFAULT_LOOKBACK_DAYS,
-                "max_cloud": DEFAULT_MAX_CLOUD,
+                "lookback_days": get_default_lookback_days(),
+                "max_cloud": get_default_max_cloud(),
             },
         )
         run_ndvi_job.delay(job.id)

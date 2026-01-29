@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import date
 from unittest.mock import patch
@@ -10,11 +11,14 @@ from django.core.cache import caches
 from django.core.files.base import ContentFile
 from django.test import override_settings
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase
 
 from farms.models import Farm
 from ndvi.models import NdviJob, NdviRasterArtifact
+from ndvi.services import hash_request
 from ndvi.tasks import run_ndvi_job
+from ndvi.views import _extract_raster_not_found_reason
 
 PNG_BYTES = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
@@ -74,6 +78,47 @@ class NdviRasterApiTests(APITestCase):
         )
         artifact.image.save("raster.png", ContentFile(content), save=True)
         return artifact
+
+    def _create_failed_raster_job(
+        self,
+        *,
+        day: date,
+        size: int,
+        max_cloud: int,
+        reason: str,
+        engine: str = "stac",
+    ) -> None:
+        request_hash = hash_request(
+            engine=engine,
+            owner_id=self.user.id,
+            farm_id=self.farm.id,
+            params={
+                "start": day,
+                "end": day,
+                "step_days": size,
+                "max_cloud": max_cloud,
+            },
+        )
+        error = ValidationError(
+            {
+                "detail": "Raster not found",
+                "code": "raster_not_found",
+                "reason": reason,
+            }
+        )
+        NdviJob.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            engine=engine,
+            job_type=NdviJob.JobType.RASTER_PNG,
+            status=NdviJob.JobStatus.FAILED,
+            start=day,
+            end=day,
+            step_days=size,
+            max_cloud=max_cloud,
+            request_hash=request_hash,
+            last_error=str(error),
+        )
 
     def test_queue_success_and_cooldown(self) -> None:
         self.client.force_authenticate(user=self.user)
@@ -140,13 +185,40 @@ class NdviRasterApiTests(APITestCase):
         self.assertEqual(resp["Content-Type"], "image/png")
 
     def test_raster_get_missing_returns_404(self) -> None:
+        self._create_failed_raster_job(
+            day=date(2024, 2, 10),
+            size=512,
+            max_cloud=30,
+            reason="no_items",
+        )
         self.client.force_authenticate(user=self.user)
         resp = self.client.get(
             self.raster_url,
-            {"date": "2024-02-10", "size": "512", "max_cloud": "30"},
+            {
+                "date": "2024-02-10",
+                "size": "512",
+                "max_cloud": "30",
+                "engine": "stac",
+            },
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertEqual(resp.json()["status"], 1)
+        body = resp.json()
+        self.assertEqual(body["status"], 1)
+        self.assertEqual(body["message"], "Raster not found")
+        self.assertEqual(body["errors"]["detail"], "Raster not found")
+        self.assertEqual(body["errors"]["code"], "raster_not_found")
+        self.assertEqual(body["errors"]["reason"], "no_items")
+
+    def test_extract_raster_not_found_reason_json(self) -> None:
+        payload = json.dumps(
+            {
+                "detail": "Raster not found",
+                "code": "raster_not_found",
+                "reason": "no_items",
+            }
+        )
+        reason = _extract_raster_not_found_reason(payload)
+        self.assertEqual(reason, "no_items")
 
     def test_raster_get_empty_content_returns_404(self) -> None:
         self._create_artifact(
