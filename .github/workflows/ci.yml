@@ -115,8 +115,11 @@ jobs:
       - name: Ruff (format check)
         run: python -m ruff format --check .
 
+      - name: Typecheck import guard
+        run: python -c "import numpy; print(numpy.__version__)"
+
       - name: MyPy (types)
-        run: python -m mypy .
+        run: bash scripts/typecheck.sh
 
       - name: Bandit (security)
         run: |

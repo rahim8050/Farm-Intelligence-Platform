@@ -315,7 +315,7 @@ pre-commit run --all-files
 pytest
 ruff format .
 ruff check .
-mypy .
+./scripts/typecheck.sh
 bandit -c pyproject.toml -r .
 ```
 
