@@ -288,10 +288,16 @@ paths:
       description: |-
         Return the most recent NDVI observation if present.
 
-        Query params: lookback_days (optional), max_cloud (optional).
+        Query params: lookback_days (optional), max_cloud (optional),
+        engine (optional).
         Success: envelope with `observation` or null, plus stale flag.
         Side effects: enqueues refresh_latest job when missing/stale.
       parameters:
+      - in: query
+        name: engine
+        schema:
+          type: string
+        description: Override NDVI engine (sentinelhub or stac).
       - in: path
         name: farm_id
         schema:
@@ -335,7 +341,7 @@ paths:
       description: |-
         Return a cached NDVI raster PNG or 404 if missing.
 
-        Query params: date (required), optional size and max_cloud.
+        Query params: date (required), optional size, max_cloud, engine.
         Success: binary image/png with ETag + Cache-Control.
         Errors: standard error envelope.
       parameters:
@@ -345,6 +351,11 @@ paths:
           type: string
           format: date
         required: true
+      - in: query
+        name: engine
+        schema:
+          type: string
+        description: Override NDVI engine (sentinelhub or stac).
       - in: path
         name: farm_id
         schema:
@@ -400,8 +411,16 @@ paths:
   /api/v1/farms/{farm_id}/ndvi/raster/queue:
     post:
       operationId: v1_farms_ndvi_raster_queue_create
-      description: Enqueue a raster render job for the specified date.
+      description: |-
+        Enqueue a raster render job for the specified date.
+
+        Query params: optional engine override.
       parameters:
+      - in: query
+        name: engine
+        schema:
+          type: string
+        description: Override NDVI engine (sentinelhub or stac).
       - in: path
         name: farm_id
         schema:
@@ -495,7 +514,8 @@ paths:
       description: |-
         Return NDVI observations for the requested range.
 
-        Query params: start, end, optional step_days, optional max_cloud.
+        Query params: start, end, optional step_days, optional max_cloud,
+        optional engine.
         Success: envelope containing observations + metadata
         (is_partial, missing_buckets_count).
         Side effects: schedules gap-fill job when buckets are missing.
@@ -506,6 +526,11 @@ paths:
           type: string
           format: date
         required: true
+      - in: query
+        name: engine
+        schema:
+          type: string
+        description: Override NDVI engine (sentinelhub or stac).
       - in: path
         name: farm_id
         schema:

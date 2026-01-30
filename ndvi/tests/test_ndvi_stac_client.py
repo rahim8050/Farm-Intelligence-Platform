@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import importlib
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import cast
 
 import httpx
@@ -14,6 +16,7 @@ from ndvi.engines.base import BBox
 from ndvi.stac_client import (
     MAX_ERROR_SNIPPET_CHARS,
     StacClient,
+    StacDependencyError,
     StacItem,
     StacProcessingError,
     StacUpstreamError,
@@ -398,9 +401,58 @@ def test_request_returns_response_on_success(
     assert client._request("GET", "https://example.com") is response
 
 
+def test_stac_client_imports_without_rasterio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import_module = importlib.import_module
+
+    def blocked(name: str, package: str | None = None) -> object:
+        if name == "rasterio" or name.startswith("rasterio."):
+            raise ModuleNotFoundError("No module named 'rasterio'")
+        return original_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", blocked)
+    import sys
+
+    sys.modules.pop("ndvi.stac_client", None)
+    module = importlib.import_module("ndvi.stac_client")
+    assert module is not None
+
+
+def test_load_ndvi_array_requires_rasterio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import_module = importlib.import_module
+
+    def blocked(name: str, package: str | None = None) -> object:
+        if name == "rasterio" or name.startswith("rasterio."):
+            raise ModuleNotFoundError("No module named 'rasterio'")
+        return original_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", blocked)
+    stac_module._require_rasterio.cache_clear()
+
+    with pytest.raises(StacDependencyError, match="Install rasterio"):
+        load_ndvi_array(
+            red_href="s3://example/red.tif",
+            nir_href="s3://example/nir.tif",
+            bbox=BBox(
+                south=Decimal("0.0"),
+                west=Decimal("0.0"),
+                north=Decimal("0.1"),
+                east=Decimal("0.1"),
+            ),
+            size=128,
+            timeout_seconds=1.0,
+        )
+
+
 def test_load_ndvi_array_rasterio_error_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class FakeRasterioError(Exception):
+        pass
+
     class FakeEnv:
         def __init__(self, **_kwargs: object) -> None:
             self.kwargs = _kwargs
@@ -417,10 +469,20 @@ def test_load_ndvi_array_rasterio_error_raises(
             return None
 
     def fake_open(_path: str) -> None:
-        raise stac_module.RasterioError("boom")
+        raise FakeRasterioError("boom")
 
-    monkeypatch.setattr(stac_module.rasterio, "Env", FakeEnv)
-    monkeypatch.setattr(stac_module.rasterio, "open", fake_open)
+    fake_rasterio = SimpleNamespace(Env=FakeEnv, open=fake_open)
+    monkeypatch.setattr(
+        stac_module,
+        "_require_rasterio",
+        lambda: (
+            fake_rasterio,
+            SimpleNamespace(bilinear=object()),
+            FakeRasterioError,
+            lambda *_args, **_kwargs: (0.0, 0.0, 1.0, 1.0),
+            lambda *_args, **_kwargs: object(),
+        ),
+    )
 
     with pytest.raises(StacProcessingError):
         load_ndvi_array(
@@ -440,6 +502,9 @@ def test_load_ndvi_array_rasterio_error_raises(
 def test_load_ndvi_array_computes_ndvi(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class FakeRasterioError(Exception):
+        pass
+
     class FakeEnv:
         def __init__(self, **_kwargs: object) -> None:
             self.kwargs = _kwargs
@@ -490,13 +555,17 @@ def test_load_ndvi_array_computes_ndvi(
     def fake_open(_path: str) -> FakeDataset:
         return datasets.pop(0)
 
-    monkeypatch.setattr(stac_module.rasterio, "Env", FakeEnv)
-    monkeypatch.setattr(stac_module.rasterio, "open", fake_open)
+    fake_rasterio = SimpleNamespace(Env=FakeEnv, open=fake_open)
     monkeypatch.setattr(
-        stac_module, "transform_bounds", lambda *args, **kwargs: (0, 0, 1, 1)
-    )
-    monkeypatch.setattr(
-        stac_module, "from_bounds", lambda *args, **kwargs: object()
+        stac_module,
+        "_require_rasterio",
+        lambda: (
+            fake_rasterio,
+            SimpleNamespace(bilinear=object()),
+            FakeRasterioError,
+            lambda *_args, **_kwargs: (0.0, 0.0, 1.0, 1.0),
+            lambda *_args, **_kwargs: object(),
+        ),
     )
 
     ndvi = load_ndvi_array(
@@ -518,6 +587,9 @@ def test_load_ndvi_array_computes_ndvi(
 def test_load_ndvi_array_missing_crs_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class FakeRasterioError(Exception):
+        pass
+
     class FakeEnv:
         def __init__(self, **_kwargs: object) -> None:
             self.kwargs = _kwargs
@@ -565,13 +637,17 @@ def test_load_ndvi_array_missing_crs_raises(
     def fake_open(_path: str) -> FakeDataset:
         return datasets.pop(0)
 
-    monkeypatch.setattr(stac_module.rasterio, "Env", FakeEnv)
-    monkeypatch.setattr(stac_module.rasterio, "open", fake_open)
+    fake_rasterio = SimpleNamespace(Env=FakeEnv, open=fake_open)
     monkeypatch.setattr(
-        stac_module, "transform_bounds", lambda *args, **kwargs: (0, 0, 1, 1)
-    )
-    monkeypatch.setattr(
-        stac_module, "from_bounds", lambda *args, **kwargs: object()
+        stac_module,
+        "_require_rasterio",
+        lambda: (
+            fake_rasterio,
+            SimpleNamespace(bilinear=object()),
+            FakeRasterioError,
+            lambda *_args, **_kwargs: (0.0, 0.0, 1.0, 1.0),
+            lambda *_args, **_kwargs: object(),
+        ),
     )
 
     with pytest.raises(StacProcessingError):

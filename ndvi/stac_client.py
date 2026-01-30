@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import lru_cache
 from typing import Any, Final
 from urllib.parse import urljoin
 
 import httpx
 import numpy as np
-import rasterio
 from django.conf import settings
-from rasterio.enums import Resampling
-from rasterio.errors import RasterioError
-from rasterio.warp import transform_bounds
-from rasterio.windows import from_bounds
 
 from ndvi.engines.base import BBox
 
@@ -47,6 +44,10 @@ class StacUpstreamError(StacError):
 
 class StacProcessingError(StacError):
     """Raised when raster processing fails."""
+
+
+class StacDependencyError(StacError):
+    """Raised when optional STAC raster dependencies are missing."""
 
 
 @dataclass(frozen=True)
@@ -158,6 +159,13 @@ def load_ndvi_array(
     Returns NaN for invalid pixels.
     """
 
+    (
+        rasterio,
+        resampling_enum,
+        rasterio_error,
+        transform_bounds,
+        from_bounds,
+    ) = _require_rasterio()
     gdal_env = {
         "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
         "GDAL_HTTP_TIMEOUT": str(int(timeout_seconds)),
@@ -190,7 +198,7 @@ def load_ndvi_array(
                 out_shape: tuple[int, int] | None = None
                 if size:
                     out_shape = (size, size)
-                resampling = Resampling.bilinear
+                resampling = resampling_enum.bilinear
                 red = red_ds.read(
                     1,
                     window=window,
@@ -205,7 +213,7 @@ def load_ndvi_array(
                     resampling=resampling,
                     masked=True,
                 )
-    except RasterioError as exc:
+    except rasterio_error as exc:
         raise StacProcessingError(f"Raster processing failed: {exc}") from exc
     except Exception as exc:  # noqa: BLE001
         raise StacProcessingError(f"Raster processing failed: {exc}") from exc
@@ -220,6 +228,38 @@ def load_ndvi_array(
             np.nan,
         )
     return ndvi.astype(np.float32)
+
+
+@lru_cache(maxsize=1)
+def _require_rasterio() -> tuple[
+    Any,
+    Any,
+    type[Exception],
+    Any,
+    Any,
+]:
+    try:
+        rasterio = importlib.import_module("rasterio")
+        resampling_enum = importlib.import_module("rasterio.enums").Resampling
+        rasterio_error = importlib.import_module(
+            "rasterio.errors"
+        ).RasterioError
+        transform_bounds = importlib.import_module(
+            "rasterio.warp"
+        ).transform_bounds
+        from_bounds = importlib.import_module("rasterio.windows").from_bounds
+    except ModuleNotFoundError as exc:
+        raise StacDependencyError(
+            "Rasterio is required for STAC raster processing. "
+            "Install rasterio or install the stac extra."
+        ) from exc
+    return (
+        rasterio,
+        resampling_enum,
+        rasterio_error,
+        transform_bounds,
+        from_bounds,
+    )
 
 
 def compute_ndvi_stats(ndvi: np.ndarray) -> NdviStats | None:

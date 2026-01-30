@@ -309,6 +309,7 @@ Runbook: [docs/monitoring.md](docs/monitoring.md).
 ## Testing & quality gates
 
 Repo tooling is configured in `pyproject.toml` and `.pre-commit-config.yaml`.
+Type checking is enforced in pre-commit and CI via the same mypy invocation.
 
 ```bash
 pre-commit run --all-files

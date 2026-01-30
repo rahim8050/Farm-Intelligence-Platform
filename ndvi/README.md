@@ -242,6 +242,8 @@ STAC settings (used when `NDVI_ENGINE=stac` or `engine=stac`):
 - `NDVI_STAC_ASSET_RED` (default: `B04`)
 - `NDVI_STAC_ASSET_NIR` (default: `B08`)
 - `NDVI_STAC_TIMEOUT_SECS` (default: 30)
+Note: STAC raster rendering requires `rasterio`. Install rasterio or install
+the stac extra in your environment.
 
 Sentinel Hub credentials are read from environment variables (from code:
 `ndvi/engines/sentinelhub.py`):

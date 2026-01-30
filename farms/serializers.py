@@ -31,8 +31,12 @@ class FarmSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         # Mirror model.clean() logic early so API returns neat errors.
+        farm_instance: Farm | None = (
+            self.instance if isinstance(self.instance, Farm) else None
+        )
+
         def _val(key: str) -> Decimal | None:
-            default = getattr(self.instance, key, None)
+            default = getattr(farm_instance, key, None)
             return cast(Decimal | None, attrs.get(key, default))
 
         south = _val("bbox_south")
@@ -74,19 +78,19 @@ class FarmSerializer(serializers.ModelSerializer):
             name = attrs.get("name") or getattr(self.instance, "name", None)
             if name:
                 name_qs = Farm.objects.filter(owner_id=owner_id, name=name)
-                if self.instance is not None:
-                    name_qs = name_qs.exclude(id=self.instance.id)
+                if farm_instance is not None:
+                    name_qs = name_qs.exclude(id=farm_instance.id)
                 if name_qs.exists():
                     raise serializers.ValidationError(
                         {"name": "Farm name already exists."}
                     )
 
-                slug = getattr(self.instance, "slug", None)
+                slug = getattr(farm_instance, "slug", None)
                 if not slug:
                     slug = slugify(name)[:120] or "farm"
                 slug_qs = Farm.objects.filter(owner_id=owner_id, slug=slug)
-                if self.instance is not None:
-                    slug_qs = slug_qs.exclude(id=self.instance.id)
+                if farm_instance is not None:
+                    slug_qs = slug_qs.exclude(id=farm_instance.id)
                 if slug_qs.exists():
                     raise serializers.ValidationError(
                         {"name": "Farm name conflicts with an existing slug."}

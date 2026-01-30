@@ -1,3 +1,4 @@
 django-stubs[compatible-mypy]
 djangorestframework-stubs[compatible-mypy]
 django-extensions>=3.2.3
+
