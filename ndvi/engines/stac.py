@@ -14,10 +14,11 @@ from ndvi.stac_client import (
     NdviStats,
     StacClient,
     StacItem,
+    build_asset_candidates,
     compute_ndvi_stats,
     load_ndvi_array,
     normalize_cloud_fraction,
-    resolve_asset_href,
+    resolve_asset_href_candidates,
     select_best_item,
 )
 
@@ -192,8 +193,10 @@ class StacEngine(NDVIEngine):
         item: StacItem,
         bbox: BBox,
     ) -> NdviStats | None:
-        red_href = resolve_asset_href(item, self.asset_red)
-        nir_href = resolve_asset_href(item, self.asset_nir)
+        red_candidates = build_asset_candidates(self.asset_red)
+        nir_candidates = build_asset_candidates(self.asset_nir)
+        red_href = resolve_asset_href_candidates(item, red_candidates)
+        nir_href = resolve_asset_href_candidates(item, nir_candidates)
         if not red_href or not nir_href:
             logger.warning(
                 "stac.item.missing_assets item_id=%s", getattr(item, "id", "-")

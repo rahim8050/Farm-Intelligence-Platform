@@ -34,6 +34,7 @@ def render_ndvi_png(
         max_cloud=max_cloud,
         engine=resolved_engine,
         job_id=job_id,
+        farm_id=farm.id,
     )
     engine = get_engine(resolved_engine)
     content = engine.render_png(request)

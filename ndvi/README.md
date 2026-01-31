@@ -236,11 +236,11 @@ list):
 
 STAC settings (used when `NDVI_ENGINE=stac` or `engine=stac`):
 - `NDVI_STAC_API_URL` (default: `https://stac.dataspace.copernicus.eu/v1/`)
-- `NDVI_STAC_COLLECTION` (default: `SENTINEL-2-L2A`; override for your STAC)
+- `NDVI_STAC_COLLECTION` (default: `sentinel-2-l2a`; override for your STAC)
 - `NDVI_STAC_MAX_CLOUD_DEFAULT` (default: 30)
 - `NDVI_STAC_DATE_WINDOW_DAYS` (default: 3)
-- `NDVI_STAC_ASSET_RED` (default: `B04`)
-- `NDVI_STAC_ASSET_NIR` (default: `B08`)
+- `NDVI_STAC_ASSET_RED` (default: `B04_10m`)
+- `NDVI_STAC_ASSET_NIR` (default: `B08_10m`)
 - `NDVI_STAC_TIMEOUT_SECS` (default: 30)
 Note: STAC raster rendering requires `rasterio`. Install rasterio or install
 the stac extra in your environment.

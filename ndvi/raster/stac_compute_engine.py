@@ -13,9 +13,10 @@ from rest_framework.exceptions import ValidationError
 from ndvi.stac_client import (
     StacClient,
     StacItem,
+    build_asset_candidates,
     compute_ndvi_stats,
     load_ndvi_array,
-    resolve_asset_href,
+    resolve_asset_href_candidates,
     select_best_item,
 )
 
@@ -61,22 +62,33 @@ def _raise_raster_not_found(
     window_days: int,
     item: StacItem | None,
     items_count: int | None = None,
+    collections: list[str] | None = None,
+    item_collection: str | None = None,
+    available_assets: list[str] | None = None,
+    expected_assets: dict[str, list[str]] | None = None,
 ) -> NoReturn:
     window = timedelta(days=window_days)
     bbox = request.bbox
     bbox_values = (bbox.south, bbox.west, bbox.north, bbox.east)
     logger.warning(
-        "ndvi.raster.not_found reason=%s job_id=%s bbox=%s start=%s end=%s "
-        "max_cloud=%s window_days=%s item_id=%s items_count=%s",
+        "ndvi.raster.not_found reason=%s job_id=%s farm_id=%s bbox=%s "
+        "start=%s end=%s max_cloud=%s window_days=%s item_id=%s "
+        "item_collection=%s items_count=%s collections=%s "
+        "available_assets=%s expected_assets=%s",
         reason,
         request.job_id if request.job_id is not None else "-",
+        request.farm_id if request.farm_id is not None else "-",
         bbox_values,
         request.date - window,
         request.date + window,
         request.max_cloud,
         window_days,
         item.id if item is not None else "-",
+        item_collection or "-",
         items_count if items_count is not None else "-",
+        collections if collections is not None else "-",
+        available_assets if available_assets is not None else "-",
+        expected_assets if expected_assets is not None else "-",
     )
     raise ValidationError(
         {
@@ -112,6 +124,12 @@ class StacComputeRasterEngine(NdviRasterEngine):
         )
 
     def render_png(self, request: RasterRequest) -> bytes:
+        red_candidates = build_asset_candidates(self.asset_red)
+        nir_candidates = build_asset_candidates(self.asset_nir)
+        collections: list[str] | None = None
+        client_collection = getattr(self.client, "collection", None)
+        if client_collection:
+            collections = [str(client_collection)]
         window = timedelta(days=self.date_window_days)
         items = self.client.search(
             bbox=request.bbox,
@@ -126,6 +144,11 @@ class StacComputeRasterEngine(NdviRasterEngine):
                 window_days=self.date_window_days,
                 item=None,
                 items_count=0,
+                collections=collections,
+                expected_assets={
+                    "red": red_candidates,
+                    "nir": nir_candidates,
+                },
             )
         item = select_best_item(
             items,
@@ -139,10 +162,15 @@ class StacComputeRasterEngine(NdviRasterEngine):
                 window_days=self.date_window_days,
                 item=None,
                 items_count=len(items),
+                collections=collections,
+                expected_assets={
+                    "red": red_candidates,
+                    "nir": nir_candidates,
+                },
             )
 
-        red_href = resolve_asset_href(item, self.asset_red)
-        nir_href = resolve_asset_href(item, self.asset_nir)
+        red_href = resolve_asset_href_candidates(item, red_candidates)
+        nir_href = resolve_asset_href_candidates(item, nir_candidates)
         if not red_href or not nir_href:
             _raise_raster_not_found(
                 reason="missing_assets",
@@ -150,6 +178,13 @@ class StacComputeRasterEngine(NdviRasterEngine):
                 window_days=self.date_window_days,
                 item=item,
                 items_count=len(items),
+                collections=collections,
+                item_collection=item.collection,
+                available_assets=sorted(item.assets.keys()),
+                expected_assets={
+                    "red": red_candidates,
+                    "nir": nir_candidates,
+                },
             )
 
         ndvi = load_ndvi_array(
@@ -167,6 +202,13 @@ class StacComputeRasterEngine(NdviRasterEngine):
                 window_days=self.date_window_days,
                 item=item,
                 items_count=len(items),
+                collections=collections,
+                item_collection=item.collection,
+                available_assets=sorted(item.assets.keys()),
+                expected_assets={
+                    "red": red_candidates,
+                    "nir": nir_candidates,
+                },
             )
 
         return self._encode_png(ndvi)

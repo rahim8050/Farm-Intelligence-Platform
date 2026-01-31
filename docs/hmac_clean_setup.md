@@ -36,7 +36,8 @@ Notes:
 
 ## 2) Load into `.env`
 
-Shell-safe quoting is required if `.env` is sourced:
+Use dotenv-safe quoting (do not `source` `.env`; it is loaded by
+`django-environ`/`python-dotenv`):
 
 ```dotenv
 INTEGRATION_HMAC_CLIENTS_JSON='{"<CLIENT_ID>":"<SECRET_B64>"}'

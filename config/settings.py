@@ -427,6 +427,28 @@ NDVI_CACHE_TTL_LATEST_SECONDS = env.int(
 NDVI_DEFAULT_STEP_DAYS = env.int("NDVI_DEFAULT_STEP_DAYS", default=7)
 NDVI_DEFAULT_MAX_CLOUD = env.int("NDVI_DEFAULT_MAX_CLOUD", default=30)
 NDVI_DEFAULT_LOOKBACK_DAYS = env.int("NDVI_DEFAULT_LOOKBACK_DAYS", default=14)
+NDVI_STAC_API_URL = env(
+    "NDVI_STAC_API_URL",
+    default="https://stac.dataspace.copernicus.eu/v1/",
+)
+NDVI_STAC_COLLECTION = env(
+    "NDVI_STAC_COLLECTION",
+    default="sentinel-2-l2a",
+)
+NDVI_STAC_MAX_CLOUD_DEFAULT = env.int(
+    "NDVI_STAC_MAX_CLOUD_DEFAULT",
+    default=30,
+)
+NDVI_STAC_DATE_WINDOW_DAYS = env.int(
+    "NDVI_STAC_DATE_WINDOW_DAYS",
+    default=3,
+)
+NDVI_STAC_ASSET_RED = env("NDVI_STAC_ASSET_RED", default="B04_10m")
+NDVI_STAC_ASSET_NIR = env("NDVI_STAC_ASSET_NIR", default="B08_10m")
+NDVI_STAC_TIMEOUT_SECS = env.float(
+    "NDVI_STAC_TIMEOUT_SECS",
+    default=30,
+)
 NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS = env.int(
     "NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS",
     default=900,

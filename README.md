@@ -53,7 +53,10 @@ pip install -r requirements-dev.txt
 
 ### Environment
 
-This project loads environment variables from `.env` (see `config/settings.py`).
+This project loads environment variables from a dotenv-style `.env` via
+`django-environ` (see `config/settings.py`). Do not `source` `.env`; it is not
+guaranteed to be shell-safe. For one-off scripts, use `django-environ` or
+`python-dotenv` to load it.
 An example file exists at `.env.example`.
 
 Minimum variables for local development:

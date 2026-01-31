@@ -21,6 +21,7 @@ DEFAULT_MAX_ITEMS = 500
 DEFAULT_LIMIT = 200
 DEFAULT_STATS_SAMPLE_SIZE = 128
 DEFAULT_STAC_API_URL: Final[str] = "https://stac.dataspace.copernicus.eu/v1/"
+ASSET_RESOLUTION_ORDER: Final[tuple[str, ...]] = ("10m", "20m", "60m")
 
 
 class StacError(RuntimeError):
@@ -58,6 +59,7 @@ class StacItem:
     datetime: datetime
     assets: dict[str, str]
     cloud_cover: float | None
+    collection: str | None = None
 
     @property
     def date(self) -> date:
@@ -110,16 +112,69 @@ def select_best_item(
     return candidates[0][3]
 
 
-def resolve_asset_href(item: StacItem, asset_name: str) -> str | None:
-    """Resolve an asset href by name (case-insensitive)."""
+def build_asset_fallbacks(asset_name: str) -> list[str]:
+    """Build fallback asset keys for a base name (prefers 10m)."""
 
-    if asset_name in item.assets:
-        return item.assets[asset_name]
-    lowered = asset_name.lower()
-    for key, href in item.assets.items():
-        if key.lower() == lowered:
-            return href
+    normalized = asset_name.strip()
+    if not normalized:
+        return []
+    base = normalized.split("_", 1)[0]
+    candidates = [f"{base}_{suffix}" for suffix in ASSET_RESOLUTION_ORDER]
+    candidates.append(base)
+    fallbacks: list[str] = []
+    for candidate in candidates:
+        if not candidate or candidate == normalized:
+            continue
+        if candidate not in fallbacks:
+            fallbacks.append(candidate)
+    return fallbacks
+
+
+def build_asset_candidates(asset_name: str) -> list[str]:
+    """Build asset candidates in lookup order (configured, then fallbacks)."""
+
+    normalized = asset_name.strip()
+    if not normalized:
+        return []
+    candidates = [normalized]
+    for fallback in build_asset_fallbacks(normalized):
+        if fallback not in candidates:
+            candidates.append(fallback)
+    return candidates
+
+
+def resolve_asset_href_candidates(
+    item: StacItem, candidates: Iterable[str]
+) -> str | None:
+    """Resolve the first matching asset href from a candidate list."""
+
+    asset_map = item.assets
+    lowered_assets = {key.lower(): href for key, href in asset_map.items()}
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if candidate in asset_map:
+            return asset_map[candidate]
+        lowered = candidate.lower()
+        if lowered in lowered_assets:
+            return lowered_assets[lowered]
     return None
+
+
+def resolve_asset_href(
+    item: StacItem,
+    asset_name: str,
+    *,
+    fallback_names: Iterable[str] | None = None,
+) -> str | None:
+    """Resolve an asset href by name (case-insensitive) with fallbacks."""
+
+    candidates = [asset_name]
+    if fallback_names:
+        for fallback in fallback_names:
+            if fallback not in candidates:
+                candidates.append(fallback)
+    return resolve_asset_href_candidates(item, candidates)
 
 
 def normalize_cloud_fraction(cloud_cover: float | None) -> float | None:
@@ -406,6 +461,8 @@ class StacClient:
             if not isinstance(feature, dict):
                 continue
             item_id = str(feature.get("id") or "")
+            collection_raw = feature.get("collection")
+            collection = str(collection_raw) if collection_raw else None
             properties = feature.get("properties") or {}
             raw_dt = (
                 properties.get("datetime")
@@ -433,6 +490,7 @@ class StacClient:
                     datetime=dt,
                     assets=assets,
                     cloud_cover=cloud_cover,
+                    collection=collection,
                 )
             )
         return items
