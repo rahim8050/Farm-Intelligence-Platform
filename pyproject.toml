@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Backend-only Django/DRF service for Weather APIs (NASA, Meteo, OpenWeather)."
 requires-python = ">=3.11"
 dependencies = [
-  "Django>=5.1,<5.2",
+  "Django>=5.1,<5.3",
   "dj-database-url>=2.3,<3.2",
   "djangorestframework>=3.15,<3.17",
   "djangorestframework-simplejwt>=5.3,<5.4",
