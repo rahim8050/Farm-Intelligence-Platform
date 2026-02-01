@@ -90,4 +90,5 @@ Add (or extend) structured logs around the STAC search and item selection with:
 - `asset_keys` for the chosen item
 - `red_asset`, `nir_asset` resolved href presence
 
+
 These would directly confirm whether the failing jobs are selecting items that lack the required Sentinel-2 bands.
