@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ from ndvi.stac_client import (
     filter_items_by_cloud,
     load_ndvi_array,
     normalize_cloud_fraction,
+    normalize_stac_bbox,
     resolve_asset_href,
     select_best_item,
 )
@@ -93,6 +95,82 @@ def test_stac_client_search_filters_and_selects(
     )
     assert best is not None
     assert best.id == "low-cloud-close"
+
+
+def test_normalize_stac_bbox_swaps_lat_lon_order() -> None:
+    normalized = normalize_stac_bbox([-0.92234, 36.78345, -0.92202, 36.78411])
+    assert normalized == (
+        pytest.approx(36.78345),
+        pytest.approx(-0.92234),
+        pytest.approx(36.78411),
+        pytest.approx(-0.92202),
+    )
+
+
+def test_normalize_stac_bbox_keeps_lon_lat_order() -> None:
+    normalized = normalize_stac_bbox([36.78345, -0.92234, 36.78411, -0.92202])
+    assert normalized == (
+        pytest.approx(36.78345),
+        pytest.approx(-0.92234),
+        pytest.approx(36.78411),
+        pytest.approx(-0.92202),
+    )
+
+
+def test_normalize_stac_bbox_invalid_raises() -> None:
+    with pytest.raises(ValueError):
+        normalize_stac_bbox([200.0, 10.0, 201.0, 11.0])
+
+
+def test_normalize_stac_bbox_logs_swap_context(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="ndvi.stac_client"):
+        normalize_stac_bbox(
+            [-0.92234, 36.78345, -0.92202, 36.78411],
+            farm_id=33,
+            job_id=44,
+        )
+    message = " ".join(record.message for record in caplog.records)
+    assert "ndvi.stac.bbox_swapped" in message
+    assert "farm_id=33" in message
+    assert "job_id=44" in message
+
+
+def test_stac_client_search_payload_uses_lon_lat_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = StacClient(
+        base_url="https://example.com/stac/",
+        collection="collection",
+        timeout_seconds=1,
+    )
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def json(self) -> dict[str, object]:
+            return {"features": [], "links": []}
+
+    def fake_request(
+        _method: str, _url: str, *, json: dict[str, object] | None = None
+    ) -> FakeResponse:
+        captured["bbox"] = json["bbox"] if json else None
+        return FakeResponse()
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    items = client.search(
+        bbox=[-0.92234, 36.78345, -0.92202, 36.78411],
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 3),
+        max_cloud=30,
+    )
+    assert items == []
+    assert captured["bbox"] == [
+        pytest.approx(36.78345),
+        pytest.approx(-0.92234),
+        pytest.approx(36.78411),
+        pytest.approx(-0.92202),
+    ]
 
 
 def test_parse_datetime_accepts_z_suffix_and_rejects_invalid() -> None:

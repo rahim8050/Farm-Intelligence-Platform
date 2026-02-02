@@ -16,6 +16,7 @@ from ndvi.stac_client import (
     build_asset_candidates,
     compute_ndvi_stats,
     load_ndvi_array,
+    normalize_stac_bbox,
     resolve_asset_href_candidates,
     select_best_item,
 )
@@ -68,10 +69,14 @@ def _raise_raster_not_found(
     expected_assets: dict[str, list[str]] | None = None,
 ) -> NoReturn:
     window = timedelta(days=window_days)
-    bbox = request.bbox
-    bbox_values = (bbox.south, bbox.west, bbox.north, bbox.east)
+    bbox_values = normalize_stac_bbox(
+        request.bbox,
+        farm_id=request.farm_id,
+        job_id=request.job_id,
+        log_on_swap=False,
+    )
     logger.warning(
-        "ndvi.raster.not_found reason=%s job_id=%s farm_id=%s bbox=%s "
+        "ndvi.raster.not_found reason=%s job_id=%s farm_id=%s bbox_stac=%s "
         "start=%s end=%s max_cloud=%s window_days=%s item_id=%s "
         "item_collection=%s items_count=%s collections=%s "
         "available_assets=%s expected_assets=%s",
@@ -131,12 +136,22 @@ class StacComputeRasterEngine(NdviRasterEngine):
         if client_collection:
             collections = [str(client_collection)]
         window = timedelta(days=self.date_window_days)
-        items = self.client.search(
-            bbox=request.bbox,
-            start=request.date - window,
-            end=request.date + window,
-            max_cloud=request.max_cloud,
-        )
+        if isinstance(self.client, StacClient):
+            items = self.client.search(
+                bbox=request.bbox,
+                start=request.date - window,
+                end=request.date + window,
+                max_cloud=request.max_cloud,
+                farm_id=request.farm_id,
+                job_id=request.job_id,
+            )
+        else:
+            items = self.client.search(
+                bbox=request.bbox,
+                start=request.date - window,
+                end=request.date + window,
+                max_cloud=request.max_cloud,
+            )
         if not items:
             _raise_raster_not_found(
                 reason="no_items",

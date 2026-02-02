@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib
+import logging
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -22,6 +24,94 @@ DEFAULT_LIMIT = 200
 DEFAULT_STATS_SAMPLE_SIZE = 128
 DEFAULT_STAC_API_URL: Final[str] = "https://stac.dataspace.copernicus.eu/v1/"
 ASSET_RESOLUTION_ORDER: Final[tuple[str, ...]] = ("10m", "20m", "60m")
+
+logger = logging.getLogger(__name__)
+
+StacBBox = tuple[float, float, float, float]
+
+
+def _validate_stac_bbox_values(values: StacBBox) -> bool:
+    min_lon, min_lat, max_lon, max_lat = values
+    if not all(math.isfinite(value) for value in values):
+        return False
+    if min_lon < -180.0 or max_lon > 180.0:
+        return False
+    if min_lat < -90.0 or max_lat > 90.0:
+        return False
+    return min_lon < max_lon and min_lat < max_lat
+
+
+def _looks_like_lat_lon_order(values: StacBBox) -> bool:
+    first_lat_like = abs(values[0]) <= 90.0 and abs(values[2]) <= 90.0
+    second_lon_like = abs(values[1]) <= 180.0 and abs(values[3]) <= 180.0
+    if not (first_lat_like and second_lon_like):
+        return False
+    return abs(values[0]) < abs(values[1]) and abs(values[2]) < abs(values[3])
+
+
+def _coerce_bbox_values(
+    bbox: BBox | tuple[float, float, float, float] | list[float],
+) -> StacBBox:
+    if isinstance(bbox, BBox):
+        return (
+            float(bbox.west),
+            float(bbox.south),
+            float(bbox.east),
+            float(bbox.north),
+        )
+    if len(bbox) != 4:
+        raise ValueError("bbox must contain exactly 4 values.")
+    return (
+        float(bbox[0]),
+        float(bbox[1]),
+        float(bbox[2]),
+        float(bbox[3]),
+    )
+
+
+def normalize_stac_bbox(
+    bbox: BBox | tuple[float, float, float, float] | list[float],
+    *,
+    farm_id: int | None = None,
+    job_id: int | None = None,
+    log_on_swap: bool = True,
+) -> StacBBox:
+    """Return STAC bbox ordering: (min_lon, min_lat, max_lon, max_lat)."""
+
+    raw = _coerce_bbox_values(bbox)
+    lon_lat = raw
+    lat_lon = (raw[1], raw[0], raw[3], raw[2])
+    lon_lat_valid = _validate_stac_bbox_values(lon_lat)
+    lat_lon_valid = _validate_stac_bbox_values(lat_lon)
+    swapped = False
+
+    if lon_lat_valid and lat_lon_valid:
+        if _looks_like_lat_lon_order(raw):
+            resolved = lat_lon
+            swapped = True
+        else:
+            resolved = lon_lat
+    elif lon_lat_valid:
+        resolved = lon_lat
+    elif lat_lon_valid:
+        resolved = lat_lon
+        swapped = True
+    else:
+        raise ValueError(
+            "Invalid bbox; expected lon/lat values in valid ranges "
+            "with min<max."
+        )
+
+    if swapped and log_on_swap:
+        logger.warning(
+            "ndvi.stac.bbox_swapped farm_id=%s job_id=%s "
+            "bbox_in=%s bbox_out=%s",
+            farm_id if farm_id is not None else "-",
+            job_id if job_id is not None else "-",
+            raw,
+            resolved,
+        )
+    return resolved
 
 
 class StacError(RuntimeError):
@@ -371,21 +461,23 @@ class StacClient:
     def search(
         self,
         *,
-        bbox: BBox,
+        bbox: BBox | tuple[float, float, float, float] | list[float],
         start: date,
         end: date,
         max_cloud: int,
+        farm_id: int | None = None,
+        job_id: int | None = None,
     ) -> list[StacItem]:
         """Search STAC for items within a date range and bbox."""
 
+        normalized_bbox = normalize_stac_bbox(
+            bbox,
+            farm_id=farm_id,
+            job_id=job_id,
+        )
         payload: dict[str, Any] = {
             "collections": [self.collection],
-            "bbox": [
-                float(bbox.west),
-                float(bbox.south),
-                float(bbox.east),
-                float(bbox.north),
-            ],
+            "bbox": list(normalized_bbox),
             "datetime": (
                 f"{start.isoformat()}T00:00:00Z/{end.isoformat()}T23:59:59Z"
             ),

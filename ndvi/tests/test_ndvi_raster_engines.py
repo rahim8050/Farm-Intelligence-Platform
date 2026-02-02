@@ -48,6 +48,8 @@ def _raster_request() -> RasterRequest:
         size=128,
         max_cloud=20,
         engine="stac",
+        job_id=42,
+        farm_id=77,
     )
 
 
@@ -162,6 +164,9 @@ def test_stac_compute_engine_missing_assets_logs_context(
             engine.render_png(_raster_request())
 
     message = " ".join(record.message for record in caplog.records)
+    assert "job_id=42" in message
+    assert "farm_id=77" in message
+    assert "bbox_stac=(0.0, 0.0, 0.1, 0.1)" in message
     assert "collections=['sentinel-2-l2a']" in message
     assert "expected_assets={'red': ['B04_10m'" in message
     assert "'nir': ['B08_10m'" in message
