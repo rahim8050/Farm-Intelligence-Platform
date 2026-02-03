@@ -41,10 +41,37 @@ services:
     image: prom/mysqld-exporter:latest
     environment:
       DATA_SOURCE_NAME: ${MYSQL_EXPORTER_DSN:-}
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        set -e
+        if [ -z "$${DATA_SOURCE_NAME:-}" ]; then
+          echo "DATA_SOURCE_NAME is empty" >&2
+          exit 1
+        fi
+        dsn="$${DATA_SOURCE_NAME}"
+        user="$${dsn%%:*}"
+        rest="$${dsn#*:}"
+        pass="$${rest%%@*}"
+        hostport="$${rest#*@}"
+        hostport="$${hostport#(}"
+        hostport="$${hostport%)/}"
+        host="$${hostport%%:*}"
+        port="$${hostport##*:}"
+        mkdir -p /tmp/mysqld_exporter
+        cat > /tmp/mysqld_exporter/.my.cnf <<EOF
+        [client]
+        user=$${user}
+        password=$${pass}
+        host=$${host}
+        port=$${port}
+        EOF
+        chmod 600 /tmp/mysqld_exporter/.my.cnf
+        exec /bin/mysqld_exporter --config.my-cnf=/tmp/mysqld_exporter/.my.cnf
+    network_mode: host
     profiles:
       - mysql
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   postgres_exporter:
     image: prometheuscommunity/postgres-exporter:latest

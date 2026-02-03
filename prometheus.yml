@@ -10,7 +10,7 @@ scrape_configs:
   - job_name: "django"
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:8000"]
+      - targets: ["host.docker.internal:8001"]
 
   - job_name: "node_exporter"
     static_configs:
@@ -22,7 +22,7 @@ scrape_configs:
 
   - job_name: "mysql_exporter"
     static_configs:
-      - targets: ["mysql_exporter:9104"]
+      - targets: ["host.docker.internal:9104"]
 
   - job_name: "postgres_exporter"
     static_configs:
@@ -34,7 +34,7 @@ scrape_configs:
       module: [http_2xx]
     static_configs:
       - targets:
-          - "http://host.docker.internal:8000/"
+          - "http://host.docker.internal:8001/"
         labels:
           service: "django"
           probe: "home"
