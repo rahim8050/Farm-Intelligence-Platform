@@ -88,6 +88,7 @@ def _auth_type(request: Request) -> str:
         return "authorization"
     return "unknown"
 
+
 ndvi_error_response = error_envelope_serializer("NdviErrorResponse")
 RASTER_NOT_FOUND_MESSAGE: Final[str] = "Raster not found"
 RASTER_NOT_FOUND_CODE: Final[str] = "raster_not_found"
