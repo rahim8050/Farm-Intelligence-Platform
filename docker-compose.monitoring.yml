@@ -96,6 +96,7 @@ services:
     volumes:
       - ./monitoring/promtail/promtail.yml:/etc/promtail/config.yml:ro
       - ./logs:/var/log/django:ro
+      - /var/www/html/nextcloud/data/nextcloud.log:/var/log/nextcloud/nextcloud.log:ro
     depends_on:
       - loki
 

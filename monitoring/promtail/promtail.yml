@@ -15,3 +15,21 @@ scrape_configs:
         labels:
           job: django
           __path__: /var/log/django/django.log
+  - job_name: nextcloud
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: nextcloud
+          __path__: /var/log/nextcloud/nextcloud.log
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            app: app
+            user: user
+            method: method
+            url: url
+            reqId: reqId
+      - labels:
+          app:
+          level:
