@@ -17,7 +17,7 @@ from typing import Any, Final, cast
 
 from django.conf import settings
 from django.core.cache import caches
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
     OpenApiParameter,
@@ -73,6 +73,20 @@ from .services import (
 from .tasks import run_ndvi_job
 
 logger = logging.getLogger(__name__)
+
+
+def _auth_type(request: Request) -> str:
+    api_key = request.META.get("HTTP_X_API_KEY")
+    if api_key:
+        return "api_key"
+    auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+    if isinstance(auth_header, str) and auth_header.lower().startswith(
+        "bearer "
+    ):
+        return "jwt_bearer"
+    if auth_header:
+        return "authorization"
+    return "unknown"
 
 ndvi_error_response = error_envelope_serializer("NdviErrorResponse")
 RASTER_NOT_FOUND_MESSAGE: Final[str] = "Raster not found"
@@ -329,9 +343,19 @@ class BaseFarmView(APIView):
         return response
 
     def _get_farm(self, farm_id: int, user_id: int) -> Farm:
-        return get_object_or_404(
-            Farm, id=farm_id, owner_id=user_id, is_active=True
-        )
+        try:
+            return get_object_or_404(
+                Farm, id=farm_id, owner_id=user_id, is_active=True
+            )
+        except Http404:
+            logger.debug(
+                "ndvi.farm.not_found farm_id=%s user_id=%s auth=%s path=%s",
+                farm_id,
+                user_id,
+                _auth_type(self.request),
+                getattr(self.request, "path", ""),
+            )
+            raise
 
 
 class NdviTimeseriesView(BaseFarmView):
