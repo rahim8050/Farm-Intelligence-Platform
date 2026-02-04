@@ -106,6 +106,8 @@ services:
       - "127.0.0.1:3001:3000"
     environment:
       - GF_PLUGINS_PREINSTALL_DISABLED=true
+      - GF_SERVER_ROOT_URL=https://desktop-scbdcpm.tail4a3842.ts.net/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health | grep -q '\"database\"[[:space:]]*:[[:space:]]*\"ok\"'"]
       interval: 30s
