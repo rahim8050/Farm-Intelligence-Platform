@@ -3,6 +3,8 @@ services:
     image: prom/prometheus:latest
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.external-url=https://desktop-scbdcpm.tail4a3842.ts.net/prometheus"
+      - "--web.route-prefix=/prometheus"
     volumes:
       - prometheus_data:/prometheus
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
