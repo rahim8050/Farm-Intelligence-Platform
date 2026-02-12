@@ -219,7 +219,21 @@
     "hungry-endpoints"
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "type": "datasource",
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "query": "prometheus",
+        "current": {
+          "selected": true,
+          "text": "Prometheus",
+          "value": "prometheus"
+        },
+        "refresh": 1,
+        "options": []
+      }
+    ]
   },
   "time": {
     "from": "now-6h",
