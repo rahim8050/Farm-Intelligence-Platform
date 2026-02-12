@@ -297,20 +297,22 @@
     {
       "id": 6,
       "type": "stat",
-      "title": "Prometheus head series",
+      "title": "Prometheus up",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
       "targets": [
         {
-          "expr": "prometheus_tsdb_head_series or vector(0)",
+          "expr": "up{job=\"prometheus\"}",
           "legendFormat": "",
           "refId": "A"
         }
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "unit": "none"
+        },
         "overrides": []
       },
       "options": {
@@ -322,7 +324,7 @@
           "fields": ""
         },
         "orientation": "horizontal",
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto"
@@ -337,20 +339,23 @@
     {
       "id": 7,
       "type": "stat",
-      "title": "Prometheus engine queries",
+      "title": "Prometheus scrape duration",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
       "targets": [
         {
-          "expr": "prometheus_engine_queries or vector(0)",
+          "expr": "scrape_duration_seconds{job=\"prometheus\"}",
           "legendFormat": "",
           "refId": "A"
         }
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "unit": "s",
+          "decimals": 3
+        },
         "overrides": []
       },
       "options": {
@@ -362,7 +367,7 @@
           "fields": ""
         },
         "orientation": "horizontal",
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto"
