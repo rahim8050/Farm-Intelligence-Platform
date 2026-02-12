@@ -34,10 +34,12 @@ services:
   redis_exporter:
     image: oliver006/redis_exporter:latest
     environment:
-      REDIS_ADDR: ${REDIS_ADDR:-redis://host.docker.internal:6379}
+      REDIS_ADDR: ${REDIS_ADDR:-redis://redis:6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
 
   mysql_exporter:
     image: prom/mysqld-exporter:latest
@@ -102,6 +104,23 @@ services:
     depends_on:
       - loki
 
+  redis:
+    image: redis:8
+    command:
+      - redis-server
+      - "--save"
+      - ""
+      - "--appendonly"
+      - "no"
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+
+
   grafana:
     image: grafana/grafana-oss:10.4.3
     ports:
@@ -127,3 +146,4 @@ services:
 volumes:
   prometheus_data:
   grafana_data:
+  redis_data:
