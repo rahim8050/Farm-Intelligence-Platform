@@ -10,7 +10,7 @@ scrape_configs:
   - job_name: "django"
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:8001"]
+      - targets: ["host.docker.internal:8000"]
 
   - job_name: "node_exporter"
     static_configs:
@@ -34,7 +34,7 @@ scrape_configs:
       module: [http_2xx]
     static_configs:
       - targets:
-          - "http://host.docker.internal:8001/"
+          - "http://host.docker.internal:8000/"
         labels:
           service: "django"
           probe: "home"
