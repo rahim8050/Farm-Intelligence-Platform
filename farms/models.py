@@ -141,3 +141,66 @@ class Farm(models.Model):
             base = slugify(self.name)[:120] or "farm"
             self.slug = base
         super().save(*args, **kwargs)
+
+
+class FarmObservation(models.Model):
+    """Log entry describing an observation or activity on a farm."""
+
+    farm = models.ForeignKey(
+        Farm, on_delete=models.CASCADE, related_name="observations"
+    )
+    observed_at = models.DateTimeField()
+    event_type = models.CharField(max_length=120)
+    note = models.TextField(blank=True)
+    metadata = models.JSONField(null=True, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="farm_observations",
+        null=True,
+        blank=True,
+    )
+    created_by_client_id = models.CharField(
+        max_length=120, null=True, blank=True
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["farm", "observed_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"FarmObservation {self.farm_id} {self.event_type}"
+
+
+class FarmIntegrationAccess(models.Model):
+    """Allow-listed integration client access to a farm."""
+
+    farm = models.ForeignKey(
+        Farm,
+        on_delete=models.CASCADE,
+        related_name="integration_access",
+    )
+    client_id = models.CharField(max_length=120)
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["farm", "client_id"],
+                name="uniq_farm_integration_access",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["client_id", "farm"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"FarmIntegrationAccess {self.farm_id} {self.client_id}"

@@ -6,7 +6,7 @@ from typing import Any, cast
 from django.utils.text import slugify
 from rest_framework import serializers
 
-from .models import Farm
+from .models import Farm, FarmObservation
 
 
 class FarmSerializer(serializers.ModelSerializer):
@@ -96,4 +96,57 @@ class FarmSerializer(serializers.ModelSerializer):
                         {"name": "Farm name conflicts with an existing slug."}
                     )
 
+        return attrs
+
+
+class FarmObservationSerializer(serializers.ModelSerializer):
+    farm_id = serializers.IntegerField(read_only=True)
+    created_by_id = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = FarmObservation
+        fields = [
+            "id",
+            "farm_id",
+            "observed_at",
+            "event_type",
+            "note",
+            "metadata",
+            "created_by_id",
+            "created_by_client_id",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "farm_id",
+            "created_by_id",
+            "created_by_client_id",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class FarmObservationWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FarmObservation
+        fields = ["observed_at", "event_type", "note", "metadata"]
+
+
+class FarmObservationQuerySerializer(serializers.Serializer):
+    start = serializers.DateTimeField(required=False)
+    end = serializers.DateTimeField(required=False)
+    event_type = serializers.CharField(required=False)
+    limit = serializers.IntegerField(
+        required=False, min_value=1, max_value=500
+    )
+    offset = serializers.IntegerField(required=False, min_value=0)
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        start = attrs.get("start")
+        end = attrs.get("end")
+        if start and end and start > end:
+            raise serializers.ValidationError(
+                "start must be <= end when both are provided."
+            )
         return attrs

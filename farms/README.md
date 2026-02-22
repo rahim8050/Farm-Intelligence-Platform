@@ -20,6 +20,11 @@ Key fields (from code: `farms/models.py`):
 - Optional AOI bbox: `bbox_south`, `bbox_west`, `bbox_north`, `bbox_east`
 - `is_active`, timestamps
 
+- `farms.models.FarmObservation`: log entry for a farm with `observed_at`,
+  `event_type`, optional `note` + `metadata`, and creator attribution.
+- `farms.models.FarmIntegrationAccess`: allow-list record mapping an
+  integration client ID to a farm.
+
 Validation notes:
 - Centroid requires both lat and lon (serializer mirrors model validation).
 - Bounding box requires all four edges, and must satisfy south < north and
@@ -29,9 +34,10 @@ Validation notes:
 
 Base path: `/api/v1/farms/` (from code: `farms/urls.py` and `config/urls.py`).
 
-These endpoints are implemented as a DRF `ModelViewSet` and return standard DRF
-serializer JSON (they do not use `success_response`; from code:
-`farms/views.py`).
+The farm CRUD endpoints are implemented as a DRF `ModelViewSet` and return
+standard DRF serializer JSON (they do not use `success_response`; from code:
+`farms/views.py`). The farm observation endpoints below return the standard
+`success_response` envelope (from code: `farms/observation_views.py`).
 
 | Method | Path | Auth | Purpose | Key params |
 | --- | --- | --- | --- | --- |
@@ -40,6 +46,22 @@ serializer JSON (they do not use `success_response`; from code:
 | GET | `/api/v1/farms/<id>/` | JWT or `X-API-Key` | Retrieve a farm (owner-only) | path: `id` |
 | PATCH | `/api/v1/farms/<id>/` | JWT or `X-API-Key` | Update a farm (owner-only) | path: `id` |
 | DELETE | `/api/v1/farms/<id>/` | JWT or `X-API-Key` | Delete a farm (owner-only) | path: `id` |
+
+### Farm observations
+
+These endpoints return the `success_response` envelope and support
+JWT, `X-API-Key`, or integration JWT authentication. Integration JWT access
+requires the integration client to be allow-listed for the farm via
+`farms.models.FarmIntegrationAccess`. Integration JWT scope must include
+`read` for GET and `write` for POST/PATCH/DELETE.
+
+| Method | Path | Auth | Purpose | Key params |
+| --- | --- | --- | --- | --- |
+| GET | `/api/v1/farms/<farm_id>/observations/` | JWT, `X-API-Key`, or integration JWT | List observations (owner-only for user/API key) | path: `farm_id`, optional query: `start`, `end`, `event_type`, `limit`, `offset` |
+| POST | `/api/v1/farms/<farm_id>/observations/` | JWT, `X-API-Key`, or integration JWT | Create an observation | body: `observed_at`, `event_type`, optional `note`, optional `metadata` |
+| GET | `/api/v1/farms/<farm_id>/observations/<id>/` | JWT, `X-API-Key`, or integration JWT | Retrieve an observation | path: `farm_id`, `id` |
+| PATCH | `/api/v1/farms/<farm_id>/observations/<id>/` | JWT, `X-API-Key`, or integration JWT | Update an observation | path: `farm_id`, `id` |
+| DELETE | `/api/v1/farms/<farm_id>/observations/<id>/` | JWT, `X-API-Key`, or integration JWT | Delete an observation | path: `farm_id`, `id` |
 
 ### Examples
 

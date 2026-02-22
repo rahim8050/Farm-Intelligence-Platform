@@ -576,6 +576,311 @@ paths:
               schema:
                 $ref: '#/components/schemas/NdviErrorResponse'
           description: ''
+  /api/v1/farms/{farm_id}/observations/:
+    get:
+      operationId: v1_farms_observations_list
+      description: |-
+        List observations for the requested farm.
+
+        Inputs: optional query params start, end, event_type, limit, offset.
+        Output: success envelope with a list of observations.
+        Side effects: none.
+      parameters:
+      - in: query
+        name: end
+        schema:
+          type: string
+          format: date-time
+        description: Filter observations with observed_at <= end.
+      - in: query
+        name: event_type
+        schema:
+          type: string
+        description: Filter observations by event_type.
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      - in: query
+        name: limit
+        schema:
+          type: integer
+        description: Max observations to return (default 100, max 500).
+      - in: query
+        name: offset
+        schema:
+          type: integer
+        description: Number of observations to skip (default 0).
+      - in: query
+        name: start
+        schema:
+          type: string
+          format: date-time
+        description: Filter observations with observed_at >= start.
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationListSuccess'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+    post:
+      operationId: v1_farms_observations_create
+      description: |-
+        Create a new observation for the farm.
+
+        Inputs: FarmObservationWriteSerializer body.
+        Output: success envelope with the created observation.
+        Side effects: creates a FarmObservation row.
+      parameters:
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FarmObservationWrite'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/FarmObservationWrite'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/FarmObservationWrite'
+        required: true
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationSuccess'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+  /api/v1/farms/{farm_id}/observations/{observation_id}/:
+    get:
+      operationId: v1_farms_observations_retrieve
+      description: |-
+        Return the requested observation entry.
+
+        Inputs: path params farm_id, observation_id.
+        Output: success envelope with the observation.
+        Side effects: none.
+      parameters:
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: observation_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationSuccess'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+    patch:
+      operationId: v1_farms_observations_update
+      description: |-
+        Update fields on the observation entry.
+
+        Inputs: path params farm_id, observation_id; body fields to update.
+        Output: success envelope with the updated observation.
+        Side effects: updates the FarmObservation row.
+      parameters:
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: observation_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedFarmObservationWrite'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedFarmObservationWrite'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedFarmObservationWrite'
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationSuccess'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+    delete:
+      operationId: v1_farms_observations_delete
+      description: |-
+        Delete the observation entry.
+
+        Inputs: path params farm_id, observation_id.
+        Output: success envelope with data null.
+        Side effects: deletes the FarmObservation row.
+      parameters:
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: observation_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationDeleteSuccess'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmObservationErrorResponse'
+          description: ''
   /api/v1/farms/{farm_id}/weather/current/:
     get:
       operationId: v1_farms_weather_current_retrieve
@@ -2097,6 +2402,128 @@ components:
       - name
       - slug
       - updated_at
+    FarmObservation:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        farm_id:
+          type: integer
+          readOnly: true
+        observed_at:
+          type: string
+          format: date-time
+        event_type:
+          type: string
+          maxLength: 120
+        note:
+          type: string
+        metadata:
+          nullable: true
+        created_by_id:
+          type: integer
+          readOnly: true
+        created_by_client_id:
+          type: string
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - created_by_client_id
+      - created_by_id
+      - event_type
+      - farm_id
+      - id
+      - observed_at
+      - updated_at
+    FarmObservationDeleteSuccess:
+      type: object
+      properties:
+        data:
+          nullable: true
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    FarmObservationErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - errors
+      - message
+      - status
+    FarmObservationListSuccess:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/FarmObservation'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    FarmObservationSuccess:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/FarmObservation'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    FarmObservationWrite:
+      type: object
+      properties:
+        observed_at:
+          type: string
+          format: date-time
+        event_type:
+          type: string
+          maxLength: 120
+        note:
+          type: string
+        metadata:
+          nullable: true
+      required:
+      - event_type
+      - observed_at
     FarmWeatherCurrentSuccess:
       type: object
       properties:
@@ -3119,6 +3546,19 @@ components:
           type: string
           format: date-time
           readOnly: true
+    PatchedFarmObservationWrite:
+      type: object
+      properties:
+        observed_at:
+          type: string
+          format: date-time
+        event_type:
+          type: string
+          maxLength: 120
+        note:
+          type: string
+        metadata:
+          nullable: true
     PatchedIntegrationClientUpdate:
       type: object
       description: Update serializer for IntegrationClient (no secret fields).
