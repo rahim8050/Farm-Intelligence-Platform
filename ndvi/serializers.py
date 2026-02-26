@@ -155,3 +155,35 @@ class NdviJobSerializer(serializers.ModelSerializer):
             "last_error",
         ]
         read_only_fields = fields
+
+
+class NdviIngestSerializer(serializers.Serializer):
+    farm_id = serializers.UUIDField()
+    timestamp = serializers.DateTimeField()
+    mean = serializers.FloatField()
+    min = serializers.FloatField()
+    max = serializers.FloatField()
+    source = serializers.CharField(  # type: ignore[assignment]
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    geometry = serializers.JSONField(required=False, allow_null=True)
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        errors: dict[str, str] = {}
+        for field in ("mean", "min", "max"):
+            value = float(attrs[field])
+            if value < 0.0 or value > 1.0:
+                errors[field] = "NDVI values must be between 0.0 and 1.0."
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        min_value = float(attrs["min"])
+        mean_value = float(attrs["mean"])
+        max_value = float(attrs["max"])
+        if not (min_value <= mean_value <= max_value <= 1.0):
+            raise serializers.ValidationError(
+                "NDVI values must satisfy min <= mean <= max <= 1.0."
+            )
+        return attrs

@@ -115,6 +115,13 @@ NDVI_ENGINE=sentinelhub
 NDVI_MAX_AREA_KM2=5000
 NDVI_MAX_DATERANGE_DAYS=370
 
+# Rust microservice proxy (optional)
+NDVI_SERVICE_URL=http://127.0.0.1:8081
+NDVI_PROXY_ENABLED=True
+WEATHER_SERVICE_URL=http://127.0.0.1:8090
+WEATHER_PROXY_ENABLED=True
+PROXY_TIMEOUT_SECONDS=10
+
 # Sentinel Hub credentials (required when using the Sentinel Hub engine)
 SENTINELHUB_CLIENT_ID=...
 SENTINELHUB_CLIENT_SECRET=...

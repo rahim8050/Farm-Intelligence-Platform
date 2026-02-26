@@ -479,6 +479,17 @@ NDVI_RASTER_CACHE_TTL_SECONDS = env.int(
     default=86400,
 )
 
+# Internal proxy routing to Rust microservices.
+NDVI_SERVICE_URL = env("NDVI_SERVICE_URL", default="")
+NDVI_PROXY_ENABLED = env.bool(
+    "NDVI_PROXY_ENABLED", default=bool(NDVI_SERVICE_URL)
+)
+WEATHER_SERVICE_URL = env("WEATHER_SERVICE_URL", default="")
+WEATHER_PROXY_ENABLED = env.bool(
+    "WEATHER_PROXY_ENABLED", default=bool(WEATHER_SERVICE_URL)
+)
+PROXY_TIMEOUT_SECONDS = env.float("PROXY_TIMEOUT_SECONDS", default=10.0)
+
 # Weather defaults
 WEATHER_PROVIDER_DEFAULT = env(
     "WEATHER_PROVIDER_DEFAULT",

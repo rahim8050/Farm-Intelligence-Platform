@@ -2,11 +2,14 @@ from __future__ import annotations
 
 # ruff: noqa: S101
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
+import httpx
 import pytest
 from django.contrib.auth import get_user_model
+from django.utils import timezone as dj_timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -17,7 +20,8 @@ from weather.engines.types import (
     DailySummary,
     HourlyForecast,
 )
-from weather.services import WeatherUpstreamError
+from weather.services import DEFAULT_TZ, WeatherUpstreamError
+from weather.timeutils import get_zone
 
 
 def _auth_client() -> APIClient:
@@ -262,3 +266,111 @@ def test_farm_weather_daily_upstream_failure(
 
     assert resp.status_code == status.HTTP_502_BAD_GATEWAY
     assert resp.json()["status"] == 1
+
+
+@pytest.mark.django_db
+def test_farm_weather_current_proxy(
+    monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    farm = _create_farm()
+    client = _auth_client()
+
+    settings.WEATHER_PROXY_ENABLED = True
+    settings.WEATHER_SERVICE_URL = "http://weather-service:8090"
+    settings.PROXY_TIMEOUT_SECONDS = 5.0
+
+    def fake_request(
+        method: str,
+        url: str,
+        params: dict[str, str] | None = None,
+        json: object | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> object:
+        assert method == "GET"
+        assert url == "http://weather-service:8090/api/v1/weather/current/"
+        assert params is not None
+        assert float(params["lat"]) == 1.25
+        assert float(params["lon"]) == 36.75
+        assert params["tz"] == DEFAULT_TZ
+        return httpx.Response(
+            status_code=200,
+            json={
+                "status": 0,
+                "message": "OK",
+                "data": {
+                    "observed_at": "2026-02-26T21:00:00+03:00",
+                    "temperature_c": 26.1,
+                    "wind_speed_mps": 4.2,
+                    "source": "open_meteo",
+                },
+                "errors": None,
+            },
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr("config.api.proxy.httpx.request", fake_request)
+
+    resp = client.get(f"/api/v1/farms/{farm.id}/weather/current/")
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.json()["data"]["temperature_c"] == 26.1
+
+
+@pytest.mark.django_db
+def test_farm_weather_daily_proxy(
+    monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    farm = _create_farm()
+    client = _auth_client()
+
+    settings.WEATHER_PROXY_ENABLED = True
+    settings.WEATHER_SERVICE_URL = "http://weather-service:8090"
+    settings.PROXY_TIMEOUT_SECONDS = 5.0
+
+    zone = get_zone(DEFAULT_TZ)
+    start = dj_timezone.localtime(dj_timezone.now(), zone).date()
+    end = start + timedelta(days=1)
+
+    def fake_request(
+        method: str,
+        url: str,
+        params: dict[str, str] | None = None,
+        json: object | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> object:
+        assert method == "GET"
+        assert url == "http://weather-service:8090/api/v1/weather/daily/"
+        assert params is not None
+        assert params["start"] == start.isoformat()
+        assert params["end"] == end.isoformat()
+        return httpx.Response(
+            status_code=200,
+            json={
+                "status": 0,
+                "message": "OK",
+                "data": {
+                    "forecasts": [
+                        {
+                            "day": start.isoformat(),
+                            "t_min_c": 18.0,
+                            "t_max_c": 26.0,
+                            "precipitation_mm": 0.0,
+                            "is_partial": False,
+                            "missing_fields": [],
+                            "source": "open_meteo",
+                        }
+                    ]
+                },
+                "errors": None,
+            },
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr("config.api.proxy.httpx.request", fake_request)
+
+    resp = client.get(f"/api/v1/farms/{farm.id}/weather/daily/", {"days": "2"})
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.json()["data"]["forecasts"][0]["day"] == start.isoformat()

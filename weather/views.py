@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import cast
 
 from asgiref.sync import async_to_sync
+from django.conf import settings
 from drf_spectacular.utils import (
     OpenApiParameter,
     OpenApiTypes,
@@ -25,6 +26,7 @@ from config.api.openapi import (
     error_envelope_serializer,
     success_envelope_serializer,
 )
+from config.api.proxy import proxy_json_request
 from config.api.responses import JSONValue, success_response
 
 from .serializers import (
@@ -72,7 +74,8 @@ class WeatherCurrentView(APIView):
 
     Auth: IsAuthenticated (JWT or API key).
     Response: success envelope with `observed_at`, `temperature_c`,
-    `wind_speed_mps`, and provider `source`.
+    `wind_speed_mps`, and provider `source`. When proxying is enabled,
+    responses are forwarded from the weather microservice.
     """
 
     permission_classes = [IsAuthenticated]
@@ -123,6 +126,14 @@ class WeatherCurrentView(APIView):
 
         serializer = BaseWeatherParamsSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
+        if settings.WEATHER_PROXY_ENABLED:
+            return proxy_json_request(
+                request,
+                settings.WEATHER_SERVICE_URL,
+                "/api/v1/weather/current/",
+                params=request.query_params.dict(),
+            )
+
         params = serializer.validated_data
 
         current = async_to_sync(get_current_weather)(
@@ -139,7 +150,8 @@ class WeatherDailyView(APIView):
 
     Auth: IsAuthenticated (JWT or API key).
     Response: success envelope with a `forecasts` list of daily values
-    in the requested timezone.
+    in the requested timezone. When proxying is enabled, responses are
+    forwarded from the weather microservice.
     """
 
     permission_classes = [IsAuthenticated]
@@ -202,6 +214,14 @@ class WeatherDailyView(APIView):
 
         serializer = RangeWeatherParamsSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
+        if settings.WEATHER_PROXY_ENABLED:
+            return proxy_json_request(
+                request,
+                settings.WEATHER_SERVICE_URL,
+                "/api/v1/weather/daily/",
+                params=request.query_params.dict(),
+            )
+
         params = serializer.validated_data
         forecasts = async_to_sync(get_daily_forecast)(
             lat=float(params["lat"]),
@@ -222,7 +242,8 @@ class WeatherWeeklyView(APIView):
 
     Auth: IsAuthenticated (JWT or API key).
     Response: success envelope with `reports` list, each entry covering one
-    calendar week in the requested timezone.
+    calendar week in the requested timezone. When proxying is enabled,
+    responses are forwarded from the weather microservice.
     """
 
     permission_classes = [IsAuthenticated]
@@ -285,6 +306,14 @@ class WeatherWeeklyView(APIView):
 
         serializer = RangeWeatherParamsSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
+        if settings.WEATHER_PROXY_ENABLED:
+            return proxy_json_request(
+                request,
+                settings.WEATHER_SERVICE_URL,
+                "/api/v1/weather/weekly/",
+                params=request.query_params.dict(),
+            )
+
         params = serializer.validated_data
         reports = async_to_sync(get_weekly_report)(
             lat=float(params["lat"]),

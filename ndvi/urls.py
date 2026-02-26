@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from django.urls import path
 
+from .proxy_views import NdviIngestProxyView
 from .views import (
     NdviJobStatusView,
     NdviLatestView,
@@ -41,5 +42,10 @@ urlpatterns = [
         "ndvi/jobs/<int:job_id>/",
         NdviJobStatusView.as_view(),
         name="ndvi-job",
+    ),
+    path(
+        "ndvi",
+        NdviIngestProxyView.as_view(),
+        name="ndvi-ingest",
     ),
 ]

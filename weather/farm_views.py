@@ -7,10 +7,13 @@ Responses: wrapped by config.api.responses.success_response.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import cast
 
 from asgiref.sync import async_to_sync
+from django.conf import settings
 from django.shortcuts import get_object_or_404
+from django.utils import timezone as dj_timezone
 from drf_spectacular.utils import (
     OpenApiParameter,
     OpenApiTypes,
@@ -27,6 +30,7 @@ from config.api.openapi import (
     error_envelope_serializer,
     success_envelope_serializer,
 )
+from config.api.proxy import proxy_json_request
 from config.api.responses import JSONValue, success_response
 from farms.models import Farm
 from integrations.authentication import IntegrationJWTAuthentication
@@ -42,10 +46,12 @@ from .serializers import (
     serialize_hourly,
 )
 from .services import (
+    DEFAULT_TZ,
     get_farm_current_weather,
     get_farm_daily_summary,
     get_farm_hourly_forecast,
 )
+from .timeutils import get_zone
 
 farm_weather_error_schema = error_envelope_serializer(
     "FarmWeatherErrorResponse"
@@ -87,6 +93,63 @@ class BaseFarmWeatherView(APIView):
     def _get_farm(self, farm_id: int) -> Farm:
         return get_object_or_404(Farm, id=farm_id, is_active=True)
 
+    def _resolve_farm_coords(self, farm: Farm) -> tuple[float, float, str]:
+        if farm.centroid_lat is not None and farm.centroid_lon is not None:
+            return (
+                float(farm.centroid_lat),
+                float(farm.centroid_lon),
+                DEFAULT_TZ,
+            )
+        if (
+            farm.bbox_south is not None
+            and farm.bbox_west is not None
+            and farm.bbox_north is not None
+            and farm.bbox_east is not None
+        ):
+            lat = float((farm.bbox_south + farm.bbox_north) / 2)
+            lon = float((farm.bbox_west + farm.bbox_east) / 2)
+            return lat, lon, DEFAULT_TZ
+        raise ValidationError(
+            "Farm must have a centroid or bounding box for weather."
+        )
+
+    def _proxy_weather_current(
+        self, request: Request, farm: Farm
+    ) -> Response | None:
+        if not settings.WEATHER_PROXY_ENABLED:
+            return None
+        lat, lon, tz = self._resolve_farm_coords(farm)
+        return proxy_json_request(
+            request,
+            settings.WEATHER_SERVICE_URL,
+            "/api/v1/weather/current/",
+            params={"lat": str(lat), "lon": str(lon), "tz": tz},
+            fallback_on_error=True,
+        )
+
+    def _proxy_weather_daily(
+        self, request: Request, farm: Farm, days: int
+    ) -> Response | None:
+        if not settings.WEATHER_PROXY_ENABLED:
+            return None
+        lat, lon, tz = self._resolve_farm_coords(farm)
+        zone = get_zone(tz)
+        start = dj_timezone.localtime(dj_timezone.now(), zone).date()
+        end = start + timedelta(days=days - 1)
+        return proxy_json_request(
+            request,
+            settings.WEATHER_SERVICE_URL,
+            "/api/v1/weather/daily/",
+            params={
+                "lat": str(lat),
+                "lon": str(lon),
+                "tz": tz,
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+            },
+            fallback_on_error=True,
+        )
+
 
 @extend_schema(auth=cast(list[str], [{"BearerAuth": []}]))
 class FarmWeatherCurrentView(BaseFarmWeatherView):
@@ -119,6 +182,9 @@ class FarmWeatherCurrentView(BaseFarmWeatherView):
                 raise ValidationError("Unexpected query parameters.")
 
         farm = self._get_farm(farm_id)
+        proxy = self._proxy_weather_current(request, farm)
+        if proxy is not None:
+            return proxy
         current = async_to_sync(get_farm_current_weather)(farm=farm)
         return success_response(serialize_current(current))
 
@@ -198,6 +264,9 @@ class FarmWeatherDailyView(BaseFarmWeatherView):
         serializer = FarmDailyParamsSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         days = int(serializer.validated_data.get("days", 7))
+        proxy = self._proxy_weather_daily(request, farm, days)
+        if proxy is not None:
+            return proxy
         summaries = async_to_sync(get_farm_daily_summary)(farm=farm, days=days)
         payload = {
             "forecasts": cast(JSONValue, serialize_daily_summary(summaries))

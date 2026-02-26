@@ -1743,6 +1743,91 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiKeysErrorResponse'
           description: ''
+  /api/v1/ndvi:
+    get:
+      operationId: v1_ndvi_retrieve
+      description: Return the NDVI ingest info from the upstream service.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviIngestInfo'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviProxyError'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviProxyError'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviProxyError'
+          description: ''
+    post:
+      operationId: v1_ndvi_create
+      description: Validate input and forward to the NDVI service.
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NdviIngest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/NdviIngest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/NdviIngest'
+        required: true
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviIngestSuccess'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviProxyError'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviProxyError'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviProxyError'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviProxyError'
+          description: ''
   /api/v1/ndvi/jobs/{job_id}/:
     get:
       operationId: v1_ndvi_jobs_retrieve
@@ -3005,6 +3090,81 @@ components:
       - errors
       - message
       - status
+    NdviIngest:
+      type: object
+      properties:
+        farm_id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        mean:
+          type: number
+          format: double
+        min:
+          type: number
+          format: double
+        max:
+          type: number
+          format: double
+        source:
+          type: string
+          nullable: true
+        geometry:
+          nullable: true
+      required:
+      - farm_id
+      - max
+      - mean
+      - min
+      - timestamp
+    NdviIngestData:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+      - status
+    NdviIngestInfo:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/NdviIngestInfoData'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    NdviIngestInfoData:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+      - message
+    NdviIngestSuccess:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/NdviIngestData'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
     NdviJob:
       type: object
       properties:
@@ -3178,6 +3338,19 @@ components:
       required:
       - bucket_date
       - mean
+    NdviProxyError:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - errors
+      - message
+      - status
     NdviRasterQueueData:
       type: object
       properties:
