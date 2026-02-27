@@ -2374,6 +2374,10 @@ components:
           type: number
           format: double
           nullable: true
+        wind_speed_max_mps:
+          type: number
+          format: double
+          nullable: true
         is_partial:
           type: boolean
           readOnly: true
@@ -2392,6 +2396,7 @@ components:
       - source
       - t_max_c
       - t_min_c
+      - wind_speed_max_mps
     DailySummary:
       type: object
       properties:

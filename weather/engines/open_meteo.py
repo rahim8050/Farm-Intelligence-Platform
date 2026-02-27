@@ -85,7 +85,12 @@ class OpenMeteoProvider(WeatherProvider):
             "longitude": loc.lon,
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
-            "daily": "temperature_2m_min,temperature_2m_max,precipitation_sum",
+            "daily": (
+                "temperature_2m_min,"
+                "temperature_2m_max,"
+                "precipitation_sum,"
+                "wind_speed_10m_max"
+            ),
             "timezone": loc.tz,
         }
         payload = await self._request(params)
@@ -96,6 +101,7 @@ class OpenMeteoProvider(WeatherProvider):
         t_min_list = daily_block.get("temperature_2m_min") or []
         t_max_list = daily_block.get("temperature_2m_max") or []
         precip_list = daily_block.get("precipitation_sum") or []
+        wind_list = daily_block.get("wind_speed_10m_max") or []
 
         forecasts: list[DailyForecast] = []
         for idx, raw_day in enumerate(dates):
@@ -112,6 +118,7 @@ class OpenMeteoProvider(WeatherProvider):
                     t_max_c=t_max,
                     precipitation_mm=precip,
                     source=self.name,
+                    wind_speed_max_mps=self._list_value(wind_list, idx),
                 )
             )
         return forecasts

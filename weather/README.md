@@ -17,7 +17,7 @@ This app is provider-integrations + normalized response types (no DB models).
 Normalized types (from code: `weather/engines/types.py`):
 - `Location(lat, lon, tz)`
 - `CurrentWeather(observed_at, temperature_c, wind_speed_mps, source)`
-- `DailyForecast(day, t_min_c, t_max_c, precipitation_mm, source)`
+- `DailyForecast(day, t_min_c, t_max_c, precipitation_mm, wind_speed_max_mps, source)`
 - `WeeklyReport(week_start, week_end, t_min_avg_c, t_max_avg_c, precipitation_sum_mm, days, source)`
 
 Supported providers (from code: `weather/engines/registry.py`):
@@ -92,7 +92,20 @@ Response:
 {
   "status": 0,
   "message": "OK",
-  "data": { "forecasts": [{ "day": "2025-01-01", "t_min_c": null }] },
+  "data": {
+    "forecasts": [
+      {
+        "day": "2025-01-01",
+        "t_min_c": 15.0,
+        "t_max_c": 24.5,
+        "precipitation_mm": 0.0,
+        "wind_speed_max_mps": 6.8,
+        "is_partial": false,
+        "missing_fields": [],
+        "source": "open_meteo"
+      }
+    ]
+  },
   "errors": null
 }
 ```

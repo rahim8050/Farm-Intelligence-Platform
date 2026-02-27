@@ -30,13 +30,13 @@ Normalized types live in `weather/engines/types.py`:
 
 - `Location(lat: float, lon: float, tz: str)`
 - `CurrentWeather(observed_at: datetime, temperature_c, wind_speed_mps, source)`
-- `DailyForecast(day: date, t_min_c, t_max_c, precipitation_mm, source)`
+- `DailyForecast(day: date, t_min_c, t_max_c, precipitation_mm, wind_speed_max_mps, source)`
 - `WeeklyReport(...)` is created by the service layer, not by providers.
 
 Units used across engines:
 
 - Temperatures are Celsius (`temperature_c`, `t_min_c`, `t_max_c`).
-- Wind speed is meters/second (`wind_speed_mps`).
+- Wind speed is meters/second (`wind_speed_mps`, `wind_speed_max_mps`).
 - Precipitation is millimeters (`precipitation_mm`).
 
 Timezone handling:

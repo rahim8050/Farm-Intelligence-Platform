@@ -30,6 +30,7 @@ class DailyForecast:
     t_max_c: float | None
     precipitation_mm: float | None
     source: ProviderName
+    wind_speed_max_mps: float | None = None
 
 
 @dataclass(frozen=True)

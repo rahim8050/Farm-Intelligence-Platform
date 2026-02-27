@@ -153,6 +153,9 @@ class DailyForecastSerializer(serializers.Serializer):
     precipitation_mm: ClassVar[serializers.FloatField] = (
         serializers.FloatField(allow_null=True)
     )
+    wind_speed_max_mps: ClassVar[serializers.FloatField] = (
+        serializers.FloatField(allow_null=True)
+    )
     is_partial: ClassVar[serializers.SerializerMethodField] = (
         serializers.SerializerMethodField()
     )
