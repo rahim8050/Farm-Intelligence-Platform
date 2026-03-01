@@ -5,6 +5,7 @@ from typing import Literal, cast, overload
 
 import httpx
 from django.conf import settings
+from django.core.cache import caches
 from rest_framework import status
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -40,6 +41,8 @@ def proxy_json_request(
     *,
     json_body: JSONValue | None = None,
     params: Mapping[str, str] | None = None,
+    cache_key: str | None = None,
+    cache_ttl_s: int | None = None,
     fallback_on_error: Literal[False] = False,
 ) -> Response: ...
 
@@ -52,6 +55,8 @@ def proxy_json_request(
     *,
     json_body: JSONValue | None = None,
     params: Mapping[str, str] | None = None,
+    cache_key: str | None = None,
+    cache_ttl_s: int | None = None,
     fallback_on_error: Literal[True],
 ) -> Response | None: ...
 
@@ -63,6 +68,8 @@ def proxy_json_request(
     *,
     json_body: JSONValue | None = None,
     params: Mapping[str, str] | None = None,
+    cache_key: str | None = None,
+    cache_ttl_s: int | None = None,
     fallback_on_error: bool = False,
 ) -> Response | None:
     """Forward the incoming request to an upstream JSON service."""
@@ -80,6 +87,20 @@ def proxy_json_request(
     timeout = float(getattr(settings, "PROXY_TIMEOUT_SECONDS", 10.0))
     query = request.query_params.dict() if params is None else params
     body = json_body
+    can_cache = (
+        request.method == "GET"
+        and bool(cache_key)
+        and cache_ttl_s is not None
+        and cache_ttl_s > 0
+    )
+    resolved_cache_key = cache_key or ""
+    resolved_cache_ttl = int(cache_ttl_s or 0)
+
+    if can_cache:
+        cached_payload = caches["default"].get(resolved_cache_key)
+        if cached_payload is not None:
+            return Response(cached_payload, status=status.HTTP_200_OK)
+
     if body is None and request.method in {"POST", "PUT", "PATCH"}:
         body = request.data if request.data else None
 
@@ -108,6 +129,12 @@ def proxy_json_request(
             return error_response(
                 "Upstream returned invalid JSON",
                 status_code=status.HTTP_502_BAD_GATEWAY,
+            )
+        if can_cache and response.status_code == status.HTTP_200_OK:
+            caches["default"].set(
+                resolved_cache_key,
+                payload,
+                timeout=resolved_cache_ttl,
             )
         return Response(payload, status=response.status_code)
 

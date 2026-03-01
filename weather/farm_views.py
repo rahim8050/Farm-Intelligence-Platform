@@ -79,6 +79,21 @@ daily_success_schema = success_envelope_serializer(
 )
 
 
+def _farm_proxy_cache_key(
+    endpoint: str,
+    farm_id: int,
+    lat: float,
+    lon: float,
+    tz: str,
+    *parts: str,
+) -> str:
+    base = f"farm-weather-proxy:{endpoint}:{farm_id}:{lat:.4f}:{lon:.4f}:{tz}"
+    if not parts:
+        return base
+    suffix = ":".join(parts)
+    return f"{base}:{suffix}"
+
+
 class BaseFarmWeatherView(APIView):
     """Shared helpers for farm weather endpoints.
 
@@ -124,6 +139,16 @@ class BaseFarmWeatherView(APIView):
             settings.WEATHER_SERVICE_URL,
             "/api/v1/weather/current/",
             params={"lat": str(lat), "lon": str(lon), "tz": tz},
+            cache_key=_farm_proxy_cache_key(
+                "current",
+                farm.id,
+                lat,
+                lon,
+                tz,
+            ),
+            cache_ttl_s=int(
+                getattr(settings, "WEATHER_CACHE_TTL_CURRENT_S", 120)
+            ),
             fallback_on_error=True,
         )
 
@@ -147,6 +172,18 @@ class BaseFarmWeatherView(APIView):
                 "start": start.isoformat(),
                 "end": end.isoformat(),
             },
+            cache_key=_farm_proxy_cache_key(
+                "daily",
+                farm.id,
+                lat,
+                lon,
+                tz,
+                start.isoformat(),
+                end.isoformat(),
+            ),
+            cache_ttl_s=int(
+                getattr(settings, "WEATHER_CACHE_TTL_DAILY_S", 900)
+            ),
             fallback_on_error=True,
         )
 

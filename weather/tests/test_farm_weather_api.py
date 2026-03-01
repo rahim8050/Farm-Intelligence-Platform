@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.cache import caches
 from django.utils import timezone as dj_timezone
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -278,6 +279,9 @@ def test_farm_weather_current_proxy(
     settings.WEATHER_PROXY_ENABLED = True
     settings.WEATHER_SERVICE_URL = "http://weather-service:8090"
     settings.PROXY_TIMEOUT_SECONDS = 5.0
+    settings.WEATHER_CACHE_TTL_CURRENT_S = 120
+    caches["default"].clear()
+    calls = 0
 
     def fake_request(
         method: str,
@@ -287,6 +291,8 @@ def test_farm_weather_current_proxy(
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> object:
+        nonlocal calls
+        calls += 1
         assert method == "GET"
         assert url == "http://weather-service:8090/api/v1/weather/current/"
         assert params is not None
@@ -311,10 +317,14 @@ def test_farm_weather_current_proxy(
 
     monkeypatch.setattr("config.api.proxy.httpx.request", fake_request)
 
-    resp = client.get(f"/api/v1/farms/{farm.id}/weather/current/")
+    first = client.get(f"/api/v1/farms/{farm.id}/weather/current/")
+    second = client.get(f"/api/v1/farms/{farm.id}/weather/current/")
 
-    assert resp.status_code == status.HTTP_200_OK
-    assert resp.json()["data"]["temperature_c"] == 26.1
+    assert first.status_code == status.HTTP_200_OK
+    assert first.json()["data"]["temperature_c"] == 26.1
+    assert second.status_code == status.HTTP_200_OK
+    assert second.json()["data"]["temperature_c"] == 26.1
+    assert calls == 1
 
 
 @pytest.mark.django_db
@@ -327,6 +337,9 @@ def test_farm_weather_daily_proxy(
     settings.WEATHER_PROXY_ENABLED = True
     settings.WEATHER_SERVICE_URL = "http://weather-service:8090"
     settings.PROXY_TIMEOUT_SECONDS = 5.0
+    settings.WEATHER_CACHE_TTL_DAILY_S = 900
+    caches["default"].clear()
+    calls = 0
 
     zone = get_zone(DEFAULT_TZ)
     start = dj_timezone.localtime(dj_timezone.now(), zone).date()
@@ -340,6 +353,8 @@ def test_farm_weather_daily_proxy(
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> object:
+        nonlocal calls
+        calls += 1
         assert method == "GET"
         assert url == "http://weather-service:8090/api/v1/weather/daily/"
         assert params is not None
@@ -370,7 +385,15 @@ def test_farm_weather_daily_proxy(
 
     monkeypatch.setattr("config.api.proxy.httpx.request", fake_request)
 
-    resp = client.get(f"/api/v1/farms/{farm.id}/weather/daily/", {"days": "2"})
+    first = client.get(
+        f"/api/v1/farms/{farm.id}/weather/daily/", {"days": "2"}
+    )
+    second = client.get(
+        f"/api/v1/farms/{farm.id}/weather/daily/", {"days": "2"}
+    )
 
-    assert resp.status_code == status.HTTP_200_OK
-    assert resp.json()["data"]["forecasts"][0]["day"] == start.isoformat()
+    assert first.status_code == status.HTTP_200_OK
+    assert first.json()["data"]["forecasts"][0]["day"] == start.isoformat()
+    assert second.status_code == status.HTTP_200_OK
+    assert second.json()["data"]["forecasts"][0]["day"] == start.isoformat()
+    assert calls == 1

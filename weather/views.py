@@ -69,6 +69,10 @@ weekly_success_schema = success_envelope_serializer(
 )
 
 
+def _provider_cache_token(provider: str | None) -> str:
+    return provider or "default"
+
+
 class WeatherCurrentView(APIView):
     """Fetch current weather for a location.
 
@@ -126,21 +130,36 @@ class WeatherCurrentView(APIView):
 
         serializer = BaseWeatherParamsSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+        lat = float(params["lat"])
+        lon = float(params["lon"])
+        tz = str(params.get("tz") or DEFAULT_TZ)
+        provider = cast(str | None, params.get("provider"))
         if settings.WEATHER_PROXY_ENABLED:
             return proxy_json_request(
                 request,
                 settings.WEATHER_SERVICE_URL,
                 "/api/v1/weather/current/",
-                params=request.query_params.dict(),
+                params={
+                    "lat": f"{lat}",
+                    "lon": f"{lon}",
+                    "tz": tz,
+                    "provider": provider or "",
+                },
+                cache_key=(
+                    f"weather-proxy:current:{_provider_cache_token(provider)}:"
+                    f"{lat:.4f}:{lon:.4f}:{tz}"
+                ),
+                cache_ttl_s=int(
+                    getattr(settings, "WEATHER_CACHE_TTL_CURRENT_S", 120)
+                ),
             )
 
-        params = serializer.validated_data
-
         current = async_to_sync(get_current_weather)(
-            lat=float(params["lat"]),
-            lon=float(params["lon"]),
-            tz=str(params.get("tz") or DEFAULT_TZ),
-            provider=params.get("provider"),
+            lat=lat,
+            lon=lon,
+            tz=tz,
+            provider=provider,
         )
         return success_response(serialize_current(current))
 
@@ -214,22 +233,42 @@ class WeatherDailyView(APIView):
 
         serializer = RangeWeatherParamsSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+        lat = float(params["lat"])
+        lon = float(params["lon"])
+        tz = str(params.get("tz") or DEFAULT_TZ)
+        provider = cast(str | None, params.get("provider"))
+        start = params["start"]
+        end = params["end"]
         if settings.WEATHER_PROXY_ENABLED:
             return proxy_json_request(
                 request,
                 settings.WEATHER_SERVICE_URL,
                 "/api/v1/weather/daily/",
-                params=request.query_params.dict(),
+                params={
+                    "lat": f"{lat}",
+                    "lon": f"{lon}",
+                    "tz": tz,
+                    "provider": provider or "",
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                },
+                cache_key=(
+                    f"weather-proxy:daily:{_provider_cache_token(provider)}:"
+                    f"{lat:.4f}:{lon:.4f}:{tz}:{start.isoformat()}:{end.isoformat()}"
+                ),
+                cache_ttl_s=int(
+                    getattr(settings, "WEATHER_CACHE_TTL_DAILY_S", 900)
+                ),
             )
 
-        params = serializer.validated_data
         forecasts = async_to_sync(get_daily_forecast)(
-            lat=float(params["lat"]),
-            lon=float(params["lon"]),
-            start=params["start"],
-            end=params["end"],
-            tz=str(params.get("tz") or DEFAULT_TZ),
-            provider=params.get("provider"),
+            lat=lat,
+            lon=lon,
+            start=start,
+            end=end,
+            tz=tz,
+            provider=provider,
         )
         forecast_payload = serialize_daily(forecasts)
         return success_response(
@@ -306,22 +345,42 @@ class WeatherWeeklyView(APIView):
 
         serializer = RangeWeatherParamsSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+        lat = float(params["lat"])
+        lon = float(params["lon"])
+        tz = str(params.get("tz") or DEFAULT_TZ)
+        provider = cast(str | None, params.get("provider"))
+        start = params["start"]
+        end = params["end"]
         if settings.WEATHER_PROXY_ENABLED:
             return proxy_json_request(
                 request,
                 settings.WEATHER_SERVICE_URL,
                 "/api/v1/weather/weekly/",
-                params=request.query_params.dict(),
+                params={
+                    "lat": f"{lat}",
+                    "lon": f"{lon}",
+                    "tz": tz,
+                    "provider": provider or "",
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                },
+                cache_key=(
+                    f"weather-proxy:weekly:{_provider_cache_token(provider)}:"
+                    f"{lat:.4f}:{lon:.4f}:{tz}:{start.isoformat()}:{end.isoformat()}"
+                ),
+                cache_ttl_s=int(
+                    getattr(settings, "WEATHER_CACHE_TTL_WEEKLY_S", 1800)
+                ),
             )
 
-        params = serializer.validated_data
         reports = async_to_sync(get_weekly_report)(
-            lat=float(params["lat"]),
-            lon=float(params["lon"]),
-            start=params["start"],
-            end=params["end"],
-            tz=str(params.get("tz") or DEFAULT_TZ),
-            provider=params.get("provider"),
+            lat=lat,
+            lon=lon,
+            start=start,
+            end=end,
+            tz=tz,
+            provider=provider,
         )
         reports_payload = serialize_weekly(reports)
         return success_response({"reports": cast(JSONValue, reports_payload)})
