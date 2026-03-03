@@ -28,18 +28,21 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import (
-    SpectacularAPIView,
     SpectacularRedocView,
     SpectacularSwaggerView,
 )
 
-from .views import home
+from .views import CachedSpectacularAPIView, home
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("", home, name="home"),
     path("", include("django_prometheus.urls")),
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path(
+        "api/schema/",
+        CachedSpectacularAPIView.as_view(),
+        name="schema",
+    ),
     path(
         "api/docs/",
         SpectacularSwaggerView.as_view(url_name="schema"),

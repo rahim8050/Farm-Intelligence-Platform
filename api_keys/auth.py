@@ -3,10 +3,13 @@ from __future__ import annotations
 import logging
 import secrets
 from datetime import timedelta
+from hashlib import sha256
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import AbstractBaseUser
+from django.core.cache import caches
+from django.core.cache.backends.base import BaseCache
 from django.db.models import Q, QuerySet
 from django.utils import timezone
 from rest_framework.authentication import BaseAuthentication
@@ -51,6 +54,71 @@ def _eligible_keys(prefix: str, last4: str) -> QuerySet[ApiKey]:
     return active_keys.select_related("user")
 
 
+def _auth_cache_alias() -> str:
+    return str(getattr(settings, "API_KEY_AUTH_CACHE_ALIAS", "default"))
+
+
+def _auth_cache_ttl_seconds() -> int:
+    ttl = int(getattr(settings, "API_KEY_AUTH_CACHE_TTL_SECONDS", 60))
+    return max(ttl, 0)
+
+
+def _auth_cache() -> BaseCache:
+    return caches[_auth_cache_alias()]
+
+
+def _auth_cache_key(raw_key: str) -> str:
+    digest = sha256(_peppered_secret(raw_key).encode("utf-8")).hexdigest()
+    return f"api_key.auth:{digest}"
+
+
+def _load_cached_active_key(raw_key: str) -> ApiKey | None:
+    ttl = _auth_cache_ttl_seconds()
+    if ttl <= 0:
+        return None
+
+    cache_key = _auth_cache_key(raw_key)
+    try:
+        cached_key_id = _auth_cache().get(cache_key)
+    except Exception as exc:  # pragma: no cover - cache backend fallback
+        logger.debug("api_key.auth.cache.read_failed err=%s", exc)
+        return None
+
+    if not isinstance(cached_key_id, str):
+        return None
+
+    now = timezone.now()
+    key = (
+        ApiKey.objects.filter(
+            id=cached_key_id,
+            revoked_at__isnull=True,
+        )
+        .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
+        .select_related("user")
+        .first()
+    )
+    if key is None:
+        try:
+            _auth_cache().delete(cache_key)
+        except Exception as exc:  # pragma: no cover - cache backend fallback
+            logger.debug("api_key.auth.cache.delete_failed err=%s", exc)
+    return key
+
+
+def _store_active_key_cache(raw_key: str, api_key: ApiKey) -> None:
+    ttl = _auth_cache_ttl_seconds()
+    if ttl <= 0:
+        return
+    try:
+        _auth_cache().set(
+            _auth_cache_key(raw_key),
+            str(api_key.id),
+            timeout=ttl,
+        )
+    except Exception as exc:  # pragma: no cover - cache backend fallback
+        logger.debug("api_key.auth.cache.write_failed err=%s", exc)
+
+
 def _client_ip(request: Request) -> str | None:
     forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
     if forwarded_for:
@@ -75,6 +143,10 @@ def validate_api_key_with_reason(raw_key: str) -> tuple[ApiKey | None, str]:
     if not raw_key or not raw_key.startswith(API_KEY_PREFIX):
         return None, "invalid"
 
+    cached_key = _load_cached_active_key(raw_key)
+    if cached_key is not None:
+        return cached_key, "ok"
+
     prefix = raw_key[:PREFIX_LENGTH]
     last4 = raw_key[-4:]
     candidate_secret = _peppered_secret(raw_key)
@@ -91,6 +163,7 @@ def validate_api_key_with_reason(raw_key: str) -> tuple[ApiKey | None, str]:
                 return key, "revoked"
             if key.expires_at is not None and key.expires_at <= now:
                 return key, "expired"
+            _store_active_key_cache(raw_key, key)
             return key, "ok"
     if not found_candidate:
         return None, "invalid"
@@ -156,16 +229,17 @@ class ApiKeyAuthentication(BaseAuthentication):
             Q(last_used_at__isnull=True) | Q(last_used_at__lt=cutoff)
         ).update(last_used_at=now)
 
-        logger.info(
-            "api_key.auth.success path=%s method=%s ip=%s ua=%s user_id=%s "
-            "key_id=%s",
-            getattr(request, "path", ""),
-            getattr(request, "method", ""),
-            _client_ip(request),
-            request.META.get("HTTP_USER_AGENT"),
-            getattr(api_key, "user_id", None),
-            getattr(api_key, "id", None),
-        )
+        if bool(getattr(settings, "API_KEY_AUTH_LOG_SUCCESS", True)):
+            logger.info(
+                "api_key.auth.success path=%s method=%s ip=%s ua=%s "
+                "user_id=%s key_id=%s",
+                getattr(request, "path", ""),
+                getattr(request, "method", ""),
+                _client_ip(request),
+                request.META.get("HTTP_USER_AGENT"),
+                getattr(api_key, "user_id", None),
+                getattr(api_key, "id", None),
+            )
 
         return api_key.user, api_key
 

@@ -9,6 +9,7 @@ import base64
 import binascii
 import json
 import os
+from functools import lru_cache
 
 from django.conf import settings
 
@@ -21,14 +22,14 @@ class IntegrationHMACConfigError(Exception):
         self.code = code
 
 
-def load_integration_hmac_clients() -> dict[str, bytes]:
-    """Return validated client secrets as {client_id: secret_bytes}."""
-
-    legacy_allowed = bool(
-        getattr(settings, "INTEGRATION_LEGACY_CONFIG_ALLOWED", False)
-    )
-    legacy_raw = os.environ.get("NEXTCLOUD_HMAC_CLIENTS_JSON", "")
-    if legacy_raw.strip() and not legacy_allowed:
+@lru_cache(maxsize=16)
+def _load_clients_cached(
+    *,
+    raw: str,
+    legacy_allowed: bool,
+    legacy_raw: str,
+) -> tuple[tuple[str, bytes], ...]:
+    if legacy_raw and not legacy_allowed:
         raise IntegrationHMACConfigError(
             "Legacy NEXTCLOUD_HMAC_CLIENTS_JSON is not allowed; set "
             "INTEGRATION_HMAC_CLIENTS_JSON and remove the legacy variable "
@@ -36,14 +37,6 @@ def load_integration_hmac_clients() -> dict[str, bytes]:
             code="missing_config",
         )
 
-    raw = getattr(settings, "INTEGRATION_HMAC_CLIENTS_JSON", "")
-    if not isinstance(raw, str):
-        raise IntegrationHMACConfigError(
-            "INTEGRATION_HMAC_CLIENTS_JSON must be a string.",
-            code="bad_json",
-        )
-
-    raw = raw.strip()
     if not raw:
         raise IntegrationHMACConfigError(
             "INTEGRATION_HMAC_CLIENTS_JSON is required.",
@@ -111,4 +104,34 @@ def load_integration_hmac_clients() -> dict[str, bytes]:
 
         clients[client_id] = secret_bytes
 
-    return clients
+    return tuple(clients.items())
+
+
+def clear_integration_hmac_clients_cache() -> None:
+    """Clear parsed HMAC clients cache (useful for tests)."""
+
+    _load_clients_cached.cache_clear()
+
+
+def load_integration_hmac_clients() -> dict[str, bytes]:
+    """Return validated client secrets as {client_id: secret_bytes}."""
+
+    legacy_allowed = bool(
+        getattr(settings, "INTEGRATION_LEGACY_CONFIG_ALLOWED", False)
+    )
+    legacy_raw = os.environ.get("NEXTCLOUD_HMAC_CLIENTS_JSON", "").strip()
+
+    raw_setting = getattr(settings, "INTEGRATION_HMAC_CLIENTS_JSON", "")
+    if not isinstance(raw_setting, str):
+        raise IntegrationHMACConfigError(
+            "INTEGRATION_HMAC_CLIENTS_JSON must be a string.",
+            code="bad_json",
+        )
+
+    raw = raw_setting.strip()
+    pairs = _load_clients_cached(
+        raw=raw,
+        legacy_allowed=legacy_allowed,
+        legacy_raw=legacy_raw,
+    )
+    return dict(pairs)

@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import check_password as django_check_password
 from django.contrib.auth.models import AnonymousUser
 from django.core.cache import caches
 from django.core.exceptions import ImproperlyConfigured
@@ -476,6 +477,7 @@ class ApiKeyTests(APITestCase):
         self.assertNotIn(old_plaintext, joined)
         self.assertNotIn(new_plaintext, joined)
 
+    @override_settings(API_KEY_AUTH_LOG_SUCCESS=True)
     def test_audit_logs_api_key_auth_success_and_revoked_failure(self) -> None:
         access, _ = self._register_and_login("audit-auth")
         plaintext, api_key = self._create_api_key(access, name="Auth Log Key")
@@ -511,6 +513,25 @@ class ApiKeyTests(APITestCase):
         self.assertIn(f"user_id={api_key.user_id}", bad_joined)
         self.assertIn(f"key_id={api_key.id}", bad_joined)
         self.assertNotIn(plaintext, bad_joined)
+
+    @override_settings(API_KEY_AUTH_LOG_SUCCESS=False)
+    def test_api_key_auth_success_logging_can_be_disabled(self) -> None:
+        access, _ = self._register_and_login("audit-auth-muted")
+        plaintext, _ = self._create_api_key(access, name="Muted Auth Log Key")
+
+        class ProtectedView(APIView):
+            authentication_classes = (ApiKeyAuthentication,)
+            permission_classes = (AllowAny,)
+
+            def get(self, request: Request) -> Response:  # type: ignore[override]
+                return Response({"ok": True})
+
+        factory = APIRequestFactory()
+        view = ProtectedView.as_view()
+
+        with self.assertNoLogs("api_keys", level="INFO"):
+            ok_resp = view(factory.get("/p", HTTP_X_API_KEY=plaintext))
+        self.assertEqual(ok_resp.status_code, status.HTTP_200_OK)
 
     @override_settings(
         REST_FRAMEWORK={
@@ -643,6 +664,68 @@ class ApiKeyTests(APITestCase):
         key, reason = validate_api_key_with_reason(plaintext)
         self.assertEqual(key, api_key)
         self.assertEqual(reason, "expired")
+
+    @override_settings(API_KEY_AUTH_CACHE_TTL_SECONDS=60)
+    def test_validate_api_key_with_reason_uses_auth_cache_for_hot_key(
+        self,
+    ) -> None:
+        user = get_user_model().objects.create_user(
+            username="cache-user",
+            email="cache-user@example.com",
+            password=secrets.token_urlsafe(12),
+        )
+        plaintext = generate_plaintext_key()
+        api_key = ApiKey.objects.create(
+            user=user,
+            name="Cached",
+            key_hash=hash_api_key(plaintext),
+            prefix=plaintext[:12],
+            last4=plaintext[-4:],
+            scope=ApiKeyScope.READ,
+        )
+
+        with patch(
+            "api_keys.auth.check_password",
+            wraps=django_check_password,
+        ) as mocked_check_password:
+            first_key, first_reason = validate_api_key_with_reason(plaintext)
+            second_key, second_reason = validate_api_key_with_reason(plaintext)
+
+        self.assertEqual(first_reason, "ok")
+        self.assertEqual(second_reason, "ok")
+        self.assertEqual(first_key, api_key)
+        self.assertEqual(second_key, api_key)
+        self.assertEqual(mocked_check_password.call_count, 1)
+
+    @override_settings(API_KEY_AUTH_CACHE_TTL_SECONDS=60)
+    def test_validate_api_key_with_reason_cached_key_respects_revocation(
+        self,
+    ) -> None:
+        user = get_user_model().objects.create_user(
+            username="cache-revoked",
+            email="cache-revoked@example.com",
+            password=secrets.token_urlsafe(12),
+        )
+        plaintext = generate_plaintext_key()
+        api_key = ApiKey.objects.create(
+            user=user,
+            name="Revoked Cached",
+            key_hash=hash_api_key(plaintext),
+            prefix=plaintext[:12],
+            last4=plaintext[-4:],
+            scope=ApiKeyScope.READ,
+        )
+
+        first_key, first_reason = validate_api_key_with_reason(plaintext)
+        self.assertEqual(first_reason, "ok")
+        self.assertEqual(first_key, api_key)
+
+        api_key.revoked_at = timezone.now()
+        api_key.save(update_fields=["revoked_at"])
+
+        second_key, second_reason = validate_api_key_with_reason(plaintext)
+        self.assertEqual(second_key, api_key)
+        self.assertEqual(second_reason, "revoked")
 
     def test_authentication_denies_inactive_user(self) -> None:
         user = get_user_model().objects.create_user(

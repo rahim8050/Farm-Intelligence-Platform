@@ -8,8 +8,16 @@ import pytest
 
 from integrations.config import (
     IntegrationHMACConfigError,
+    clear_integration_hmac_clients_cache,
     load_integration_hmac_clients,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_hmac_clients_cache() -> None:
+    clear_integration_hmac_clients_cache()
+    yield
+    clear_integration_hmac_clients_cache()
 
 
 def test_legacy_env_config_rejected_when_not_allowed(
@@ -92,3 +100,30 @@ def test_load_integration_hmac_clients_rejects_empty_decoded_bytes(
         load_integration_hmac_clients()
 
     assert exc.value.code == "bad_base64"
+
+
+def test_load_integration_hmac_clients_uses_cache(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NEXTCLOUD_HMAC_CLIENTS_JSON", raising=False)
+    settings.INTEGRATION_LEGACY_CONFIG_ALLOWED = True
+    settings.INTEGRATION_HMAC_CLIENTS_JSON = json.dumps(
+        {"client-1": base64.b64encode(b"abc").decode("ascii")}
+    )
+    calls = 0
+    original_loads = json.loads
+
+    def counting_loads(raw: str) -> Any:
+        nonlocal calls
+        calls += 1
+        return original_loads(raw)
+
+    monkeypatch.setattr(json, "loads", counting_loads)
+
+    first = load_integration_hmac_clients()
+    second = load_integration_hmac_clients()
+
+    assert first == {"client-1": b"abc"}
+    assert second == {"client-1": b"abc"}
+    assert calls == 1

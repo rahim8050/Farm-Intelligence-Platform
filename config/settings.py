@@ -60,6 +60,15 @@ CORS_ALLOWED_ORIGINS: list[str] = cast(
     list[str], env.list("DJANGO_CORS_ALLOWED_ORIGINS", default=[])
 )
 API_KEY_THROTTLE_RATE = env("API_KEY_THROTTLE_RATE", default="500/min")
+API_KEY_AUTH_LOG_SUCCESS = env.bool(
+    "API_KEY_AUTH_LOG_SUCCESS", default=True
+)
+API_KEY_AUTH_CACHE_TTL_SECONDS = env.int(
+    "API_KEY_AUTH_CACHE_TTL_SECONDS", default=60
+)
+API_KEY_AUTH_CACHE_ALIAS = env(
+    "API_KEY_AUTH_CACHE_ALIAS", default="default"
+)
 
 
 # Application definition
@@ -366,6 +375,11 @@ if NEXTCLOUD_HMAC_CACHE_ALIAS not in CACHES:  # pragma: no cover
         "NEXTCLOUD_HMAC_CACHE_ALIAS must be one of: "
         f"{', '.join(CACHES.keys())}"
     )
+if API_KEY_AUTH_CACHE_ALIAS not in CACHES:  # pragma: no cover
+    raise ImproperlyConfigured(
+        "API_KEY_AUTH_CACHE_ALIAS must be one of: "
+        f"{', '.join(CACHES.keys())}"
+    )
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
@@ -528,6 +542,14 @@ WEATHER_MAX_RANGE_DAYS = env.int(
     "WEATHER_MAX_RANGE_DAYS",
     default=366,
 )
+SCHEMA_CACHE_TTL_SECONDS = env.int(
+    "SCHEMA_CACHE_TTL_SECONDS",
+    default=3600,
+)
+SCHEMA_CACHE_WARM_INTERVAL_SECONDS = env.int(
+    "SCHEMA_CACHE_WARM_INTERVAL_SECONDS",
+    default=3300,
+)
 
 # Celery
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default=REDIS_URL or "memory://")
@@ -551,6 +573,10 @@ CELERY_BEAT_SCHEDULE = {
     "ndvi-weekly-gap-fill": {
         "task": "ndvi.tasks.enqueue_weekly_gap_fill",
         "schedule": crontab(hour=4, minute=0, day_of_week="sun"),
+    },
+    "schema-cache-warm": {
+        "task": "weather.tasks.warm_openapi_schema_cache",
+        "schedule": SCHEMA_CACHE_WARM_INTERVAL_SECONDS,
     },
 }
 CELERY_ENABLE_UTC = True
