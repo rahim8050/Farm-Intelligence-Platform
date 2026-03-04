@@ -2088,7 +2088,7 @@ components:
             * `read` - Read
             * `write` - Write
             * `admin` - Admin
-          x-spec-enum-id: 7b9ee2fe711652dc
+          x-spec-enum-id: aa4336765517f102
         prefix:
           type: string
           readOnly: true
@@ -2145,7 +2145,7 @@ components:
             * `read` - Read
             * `write` - Write
             * `admin` - Admin
-          x-spec-enum-id: 7b9ee2fe711652dc
+          x-spec-enum-id: aa4336765517f102
           readOnly: true
         prefix:
           type: string
@@ -2228,7 +2228,7 @@ components:
             * `read` - read
             * `write` - write
             * `admin` - admin
-          x-spec-enum-id: 4f9d93526e2614fd
+          x-spec-enum-id: 1d5817b392218d88
         prefix:
           type: string
         last4:
@@ -3188,7 +3188,7 @@ components:
             * `gap_fill` - Gap fill
             * `backfill` - Backfill
             * `raster_png` - Raster PNG
-          x-spec-enum-id: 15b09757c72f538e
+          x-spec-enum-id: 211e6cd0a91e8f4d
           readOnly: true
         status:
           enum:
@@ -3202,7 +3202,7 @@ components:
             * `running` - Running
             * `success` - Success
             * `failed` - Failed
-          x-spec-enum-id: d0d44a2f00e8c638
+          x-spec-enum-id: 86032057092c9e9d
           readOnly: true
         start:
           type: string
@@ -3651,7 +3651,7 @@ components:
             * `read` - Read
             * `write` - Write
             * `admin` - Admin
-          x-spec-enum-id: 7b9ee2fe711652dc
+          x-spec-enum-id: aa4336765517f102
         prefix:
           type: string
           readOnly: true

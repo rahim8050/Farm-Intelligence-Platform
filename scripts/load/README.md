@@ -39,8 +39,10 @@ Script: `weather-hot-cache.js`
 k6 run \
   -e BASE_URL=http://127.0.0.1:8001 \
   -e API_KEY=wk_live_xxx \
-  -e HOT_RATE=40 \
-  -e HOT_DURATION=5m \
+  -e HOT_RATE=3 \
+  -e HOT_DURATION=2m \
+  -e HOT_WARMUP_REQUESTS=20 \
+  -e REQUEST_TIMEOUT=10s \
   scripts/load/weather-hot-cache.js
 ```
 
@@ -51,8 +53,53 @@ Optional vars:
 - `LON` (default `36.8172`)
 - `TZ` (default `Africa/Nairobi`)
 - `PROVIDER` (default empty)
+- `REQUEST_TIMEOUT` (default `30s`)
 - `HOT_PRE_ALLOCATED_VUS` (default `80`)
 - `HOT_MAX_VUS` (default `300`)
+- `HOT_WARMUP_REQUESTS` (default `0`, runs once in `setup()`)
+- `HOT_WARMUP_SLEEP_MS` (default `0`)
+
+`HOT_RATE` accepts positive decimals now:
+- `1` => 1 req/s
+- `0.5` => 30 req/min
+- `2.5` => 150 req/min
+
+Recommended run flow:
+
+```bash
+# 1) Warm cache + baseline
+tools/bin/k6 run \
+  -e BASE_URL=http://127.0.0.1:8001 \
+  -e API_KEY=wk_live_xxx \
+  -e API_PATH=/api/v1/weather/current/ \
+  -e PROVIDER=open_meteo \
+  -e HOT_RATE=1 \
+  -e HOT_DURATION=2m \
+  -e HOT_WARMUP_REQUESTS=20 \
+  -e HOT_PRE_ALLOCATED_VUS=20 \
+  -e HOT_MAX_VUS=80 \
+  -e REQUEST_TIMEOUT=10s \
+  scripts/load/weather-hot-cache.js
+```
+
+```bash
+# 2) Capacity sweep (same endpoint)
+for r in 2 3 5; do
+  echo "=== HOT_RATE=$r ==="
+  tools/bin/k6 run \
+    -e BASE_URL=http://127.0.0.1:8001 \
+    -e API_KEY=wk_live_xxx \
+    -e API_PATH=/api/v1/weather/current/ \
+    -e PROVIDER=open_meteo \
+    -e HOT_RATE=$r \
+    -e HOT_DURATION=2m \
+    -e HOT_WARMUP_REQUESTS=20 \
+    -e HOT_PRE_ALLOCATED_VUS=40 \
+    -e HOT_MAX_VUS=120 \
+    -e REQUEST_TIMEOUT=10s \
+    scripts/load/weather-hot-cache.js
+done
+```
 
 ## 2) Mixed cache load (varied request parameters)
 

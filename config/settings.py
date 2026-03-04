@@ -60,15 +60,11 @@ CORS_ALLOWED_ORIGINS: list[str] = cast(
     list[str], env.list("DJANGO_CORS_ALLOWED_ORIGINS", default=[])
 )
 API_KEY_THROTTLE_RATE = env("API_KEY_THROTTLE_RATE", default="500/min")
-API_KEY_AUTH_LOG_SUCCESS = env.bool(
-    "API_KEY_AUTH_LOG_SUCCESS", default=True
-)
+API_KEY_AUTH_LOG_SUCCESS = env.bool("API_KEY_AUTH_LOG_SUCCESS", default=True)
 API_KEY_AUTH_CACHE_TTL_SECONDS = env.int(
     "API_KEY_AUTH_CACHE_TTL_SECONDS", default=60
 )
-API_KEY_AUTH_CACHE_ALIAS = env(
-    "API_KEY_AUTH_CACHE_ALIAS", default="default"
-)
+API_KEY_AUTH_CACHE_ALIAS = env("API_KEY_AUTH_CACHE_ALIAS", default="default")
 
 
 # Application definition
@@ -377,8 +373,7 @@ if NEXTCLOUD_HMAC_CACHE_ALIAS not in CACHES:  # pragma: no cover
     )
 if API_KEY_AUTH_CACHE_ALIAS not in CACHES:  # pragma: no cover
     raise ImproperlyConfigured(
-        "API_KEY_AUTH_CACHE_ALIAS must be one of: "
-        f"{', '.join(CACHES.keys())}"
+        f"API_KEY_AUTH_CACHE_ALIAS must be one of: {', '.join(CACHES.keys())}"
     )
 
 # Default primary key field type

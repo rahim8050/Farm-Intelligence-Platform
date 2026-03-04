@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Generator
 from typing import Any
 
 import pytest
@@ -14,7 +15,7 @@ from integrations.config import (
 
 
 @pytest.fixture(autouse=True)
-def _clear_hmac_clients_cache() -> None:
+def _clear_hmac_clients_cache() -> Generator[None, None, None]:
     clear_integration_hmac_clients_cache()
     yield
     clear_integration_hmac_clients_cache()
