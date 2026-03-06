@@ -6,7 +6,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import httpx
 from django.conf import settings
@@ -41,9 +41,7 @@ DEFAULT_TZ = getattr(settings, "WEATHER_DEFAULT_TZ", "Africa/Nairobi")
 CACHE_TTL_CURRENT = int(getattr(settings, "WEATHER_CACHE_TTL_CURRENT_S", 120))
 CACHE_TTL_DAILY = int(getattr(settings, "WEATHER_CACHE_TTL_DAILY_S", 900))
 CACHE_TTL_WEEKLY = int(getattr(settings, "WEATHER_CACHE_TTL_WEEKLY_S", 1800))
-CACHE_LOCK_TIMEOUT = int(
-    getattr(settings, "WEATHER_CACHE_LOCK_TIMEOUT_S", 5)
-)
+CACHE_LOCK_TIMEOUT = int(getattr(settings, "WEATHER_CACHE_LOCK_TIMEOUT_S", 5))
 CACHE_LOCK_WAIT_SECONDS = float(
     getattr(settings, "WEATHER_CACHE_LOCK_WAIT_SECONDS", CACHE_LOCK_TIMEOUT)
 )
@@ -156,16 +154,16 @@ async def _wait_for_cached_value(
     key: str,
     stale_key: str,
     timeout: float,
-) -> tuple[object | None, bool]:
+) -> tuple[CurrentWeather | None, bool]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         cached = cache.get(key)
         if cached:
-            return cached, False
+            return cast(CurrentWeather, cached), False
         await asyncio.sleep(0.05)
     stale = cache.get(stale_key)
     if stale:
-        return stale, True
+        return cast(CurrentWeather, stale), True
     return None, False
 
 
@@ -198,7 +196,7 @@ async def get_current_weather(
         weather_cache_hits_total.labels(
             provider=provider_name, endpoint="current"
         ).inc()
-        return cached
+        return cast(CurrentWeather, cached)
     lock_acquired = cache.add(
         lock_key,
         1,
@@ -214,7 +212,8 @@ async def get_current_weather(
             ).inc()
             return cached_value
         raise WeatherUpstreamError(
-            "Weather cache refresh unavailable while another request is fetching."
+            "Weather cache refresh unavailable while another request "
+            "is fetching."
         )
 
     weather_cache_misses_total.labels(
@@ -241,7 +240,7 @@ async def get_current_weather(
                 "Returning stale current weather after upstream failure",
                 exc_info=exc,
             )
-            return stale_value
+            return cast(CurrentWeather, stale_value)
         raise
     finally:
         duration = time.perf_counter() - start_time
