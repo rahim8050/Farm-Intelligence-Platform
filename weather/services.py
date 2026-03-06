@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -9,6 +11,7 @@ from typing import TypedDict
 import httpx
 from django.conf import settings
 from django.core.cache import caches
+from django.core.cache.backends.base import BaseCache
 from django.utils import timezone as dj_timezone
 from rest_framework.exceptions import APIException, ValidationError
 
@@ -38,12 +41,28 @@ DEFAULT_TZ = getattr(settings, "WEATHER_DEFAULT_TZ", "Africa/Nairobi")
 CACHE_TTL_CURRENT = int(getattr(settings, "WEATHER_CACHE_TTL_CURRENT_S", 120))
 CACHE_TTL_DAILY = int(getattr(settings, "WEATHER_CACHE_TTL_DAILY_S", 900))
 CACHE_TTL_WEEKLY = int(getattr(settings, "WEATHER_CACHE_TTL_WEEKLY_S", 1800))
+CACHE_LOCK_TIMEOUT = int(
+    getattr(settings, "WEATHER_CACHE_LOCK_TIMEOUT_S", 5)
+)
+CACHE_LOCK_WAIT_SECONDS = float(
+    getattr(settings, "WEATHER_CACHE_LOCK_WAIT_SECONDS", CACHE_LOCK_TIMEOUT)
+)
+CACHE_STALE_TTL_CURRENT = int(
+    getattr(
+        settings,
+        "WEATHER_CACHE_STALE_TTL_CURRENT_S",
+        max(300, CACHE_TTL_CURRENT * 3),
+    )
+)
 MAX_RANGE_DAYS = int(getattr(settings, "WEATHER_MAX_RANGE_DAYS", 366))
 FARM_CACHE_TTL_CURRENT = 60
 FARM_CACHE_TTL_HOURLY = 600
 FARM_CACHE_TTL_DAILY = 1800
 
 PROVIDER_REGISTRY = build_registry()
+
+
+logger = logging.getLogger(__name__)
 
 
 class WeatherUpstreamError(APIException):
@@ -124,6 +143,32 @@ def _resolve_farm_location(farm: Farm) -> Location:
     )
 
 
+def _stale_cache_key(key: str) -> str:
+    return f"{key}:stale"
+
+
+def _lock_cache_key(key: str) -> str:
+    return f"{key}:lock"
+
+
+async def _wait_for_cached_value(
+    cache: BaseCache,
+    key: str,
+    stale_key: str,
+    timeout: float,
+) -> tuple[object | None, bool]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        cached = cache.get(key)
+        if cached:
+            return cached, False
+        await asyncio.sleep(0.05)
+    stale = cache.get(stale_key)
+    if stale:
+        return stale, True
+    return None, False
+
+
 def _handle_upstream_error(exc: Exception) -> None:
     raise WeatherUpstreamError() from exc
 
@@ -144,12 +189,33 @@ async def get_current_weather(
         tz=tz,
     )
     cache = caches["default"]
-    cached = cache.get(key.as_string())
+    key_str = key.as_string()
+    stale_key = _stale_cache_key(key_str)
+    lock_key = _lock_cache_key(key_str)
+
+    cached = cache.get(key_str)
     if cached:
         weather_cache_hits_total.labels(
             provider=provider_name, endpoint="current"
         ).inc()
         return cached
+    lock_acquired = cache.add(
+        lock_key,
+        1,
+        timeout=max(1, CACHE_LOCK_TIMEOUT),
+    )
+    if not lock_acquired:
+        cached_value, _ = await _wait_for_cached_value(
+            cache, key_str, stale_key, CACHE_LOCK_WAIT_SECONDS
+        )
+        if cached_value:
+            weather_cache_hits_total.labels(
+                provider=provider_name, endpoint="current"
+            ).inc()
+            return cached_value
+        raise WeatherUpstreamError(
+            "Weather cache refresh unavailable while another request is fetching."
+        )
 
     weather_cache_misses_total.labels(
         provider=provider_name, endpoint="current"
@@ -169,14 +235,23 @@ async def get_current_weather(
             endpoint="current",
             error_type=exc.__class__.__name__,
         ).inc()
+        stale_value = cache.get(stale_key)
+        if stale_value is not None:
+            logger.warning(
+                "Returning stale current weather after upstream failure",
+                exc_info=exc,
+            )
+            return stale_value
         raise
     finally:
         duration = time.perf_counter() - start_time
         weather_provider_latency_seconds.labels(
             provider=provider_name, endpoint="current"
         ).observe(duration)
+        cache.delete(lock_key)
 
-    cache.set(key.as_string(), result, CACHE_TTL_CURRENT)
+    cache.set(key_str, result, CACHE_TTL_CURRENT)
+    cache.set(stale_key, result, CACHE_STALE_TTL_CURRENT)
     return result
 
 
