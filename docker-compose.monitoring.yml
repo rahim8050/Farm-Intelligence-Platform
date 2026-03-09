@@ -73,16 +73,13 @@ services:
         EOF
         chmod 600 /tmp/mysqld_exporter/.my.cnf
         exec /bin/mysqld_exporter --config.my-cnf=/tmp/mysqld_exporter/.my.cnf
-    network_mode: host
-    profiles:
-      - mysql
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   postgres_exporter:
     image: prometheuscommunity/postgres-exporter:latest
     environment:
       DATA_SOURCE_NAME: ${POSTGRES_EXPORTER_DSN:-}
-    profiles:
-      - postgres
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
