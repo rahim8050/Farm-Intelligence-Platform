@@ -1009,3 +1009,577 @@ def test_aggregate_weekly_with_missing_precipitation() -> None:
     ]
     reports = _aggregate_weekly(forecasts, "open_meteo")
     assert reports[0].precipitation_sum_mm is None
+
+
+def test_cache_key_as_string() -> None:
+    key = CacheKey(
+        endpoint="current",
+        provider="open_meteo",
+        lat=1.23456,
+        lon=36.78901,
+        tz="Africa/Nairobi",
+    )
+    assert (
+        "weather:current:open_meteo:1.2346:36.7890:Africa/Nairobi"
+        in key.as_string()
+    )
+
+
+def test_cache_key_with_date_range() -> None:
+    key = CacheKey(
+        endpoint="daily",
+        provider="nasa_power",
+        lat=1.0,
+        lon=36.0,
+        tz="Africa/Nairobi",
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 10),
+    )
+    key_str = key.as_string()
+    assert "2025-01-01" in key_str
+    assert "2025-01-10" in key_str
+
+
+def test_cache_key_without_date_range() -> None:
+    key = CacheKey(
+        endpoint="weekly",
+        provider="open_meteo",
+        lat=-1.0,
+        lon=37.0,
+        tz="UTC",
+    )
+    key_str = key.as_string()
+    assert ":-:" in key_str
+
+
+def test_farm_cache_key_as_string() -> None:
+    from weather.services import FarmCacheKey
+
+    key = FarmCacheKey(
+        endpoint="current",
+        provider="open_meteo",
+        farm_id=42,
+        lat=1.23456,
+        lon=36.78901,
+        tz="Africa/Nairobi",
+    )
+    key_str = key.as_string()
+    assert "farm-weather:current:open_meteo:42" in key_str
+    assert "1.2346:36.7890" in key_str
+
+
+def test_farm_cache_key_with_hours_days() -> None:
+    from weather.services import FarmCacheKey
+
+    key = FarmCacheKey(
+        endpoint="hourly",
+        provider="nasa_power",
+        farm_id=100,
+        lat=0.0,
+        lon=37.0,
+        tz="UTC",
+        hours=24,
+        days=7,
+    )
+    key_str = key.as_string()
+    assert ":24:7" in key_str
+
+
+def test_select_provider_valid() -> None:
+    from weather.services import _select_provider
+
+    result = _select_provider("open_meteo")
+    assert result == "open_meteo"
+
+
+def test_select_provider_invalid_raises() -> None:
+    from weather.services import _select_provider
+
+    with pytest.raises(ValidationError):
+        _select_provider("invalid_provider")
+
+
+def test_select_provider_none_returns_default() -> None:
+    from weather.services import _select_provider
+
+    result = _select_provider(None)
+    assert result == "open_meteo"
+
+
+def test_resolve_farm_location_with_centroid() -> None:
+    from weather.services import _resolve_farm_location
+
+    class FakeFarm:
+        centroid_lat = 1.5
+        centroid_lon = 36.5
+        bbox_south = None
+        bbox_west = None
+        bbox_north = None
+        bbox_east = None
+
+    location = _resolve_farm_location(FakeFarm())
+    assert location.lat == 1.5
+    assert location.lon == 36.5
+
+
+def test_resolve_farm_location_with_bbox() -> None:
+    from weather.services import _resolve_farm_location
+
+    class FakeFarm:
+        centroid_lat = None
+        centroid_lon = None
+        bbox_south = 1.0
+        bbox_west = 36.0
+        bbox_north = 2.0
+        bbox_east = 37.0
+
+    location = _resolve_farm_location(FakeFarm())
+    assert location.lat == 1.5
+    assert location.lon == 36.5
+
+
+def test_resolve_farm_location_missing_raises() -> None:
+    from weather.services import _resolve_farm_location
+
+    class FakeFarm:
+        centroid_lat = None
+        centroid_lon = None
+        bbox_south = None
+        bbox_west = None
+        bbox_north = None
+        bbox_east = None
+
+    with pytest.raises(ValidationError, match="centroid or bounding box"):
+        _resolve_farm_location(FakeFarm())
+
+
+def test_stale_and_lock_cache_keys() -> None:
+    from weather.services import _lock_cache_key, _stale_cache_key
+
+    key = "weather:current:open_meteo:1.0:36.0:Africa/Nairobi:-:-"
+    assert _stale_cache_key(key) == f"{key}:stale"
+    assert _lock_cache_key(key) == f"{key}:lock"
+
+
+def test_wait_for_cached_value_found_quickly() -> None:
+    import asyncio
+
+    from django.core.cache import cache as default_cache
+
+    from weather.services import _wait_for_cached_value
+
+    _clear_cache()
+    key = "test:wait:quick"
+    stale_key = f"{key}:stale"
+    default_cache.set(key, {"temp": 25.0}, timeout=60)
+
+    async def run_test() -> tuple:
+        return await _wait_for_cached_value(
+            default_cache, key, stale_key, timeout=1.0
+        )
+
+    result, from_stale = asyncio.run(run_test())
+    assert result == {"temp": 25.0}
+    assert from_stale is False
+
+
+def test_wait_for_cached_value_from_stale() -> None:
+    import asyncio
+
+    from django.core.cache import cache as default_cache
+
+    from weather.services import _wait_for_cached_value
+
+    _clear_cache()
+    key = "test:wait:stale"
+    stale_key = f"{key}:stale"
+    default_cache.set(stale_key, {"temp": 20.0}, timeout=60)
+
+    async def run_test() -> tuple:
+        return await _wait_for_cached_value(
+            default_cache, key, stale_key, timeout=0.2
+        )
+
+    result, from_stale = asyncio.run(run_test())
+    assert result == {"temp": 20.0}
+    assert from_stale is True
+
+
+def test_wait_for_cached_value_timeout() -> None:
+    import asyncio
+
+    from django.core.cache import cache as default_cache
+
+    from weather.services import _wait_for_cached_value
+
+    _clear_cache()
+    key = "test:wait:timeout"
+    stale_key = f"{key}:stale"
+
+    async def run_test() -> tuple:
+        return await _wait_for_cached_value(
+            default_cache, key, stale_key, timeout=0.1
+        )
+
+    result, from_stale = asyncio.run(run_test())
+    assert result is None
+    assert from_stale is False
+
+
+def test_handle_upstream_error_raises() -> None:
+    from weather.services import WeatherUpstreamError, _handle_upstream_error
+
+    exc = Exception("upstream failed")
+    with pytest.raises(WeatherUpstreamError):
+        _handle_upstream_error(exc)
+
+
+def test_nasa_power_daily_lag_days_default() -> None:
+    from weather.serializers import _nasa_power_daily_lag_days
+
+    lag = _nasa_power_daily_lag_days()
+    assert lag >= 0
+
+
+def test_nasa_power_cutoff_date() -> None:
+    from datetime import timedelta
+
+    from django.utils import timezone as dj_timezone
+
+    from weather.serializers import _nasa_power_cutoff_date
+
+    cutoff = _nasa_power_cutoff_date()
+    expected = dj_timezone.localdate() - timedelta(days=2)
+    assert cutoff == expected
+
+
+def test_missing_fields() -> None:
+    from weather.serializers import _missing_fields
+
+    class FakeObj:
+        t_min_c = 10.0
+        t_max_c = None
+        precipitation_mm = 5.0
+
+    missing = _missing_fields(FakeObj())
+    assert "t_max_c" in missing
+    assert "t_min_c" not in missing
+
+
+def test_is_missing_day_all_none() -> None:
+    from weather.serializers import _is_missing_day
+
+    class FakeObj:
+        t_min_c = None
+        t_max_c = None
+        precipitation_mm = None
+
+    assert _is_missing_day(FakeObj()) is True
+
+
+def test_is_missing_day_has_data() -> None:
+    from weather.serializers import _is_missing_day
+
+    class FakeObj:
+        t_min_c = 10.0
+        t_max_c = 20.0
+        precipitation_mm = 5.0
+
+    assert _is_missing_day(FakeObj()) is False
+
+
+def test_is_partial_day() -> None:
+    from weather.serializers import _is_partial_day
+
+    class FakeObj:
+        t_min_c = 10.0
+        t_max_c = None
+        precipitation_mm = 5.0
+        source = "open_meteo"
+        day = date(2025, 1, 1)
+
+    assert _is_partial_day(FakeObj()) is True
+
+
+def test_aggregate_weekly_multiple_weeks() -> None:
+    forecasts = [
+        DailyForecast(
+            day=date(2025, 1, 6),
+            t_min_c=10.0,
+            t_max_c=20.0,
+            precipitation_mm=5.0,
+            source="open_meteo",
+        ),
+        DailyForecast(
+            day=date(2025, 1, 13),
+            t_min_c=12.0,
+            t_max_c=22.0,
+            precipitation_mm=3.0,
+            source="open_meteo",
+        ),
+    ]
+    reports = _aggregate_weekly(forecasts, "open_meteo")
+    assert len(reports) == 2
+    assert reports[0].week_start == date(2025, 1, 6)
+    assert reports[1].week_start == date(2025, 1, 13)
+
+
+def test_aggregate_weekly_averages() -> None:
+    forecasts = [
+        DailyForecast(
+            day=date(2025, 1, 6),
+            t_min_c=10.0,
+            t_max_c=20.0,
+            precipitation_mm=5.0,
+            source="open_meteo",
+        ),
+        DailyForecast(
+            day=date(2025, 1, 7),
+            t_min_c=12.0,
+            t_max_c=22.0,
+            precipitation_mm=3.0,
+            source="open_meteo",
+        ),
+    ]
+    reports = _aggregate_weekly(forecasts, "open_meteo")
+    assert len(reports) == 1
+    assert reports[0].t_min_avg_c == 11.0
+    assert reports[0].t_max_avg_c == 21.0
+    assert reports[0].precipitation_sum_mm == 8.0
+
+
+def test_serialize_daily_with_none_values() -> None:
+    from weather.serializers import serialize_daily
+
+    daily = DailyForecast(
+        day=date(2025, 1, 1),
+        t_min_c=None,
+        t_max_c=None,
+        precipitation_mm=None,
+        wind_speed_max_mps=None,
+        source="open_meteo",
+    )
+    result = serialize_daily([daily])
+    assert result[0]["t_min_c"] is None
+    assert result[0]["t_max_c"] is None
+    assert result[0]["precipitation_mm"] is None
+
+
+def test_serialize_weekly_with_none_averages() -> None:
+    from weather.serializers import serialize_weekly
+
+    weekly = WeeklyReport(
+        week_start=date(2025, 1, 6),
+        week_end=date(2025, 1, 12),
+        t_min_avg_c=None,
+        t_max_avg_c=None,
+        precipitation_sum_mm=None,
+        days=[],
+        source="open_meteo",
+    )
+    result = serialize_weekly([weekly])
+    assert result[0]["t_min_avg_c"] is None
+    assert result[0]["t_max_avg_c"] is None
+    assert result[0]["precipitation_sum_mm"] is None
+
+
+def test_open_meteo_daily_summary_with_empty_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+
+    async def fake_request(
+        self: OpenMeteoProvider, params: dict[str, object]
+    ) -> dict[str, object]:
+        return {"daily": {"time": []}}
+
+    monkeypatch.setattr(OpenMeteoProvider, "_request", fake_request)
+    import asyncio
+
+    from weather.services import get_daily_forecast
+
+    result = asyncio.run(
+        get_daily_forecast(
+            lat=1.0,
+            lon=36.0,
+            start=date(2025, 1, 1),
+            end=date(2025, 1, 1),
+            tz="Africa/Nairobi",
+            provider="open_meteo",
+        )
+    )
+    assert result == []
+
+
+def test_nasa_power_daily_with_all_none_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+
+    async def fake_request(
+        self: NasaPowerProvider, params: dict[str, object]
+    ) -> dict[str, object]:
+        return {
+            "properties": {
+                "parameter": {
+                    "T2M_MIN": {"20250101": None},
+                    "T2M_MAX": {"20250101": None},
+                    "PRECTOTCORR": {"20250101": None},
+                    "WS10M_MAX": {"20250101": None},
+                }
+            }
+        }
+
+    monkeypatch.setattr(NasaPowerProvider, "_request", fake_request)
+    import asyncio
+
+    from weather.services import get_daily_forecast
+
+    result = asyncio.run(
+        get_daily_forecast(
+            lat=1.0,
+            lon=36.0,
+            start=date(2025, 1, 1),
+            end=date(2025, 1, 1),
+            tz="Africa/Nairobi",
+            provider="nasa_power",
+        )
+    )
+    assert len(result) == 1
+    assert result[0].t_min_c is None
+
+
+def test_open_meteo_weekly_report_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    import asyncio
+
+    from weather.services import get_weekly_report
+
+    payload: dict[str, object] = {
+        "daily": {
+            "time": ["2025-01-06", "2025-01-07"],
+            "temperature_2m_min": [10.0, 12.0],
+            "temperature_2m_max": [20.0, 22.0],
+            "precipitation_sum": [5.0, 3.0],
+            "wind_speed_10m_max": [3.0, 4.0],
+        }
+    }
+
+    async def fake_request(
+        self: OpenMeteoProvider, params: dict[str, object]
+    ) -> dict[str, object]:
+        return payload
+
+    monkeypatch.setattr(OpenMeteoProvider, "_request", fake_request)
+
+    result = asyncio.run(
+        get_weekly_report(
+            lat=1.0,
+            lon=36.0,
+            start=date(2025, 1, 6),
+            end=date(2025, 1, 7),
+            tz="Africa/Nairobi",
+            provider="open_meteo",
+        )
+    )
+    assert len(result) == 1
+    assert result[0].t_min_avg_c == 11.0
+    assert result[0].t_max_avg_c == 21.0
+
+
+def test_nasa_power_weekly_report_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    import asyncio
+
+    from weather.services import get_weekly_report
+
+    payload: dict[str, object] = {
+        "properties": {
+            "parameter": {
+                "T2M_MIN": {"20250106": 10.0, "20250107": 12.0},
+                "T2M_MAX": {"20250106": 20.0, "20250107": 22.0},
+                "PRECTOTCORR": {"20250106": 0.001, "20250107": 0.002},
+                "WS10M_MAX": {"20250106": 3.0, "20250107": 4.0},
+            }
+        }
+    }
+
+    async def fake_request(
+        self: NasaPowerProvider, params: dict[str, object]
+    ) -> dict[str, object]:
+        return payload
+
+    monkeypatch.setattr(NasaPowerProvider, "_request", fake_request)
+
+    result = asyncio.run(
+        get_weekly_report(
+            lat=1.0,
+            lon=36.0,
+            start=date(2025, 1, 6),
+            end=date(2025, 1, 7),
+            tz="Africa/Nairobi",
+            provider="nasa_power",
+        )
+    )
+    assert len(result) == 1
+
+
+def test_get_current_with_stale_cache_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    import asyncio
+
+    from django.core.cache import cache as default_cache
+
+    from weather.engines.types import CurrentWeather
+    from weather.services import (
+        PROVIDER_REGISTRY,
+        _lock_cache_key,
+        _stale_cache_key,
+        get_current_weather,
+    )
+
+    # Set stale value
+    stale_weather = CurrentWeather(
+        temperature_c=20.0,
+        wind_speed_mps=3.0,
+        observed_at=datetime.now(ZoneInfo("Africa/Nairobi")),
+        source="open_meteo",
+    )
+
+    lat, lon, tz = 1.0, 36.0, "Africa/Nairobi"
+    key_str = f"weather:current:open_meteo:{lat:.4f}:{lon:.4f}:{tz}:-:-"
+    stale_key = _stale_cache_key(key_str)
+    lock_key = _lock_cache_key(key_str)
+
+    # Set stale value and acquire lock to simulate another request fetching
+    default_cache.set(stale_key, stale_weather, timeout=60)
+    default_cache.set(lock_key, 1, timeout=60)
+
+    # Make provider raise error
+    async def failing_current(
+        *args: object, **kwargs: object
+    ) -> CurrentWeather:
+        raise Exception("upstream error")
+
+    monkeypatch.setattr(
+        PROVIDER_REGISTRY["open_meteo"], "current", failing_current
+    )
+    # Shorten wait timeout for test
+    monkeypatch.setattr("weather.services.CACHE_LOCK_WAIT_SECONDS", 0.2)
+
+    # Should return stale value after waiting for lock holder
+    result = asyncio.run(
+        get_current_weather(
+            lat=lat,
+            lon=lon,
+            tz=tz,
+            provider="open_meteo",
+        )
+    )
+    assert result.temperature_c == 20.0
