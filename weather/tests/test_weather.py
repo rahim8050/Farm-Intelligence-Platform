@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # ruff: noqa: S101
 import asyncio
+import secrets
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import cast
@@ -1117,7 +1118,7 @@ def test_resolve_farm_location_with_centroid() -> None:
     user_model = get_user_model()
     user = user_model.objects.create_user(
         username="test",
-        password="test",  # noqa: S106 test password
+        password=secrets.token_urlsafe(12),
     )
     farm = Farm.objects.create(
         owner=user,
@@ -1142,7 +1143,7 @@ def test_resolve_farm_location_with_bbox() -> None:
     user_model = get_user_model()
     user = user_model.objects.create_user(
         username="test",
-        password="test",  # noqa: S106 test password
+        password=secrets.token_urlsafe(12),
     )
     farm = Farm.objects.create(
         owner=user,
@@ -1171,7 +1172,7 @@ def test_resolve_farm_location_missing_raises() -> None:
     user_model = get_user_model()
     user = user_model.objects.create_user(
         username="test",
-        password="test",  # noqa: S106 test password
+        password=secrets.token_urlsafe(12),
     )
     farm = Farm.objects.create(
         owner=user,
