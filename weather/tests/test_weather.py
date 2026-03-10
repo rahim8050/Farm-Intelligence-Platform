@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: S101
 import asyncio
 from datetime import UTC, date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import cast
 from zoneinfo import ZoneInfo
 
@@ -1106,51 +1107,86 @@ def test_select_provider_none_returns_default() -> None:
     assert result == "open_meteo"
 
 
+@pytest.mark.django_db
 def test_resolve_farm_location_with_centroid() -> None:
+    from django.contrib.auth import get_user_model
+
+    from farms.models import Farm
     from weather.services import _resolve_farm_location
 
-    class FakeFarm:
-        centroid_lat = 1.5
-        centroid_lon = 36.5
-        bbox_south = None
-        bbox_west = None
-        bbox_north = None
-        bbox_east = None
+    user_model = get_user_model()
+    user = user_model.objects.create_user(
+        username="test",
+        password="test",  # noqa: S106 test password
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Test Farm",
+        slug="test-farm",
+        centroid_lat=Decimal("1.5"),
+        centroid_lon=Decimal("36.5"),
+    )
 
-    location = _resolve_farm_location(FakeFarm())  # type: ignore[arg-type]
+    location = _resolve_farm_location(farm)
     assert location.lat == 1.5
     assert location.lon == 36.5
 
 
+@pytest.mark.django_db
 def test_resolve_farm_location_with_bbox() -> None:
+    from django.contrib.auth import get_user_model
+
+    from farms.models import Farm
     from weather.services import _resolve_farm_location
 
-    class FakeFarm:
-        centroid_lat = None
-        centroid_lon = None
-        bbox_south = 1.0
-        bbox_west = 36.0
-        bbox_north = 2.0
-        bbox_east = 37.0
+    user_model = get_user_model()
+    user = user_model.objects.create_user(
+        username="test",
+        password="test",  # noqa: S106 test password
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Test Farm",
+        slug="test-farm",
+        centroid_lat=None,
+        centroid_lon=None,
+        bbox_south=Decimal("1.0"),
+        bbox_west=Decimal("36.0"),
+        bbox_north=Decimal("2.0"),
+        bbox_east=Decimal("37.0"),
+    )
 
-    location = _resolve_farm_location(FakeFarm())  # type: ignore[arg-type]
+    location = _resolve_farm_location(farm)
     assert location.lat == 1.5
     assert location.lon == 36.5
 
 
+@pytest.mark.django_db
 def test_resolve_farm_location_missing_raises() -> None:
+    from django.contrib.auth import get_user_model
+
+    from farms.models import Farm
     from weather.services import _resolve_farm_location
 
-    class FakeFarm:
-        centroid_lat = None
-        centroid_lon = None
-        bbox_south = None
-        bbox_west = None
-        bbox_north = None
-        bbox_east = None
+    user_model = get_user_model()
+    user = user_model.objects.create_user(
+        username="test",
+        password="test",  # noqa: S106 test password
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Test Farm",
+        slug="test-farm",
+        centroid_lat=None,
+        centroid_lon=None,
+        bbox_south=None,
+        bbox_west=None,
+        bbox_north=None,
+        bbox_east=None,
+    )
 
     with pytest.raises(ValidationError, match="centroid or bounding box"):
-        _resolve_farm_location(FakeFarm())  # type: ignore[arg-type]
+        _resolve_farm_location(farm)
 
 
 def test_stale_and_lock_cache_keys() -> None:
