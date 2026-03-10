@@ -1117,7 +1117,7 @@ def test_resolve_farm_location_with_centroid() -> None:
         bbox_north = None
         bbox_east = None
 
-    location = _resolve_farm_location(FakeFarm())
+    location = _resolve_farm_location(FakeFarm())  # type: ignore[arg-type]
     assert location.lat == 1.5
     assert location.lon == 36.5
 
@@ -1133,7 +1133,7 @@ def test_resolve_farm_location_with_bbox() -> None:
         bbox_north = 2.0
         bbox_east = 37.0
 
-    location = _resolve_farm_location(FakeFarm())
+    location = _resolve_farm_location(FakeFarm())  # type: ignore[arg-type]
     assert location.lat == 1.5
     assert location.lon == 36.5
 
@@ -1150,7 +1150,7 @@ def test_resolve_farm_location_missing_raises() -> None:
         bbox_east = None
 
     with pytest.raises(ValidationError, match="centroid or bounding box"):
-        _resolve_farm_location(FakeFarm())
+        _resolve_farm_location(FakeFarm())  # type: ignore[arg-type]
 
 
 def test_stale_and_lock_cache_keys() -> None:
