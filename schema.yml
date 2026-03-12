@@ -341,7 +341,8 @@ paths:
       description: |-
         Return a cached NDVI raster PNG or 404 if missing.
 
-        Query params: date (required), optional size, max_cloud, engine.
+        Query params: date (required), optional size, max_cloud, engine,
+        external_farm_id (integration tokens).
         Success: binary image/png with ETag + Cache-Control.
         Errors: standard error envelope.
       parameters:
@@ -356,6 +357,12 @@ paths:
         schema:
           type: string
         description: Override NDVI engine (sentinelhub or stac).
+      - in: query
+        name: external_farm_id
+        schema:
+          type: string
+          format: uuid
+        description: Resolve farm by external_farm_id (integration tokens).
       - in: path
         name: farm_id
         schema:
@@ -372,7 +379,7 @@ paths:
       tags:
       - v1
       security:
-      - jwtAuth: []
+      - BearerAuth: []
       - ApiKeyAuth: []
       responses:
         '200':
@@ -414,13 +421,19 @@ paths:
       description: |-
         Enqueue a raster render job for the specified date.
 
-        Query params: optional engine override.
+        Query params: optional engine override, external_farm_id (integration).
       parameters:
       - in: query
         name: engine
         schema:
           type: string
         description: Override NDVI engine (sentinelhub or stac).
+      - in: query
+        name: external_farm_id
+        schema:
+          type: string
+          format: uuid
+        description: Resolve farm by external_farm_id (integration tokens).
       - in: path
         name: farm_id
         schema:
@@ -441,7 +454,7 @@ paths:
               $ref: '#/components/schemas/RasterPngRequest'
         required: true
       security:
-      - jwtAuth: []
+      - BearerAuth: []
       - ApiKeyAuth: []
       responses:
         '202':
@@ -1148,6 +1161,56 @@ paths:
       responses:
         '204':
           description: No response body
+  /api/v1/farms/sync:
+    post:
+      operationId: v1_farms_sync_create
+      description: |-
+        Sync a farm using external identifiers.
+
+        Inputs: external_farm_id, external_user_id, name, bbox, centroid.
+        Output: success envelope with farm metadata.
+        Side effects: creates/updates Farm + FarmIntegrationAccess.
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FarmSync'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/FarmSync'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/FarmSync'
+        required: true
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmSyncSuccessResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmSyncErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmSyncErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmSyncErrorResponse'
+          description: ''
   /api/v1/integrations/clients/:
     get:
       operationId: v1_integrations_clients_list
@@ -2614,6 +2677,124 @@ components:
       required:
       - event_type
       - observed_at
+    FarmSync:
+      type: object
+      properties:
+        external_farm_id:
+          type: string
+          format: uuid
+        external_user_id:
+          type: string
+          maxLength: 255
+        name:
+          type: string
+          maxLength: 120
+        bbox:
+          $ref: '#/components/schemas/FarmSyncBBox'
+        centroid:
+          allOf:
+          - $ref: '#/components/schemas/FarmSyncCentroid'
+          nullable: true
+      required:
+      - bbox
+      - external_farm_id
+      - external_user_id
+      - name
+    FarmSyncBBox:
+      type: object
+      properties:
+        south:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,5})?$
+        west:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,5})?$
+        north:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,5})?$
+        east:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,5})?$
+      required:
+      - east
+      - north
+      - south
+      - west
+    FarmSyncCentroid:
+      type: object
+      properties:
+        lat:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,5})?$
+        lon:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,5})?$
+      required:
+      - lat
+      - lon
+    FarmSyncData:
+      type: object
+      properties:
+        id:
+          type: integer
+        external_farm_id:
+          type: string
+          format: uuid
+        external_user_id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        bbox:
+          $ref: '#/components/schemas/FarmSyncBBox'
+        centroid:
+          allOf:
+          - $ref: '#/components/schemas/FarmSyncCentroid'
+          nullable: true
+      required:
+      - bbox
+      - centroid
+      - external_farm_id
+      - external_user_id
+      - id
+      - name
+      - slug
+    FarmSyncErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - errors
+      - message
+      - status
+    FarmSyncSuccessResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/FarmSyncData'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
     FarmWeatherCurrentSuccess:
       type: object
       properties:

@@ -14,6 +14,7 @@ import logging
 from collections.abc import Iterable
 from datetime import date
 from typing import Any, Final, cast
+from uuid import UUID
 
 from django.conf import settings
 from django.core.cache import caches
@@ -27,7 +28,11 @@ from drf_spectacular.utils import (
     inline_serializer,
 )
 from rest_framework import serializers, status
-from rest_framework.exceptions import Throttled, ValidationError
+from rest_framework.exceptions import (
+    PermissionDenied,
+    Throttled,
+    ValidationError,
+)
 from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer, JSONRenderer
@@ -40,7 +45,9 @@ from config.api.openapi import (
     success_envelope_serializer,
 )
 from config.api.responses import JSONValue, error_response, success_response
+from farms.authentication import FarmObservationAuthentication
 from farms.models import Farm
+from integrations.authentication import IntegrationTokenUser
 
 from .metrics import ndvi_farms_stale_total
 from .models import NdviJob, NdviObservation, NdviRasterArtifact
@@ -269,6 +276,14 @@ latest_query_params = [
     engine_query_param,
 ]
 
+external_farm_id_query_param = OpenApiParameter(
+    name="external_farm_id",
+    type=OpenApiTypes.UUID,
+    location=OpenApiParameter.QUERY,
+    required=False,
+    description="Resolve farm by external_farm_id (integration tokens).",
+)
+
 raster_query_params = [
     OpenApiParameter(
         name="date",
@@ -288,6 +303,7 @@ raster_query_params = [
         location=OpenApiParameter.QUERY,
         required=False,
     ),
+    external_farm_id_query_param,
     engine_query_param,
 ]
 
@@ -357,6 +373,90 @@ class BaseFarmView(APIView):
                 getattr(self.request, "path", ""),
             )
             raise
+
+
+class BaseRasterView(BaseFarmView):
+    """Shared helpers for NDVI raster endpoints.
+
+    Auth: API key, user JWT, or integration JWT.
+    Permissions: IsAuthenticated; owner-only for user/API key requests.
+    Integration access: allow-listed per farm via FarmIntegrationAccess.
+    Integration scope: read for GET, write for POST.
+    Response envelope: `success_response` (errors use standard envelope).
+    """
+
+    authentication_classes = (FarmObservationAuthentication,)
+    permission_classes = [IsAuthenticated]
+
+    def _integration_scopes(self, request: Request) -> set[str]:
+        auth_obj: Any = getattr(request, "auth", None)
+
+        def _claim(key: str) -> str:
+            if isinstance(auth_obj, dict):
+                return str(auth_obj.get(key, "") or "")
+            getter = getattr(auth_obj, "get", None)
+            if callable(getter):
+                try:
+                    value = getter(key)
+                except Exception:
+                    value = None
+                else:
+                    if value is not None:
+                        return str(value or "")
+            try:
+                return str(auth_obj[key] or "")
+            except Exception:
+                return ""
+
+        scope = _claim("scope")
+        if not scope:
+            return set()
+        normalized = scope.replace(",", " ")
+        return {item for item in normalized.split() if item}
+
+    def _enforce_integration_scope(
+        self, request: Request, *, write: bool
+    ) -> None:
+        if not isinstance(request.user, IntegrationTokenUser):
+            return
+        scopes = self._integration_scopes(request)
+        if not scopes:
+            raise PermissionDenied("Integration token scope missing.")
+        read_scopes = {"read", "write", "admin"}
+        write_scopes = {"write", "admin"}
+        allowed = write_scopes if write else read_scopes
+        if not scopes.intersection(allowed):
+            raise PermissionDenied("Integration token scope not permitted.")
+
+    def _resolve_external_farm_id(self, request: Request) -> UUID | None:
+        raw = request.query_params.get("external_farm_id")
+        if not raw:
+            return None
+        try:
+            return UUID(str(raw))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "external_farm_id must be a valid UUID."
+            ) from exc
+
+    def _get_farm_for_request(self, request: Request, farm_id: int) -> Farm:
+        if isinstance(request.user, IntegrationTokenUser):
+            external_farm_id = self._resolve_external_farm_id(request)
+            lookup: dict[str, Any] = {
+                "is_active": True,
+                "integration_access__client_id": request.user.client_id,
+                "integration_access__is_active": True,
+            }
+            if external_farm_id is not None:
+                lookup["external_farm_id"] = external_farm_id
+            else:
+                lookup["id"] = farm_id
+            return get_object_or_404(Farm, **lookup)
+
+        user_id = getattr(request.user, "id", None)
+        if user_id is None:
+            raise Http404
+        return self._get_farm(farm_id, cast(int, user_id))
 
 
 class NdviTimeseriesView(BaseFarmView):
@@ -549,13 +649,19 @@ class NdviLatestView(BaseFarmView):
         return success_response(payload, message="Latest NDVI")
 
 
-class NdviRasterPngView(BaseFarmView):
-    """Serve NDVI raster PNG for a farm (owner-only)."""
+class NdviRasterPngView(BaseRasterView):
+    """Serve NDVI raster PNG for a farm.
+
+    Auth: API key, user JWT, or integration JWT.
+    Permissions: owner-only for user/API key requests.
+    Integration access: allow-listed per farm via FarmIntegrationAccess.
+    """
 
     renderer_classes = [JSONRenderer]
     content_negotiation_class = IgnoreAcceptHeaderNegotiation
 
     @extend_schema(
+        auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
         parameters=raster_query_params,
         responses={
             (200, "image/png"): OpenApiTypes.BINARY,
@@ -569,12 +675,15 @@ class NdviRasterPngView(BaseFarmView):
     def get(self, request: Request, farm_id: int) -> HttpResponse | Response:
         """Return a cached NDVI raster PNG or 404 if missing.
 
-        Query params: date (required), optional size, max_cloud, engine.
+        Query params: date (required), optional size, max_cloud, engine,
+        external_farm_id (integration tokens).
         Success: binary image/png with ETag + Cache-Control.
         Errors: standard error envelope.
         """
 
-        farm = self._get_farm(farm_id, cast(int, request.user.id))
+        self._enforce_integration_scope(request, write=False)
+        farm = self._get_farm_for_request(request, farm_id)
+        owner_id = farm.owner_id
         engine_override = request.query_params.get("engine")
         engine_name = resolve_raster_engine_name(engine_override)
         serializer = RasterPngRequestSerializer(
@@ -613,7 +722,7 @@ class NdviRasterPngView(BaseFarmView):
                 )
         if artifact is None:
             reason = _lookup_raster_not_found_reason(
-                owner_id=cast(int, request.user.id),
+                owner_id=owner_id,
                 farm_id=farm.id,
                 engine=engine_name,
                 raster_date=cast(date, params["date"]),
@@ -638,7 +747,7 @@ class NdviRasterPngView(BaseFarmView):
         artifact.image.close()
         if not content:
             reason = _lookup_raster_not_found_reason(
-                owner_id=cast(int, request.user.id),
+                owner_id=owner_id,
                 farm_id=farm.id,
                 engine=engine_name,
                 raster_date=cast(date, params["date"]),
@@ -657,7 +766,7 @@ class NdviRasterPngView(BaseFarmView):
         return response
 
 
-class NdviRasterQueueView(BaseFarmView):
+class NdviRasterQueueView(BaseRasterView):
     """Queue NDVI raster rendering with cooldown."""
 
     throttle_cooldown = int(
@@ -669,8 +778,9 @@ class NdviRasterQueueView(BaseFarmView):
     )
 
     @extend_schema(
+        auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
         request=RasterPngRequestSerializer,
-        parameters=[engine_query_param],
+        parameters=[engine_query_param, external_farm_id_query_param],
         responses={
             202: raster_queue_success_response,
             400: ndvi_error_response,
@@ -681,10 +791,12 @@ class NdviRasterQueueView(BaseFarmView):
     def post(self, request: Request, farm_id: int) -> Response:
         """Enqueue a raster render job for the specified date.
 
-        Query params: optional engine override.
+        Query params: optional engine override, external_farm_id (integration).
         """
 
-        farm = self._get_farm(farm_id, cast(int, request.user.id))
+        self._enforce_integration_scope(request, write=True)
+        farm = self._get_farm_for_request(request, farm_id)
+        owner_id = farm.owner_id
         engine_override = request.query_params.get("engine")
         engine_name = resolve_raster_engine_name(engine_override)
         serializer = RasterPngRequestSerializer(
@@ -697,13 +809,13 @@ class NdviRasterQueueView(BaseFarmView):
         enforce_quota(farm, bbox)
 
         throttle_cache = caches["default"]
-        key = f"ndvi:raster:queue:{request.user.id}:{farm.id}"
+        key = f"ndvi:raster:queue:{owner_id}:{farm.id}"
         if throttle_cache.get(key):
             raise Throttled(detail="Raster already queued recently.")
         throttle_cache.set(key, "1", self.throttle_cooldown)
 
         job = enqueue_job(
-            owner_id=cast(int, request.user.id),
+            owner_id=owner_id,
             farm=farm,
             engine_name=engine_override,
             job_type=NdviJob.JobType.RASTER_PNG,

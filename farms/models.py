@@ -22,6 +22,19 @@ class Farm(models.Model):
         related_name="farms",
     )
 
+    external_farm_id = models.UUIDField(
+        unique=True,
+        db_index=True,
+        null=True,
+        blank=True,
+    )
+    external_user_id = models.CharField(
+        max_length=255,
+        db_index=True,
+        null=True,
+        blank=True,
+    )
+
     name = models.CharField(max_length=120)
     slug = models.SlugField(max_length=140)
 

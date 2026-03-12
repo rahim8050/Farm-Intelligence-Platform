@@ -7,12 +7,14 @@ from .observation_views import (
     FarmObservationDetailView,
     FarmObservationListCreateView,
 )
+from .sync_views import FarmSyncView
 from .views import FarmViewSet
 
 router = DefaultRouter()
 router.register(r"farms", FarmViewSet, basename="farm")
 
 urlpatterns: list[URLPattern | URLResolver] = [
+    path("farms/sync", FarmSyncView.as_view(), name="farm-sync"),
     path(
         "farms/<int:farm_id>/observations/",
         FarmObservationListCreateView.as_view(),

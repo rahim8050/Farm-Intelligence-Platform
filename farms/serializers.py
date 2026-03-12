@@ -99,6 +99,75 @@ class FarmSerializer(serializers.ModelSerializer):
         return attrs
 
 
+_LAT_MIN = Decimal("-90")
+_LAT_MAX = Decimal("90")
+_LON_MIN = Decimal("-180")
+_LON_MAX = Decimal("180")
+
+
+class FarmSyncBBoxSerializer(serializers.Serializer):
+    south = serializers.DecimalField(
+        max_digits=8,
+        decimal_places=5,
+        min_value=_LAT_MIN,
+        max_value=_LAT_MAX,
+    )
+    west = serializers.DecimalField(
+        max_digits=9,
+        decimal_places=5,
+        min_value=_LON_MIN,
+        max_value=_LON_MAX,
+    )
+    north = serializers.DecimalField(
+        max_digits=8,
+        decimal_places=5,
+        min_value=_LAT_MIN,
+        max_value=_LAT_MAX,
+    )
+    east = serializers.DecimalField(
+        max_digits=9,
+        decimal_places=5,
+        min_value=_LON_MIN,
+        max_value=_LON_MAX,
+    )
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        south = cast(Decimal, attrs["south"])
+        west = cast(Decimal, attrs["west"])
+        north = cast(Decimal, attrs["north"])
+        east = cast(Decimal, attrs["east"])
+        if south >= north:
+            raise serializers.ValidationError(
+                "bbox_south must be < bbox_north."
+            )
+        if west >= east:
+            raise serializers.ValidationError("bbox_west must be < bbox_east.")
+        return attrs
+
+
+class FarmSyncCentroidSerializer(serializers.Serializer):
+    lat = serializers.DecimalField(
+        max_digits=8,
+        decimal_places=5,
+        min_value=_LAT_MIN,
+        max_value=_LAT_MAX,
+    )
+    lon = serializers.DecimalField(
+        max_digits=8,
+        decimal_places=5,
+        min_value=_LON_MIN,
+        max_value=_LON_MAX,
+    )
+
+
+class FarmSyncSerializer(serializers.Serializer):
+    external_farm_id = serializers.UUIDField()
+    external_user_id = serializers.CharField(max_length=255)
+    name = serializers.CharField(max_length=120)
+    bbox = FarmSyncBBoxSerializer()
+    centroid = FarmSyncCentroidSerializer(required=False, allow_null=True)
+
+
 class FarmObservationSerializer(serializers.ModelSerializer):
     farm_id = serializers.IntegerField(read_only=True)
     created_by_id = serializers.IntegerField(read_only=True)
