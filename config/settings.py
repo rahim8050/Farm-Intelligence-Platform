@@ -207,6 +207,16 @@ else:
         "LOCATION": "throttle",
     }
 
+if IS_TESTING:
+    default_cache_config = {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "default",
+    }
+    throttle_cache_config = {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "throttle",
+    }
+
 if IS_PROD and not REDIS_URL:
     raise ImproperlyConfigured("Set REDIS_URL for production caching")
 
