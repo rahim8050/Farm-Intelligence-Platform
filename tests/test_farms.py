@@ -28,10 +28,11 @@ class FarmCreationValidationTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIsInstance(response.data, dict)
-        self.assertIn("name", response.data)
+        self.assertIn("errors", response.data)
+        self.assertIn("name", response.data["errors"])
         self.assertIn(
             "required",
-            " ".join(map(str, response.data["name"])).lower(),
+            " ".join(map(str, response.data["errors"]["name"])).lower(),
         )
 
     def test_duplicate_name_returns_conflict(self) -> None:
@@ -44,5 +45,6 @@ class FarmCreationValidationTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(
-            response.data.get("name"), ["Farm name already exists."]
+            response.data.get("errors", {}).get("name"),
+            ["Farm name already exists."],
         )
