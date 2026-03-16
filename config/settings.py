@@ -108,10 +108,29 @@ LOGGING = {
         "file": {
             "class": "logging.FileHandler",
             "filename": str(LOG_DIR / "django.log"),
+            "formatter": "verbose",
         },
-        "console": {"class": "logging.StreamHandler"},
+        "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
     },
-    "root": {"handlers": ["console", "file"], "level": "INFO"},
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {message}",
+            "style": "{",
+        },
+    },
+    "root": {"handlers": ["console", "file"], "level": "DEBUG"},
+    "loggers": {
+        "django": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "farms": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+    },
 }
 
 ROOT_URLCONF = "config.urls"

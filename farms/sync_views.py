@@ -151,10 +151,34 @@ class FarmSyncView(APIView):
         bbox = serializer.validated_data["bbox"]
         centroid = serializer.validated_data.get("centroid")
 
+        # Generate a unique slug to avoid conflicts
+        from django.utils.text import slugify
+
+        base_name = serializer.validated_data["name"]
+        base_slug = slugify(base_name)[:120] or "farm"
+        slug = base_slug
+        counter = 1
+
+        # Check if slug already exists for this owner
+        # (excluding the current farm if it exists)
+        existing_farm = Farm.objects.filter(
+            owner=service_user,
+            external_farm_id=serializer.validated_data["external_farm_id"],
+        ).first()
+
+        while (
+            Farm.objects.filter(owner=service_user, slug=slug)
+            .exclude(id=existing_farm.id if existing_farm else -1)
+            .exists()
+        ):
+            slug = f"{base_slug}-{counter}"
+            counter += 1
+
         defaults = {
             "owner": service_user,
             "external_user_id": serializer.validated_data["external_user_id"],
             "name": serializer.validated_data["name"],
+            "slug": slug,
             "bbox_south": bbox["south"],
             "bbox_west": bbox["west"],
             "bbox_north": bbox["north"],
@@ -168,9 +192,14 @@ class FarmSyncView(APIView):
                 external_farm_id=serializer.validated_data["external_farm_id"],
                 defaults=defaults,
             )
-        except IntegrityError:
+        except IntegrityError as e:
             self._log_sync_failed(request, serializer.validated_data)
-            raise
+            logger.exception("IntegrityError during farm sync: %s", str(e))
+            return error_response(
+                "Farm sync failed due to data conflict. "
+                "Please check farm name and try again.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
 
         if client_id:
             FarmIntegrationAccess.objects.update_or_create(
@@ -212,17 +241,15 @@ class FarmSyncView(APIView):
         )
         return success_response(payload, message="Farm synced")
 
-    def _log_sync_failed(
-        self, request: Request, payload: dict[str, Any] | None
-    ) -> None:
+    def _log_sync_failed(self, request: Request, data: Any | None) -> None:
         client_id = getattr(request, "integration_client_id", None)
         if not client_id and isinstance(request.user, IntegrationTokenUser):
             client_id = request.user.client_id
         external_farm_id = None
         external_user_id = None
-        if isinstance(payload, dict):
-            external_farm_id = payload.get("external_farm_id")
-            external_user_id = payload.get("external_user_id")
+        if isinstance(data, dict):
+            external_farm_id = data.get("external_farm_id")
+            external_user_id = data.get("external_user_id")
         logger.warning(
             "farm_sync_failed external_farm_id=%s external_user_id=%s "
             "client_id=%s",
