@@ -151,28 +151,27 @@ class FarmSyncView(APIView):
         bbox = serializer.validated_data["bbox"]
         centroid = serializer.validated_data.get("centroid")
 
-        # Generate a unique slug to avoid conflicts
-        from django.utils.text import slugify
-
-        base_name = serializer.validated_data["name"]
-        base_slug = slugify(base_name)[:120] or "farm"
-        slug = base_slug
-        counter = 1
-
-        # Check if slug already exists for this owner
-        # (excluding the current farm if it exists)
+        # Check if farm already exists
         existing_farm = Farm.objects.filter(
             owner=service_user,
             external_farm_id=serializer.validated_data["external_farm_id"],
         ).first()
 
-        while (
-            Farm.objects.filter(owner=service_user, slug=slug)
-            .exclude(id=existing_farm.id if existing_farm else -1)
-            .exists()
-        ):
-            slug = f"{base_slug}-{counter}"
-            counter += 1
+        # Preserve existing slug on updates, generate new slug for creates
+        from django.utils.text import slugify
+
+        if existing_farm:
+            slug = existing_farm.slug
+        else:
+            base_name = serializer.validated_data["name"]
+            base_slug = slugify(base_name)[:120] or "farm"
+            slug = base_slug
+            counter = 1
+
+            # Check if slug already exists for this owner
+            while Farm.objects.filter(owner=service_user, slug=slug).exists():
+                slug = f"{base_slug}-{counter}"
+                counter += 1
 
         defaults = {
             "owner": service_user,
