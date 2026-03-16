@@ -1620,3 +1620,288 @@ def test_get_current_with_stale_cache_fallback(
         )
     )
     assert result.temperature_c == 20.0
+
+
+def test_open_meteo_hourly_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_cache()
+    payload: dict[str, object] = {
+        "hourly": {
+            "time": ["2025-01-01T00:00", "2025-01-01T01:00"],
+            "temperature_2m": [20.0, 21.0],
+            "precipitation": [0.0, 1.5],
+            "wind_speed_10m": [3.0, 4.0],
+            "cloudcover": [50.0, 60.0],
+        }
+    }
+
+    async def fake_request(
+        self: OpenMeteoProvider, params: dict[str, object]
+    ) -> dict[str, object]:
+        return payload
+
+    monkeypatch.setattr(OpenMeteoProvider, "_request", fake_request)
+    provider = OpenMeteoProvider()
+    forecasts = asyncio.run(
+        provider.hourly(
+            Location(lat=1.0, lon=36.0, tz="Africa/Nairobi"),
+            hours=2,
+        )
+    )
+    assert len(forecasts) == 2
+    first = forecasts[0]
+    assert first.temperature_c == pytest.approx(20.0)
+    assert first.precipitation_mm == pytest.approx(0.0)
+    assert first.wind_speed_mps == pytest.approx(3.0)
+    assert first.cloud_cover_pct == pytest.approx(50.0)
+
+
+def test_open_meteo_hourly_with_missing_cloudcover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    payload: dict[str, object] = {
+        "hourly": {
+            "time": ["2025-01-01T00:00"],
+            "temperature_2m": [20.0],
+            "precipitation": [0.0],
+            "wind_speed_10m": [3.0],
+        }
+    }
+
+    async def fake_request(
+        self: OpenMeteoProvider, params: dict[str, object]
+    ) -> dict[str, object]:
+        return payload
+
+    monkeypatch.setattr(OpenMeteoProvider, "_request", fake_request)
+    provider = OpenMeteoProvider()
+    forecasts = asyncio.run(
+        provider.hourly(
+            Location(lat=1.0, lon=36.0, tz="Africa/Nairobi"),
+            hours=1,
+        )
+    )
+    assert len(forecasts) == 1
+    assert forecasts[0].cloud_cover_pct is None
+
+
+def test_open_meteo_daily_summary_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    payload: dict[str, object] = {
+        "daily": {
+            "time": ["2025-01-01", "2025-01-02"],
+            "temperature_2m_min": [10.0, 12.0],
+            "temperature_2m_max": [20.0, 22.0],
+            "precipitation_sum": [5.0, 3.0],
+            "wind_speed_10m_max": [3.0, 4.0],
+        }
+    }
+
+    async def fake_request(
+        self: OpenMeteoProvider, params: dict[str, object]
+    ) -> dict[str, object]:
+        return payload
+
+    monkeypatch.setattr(OpenMeteoProvider, "_request", fake_request)
+    provider = OpenMeteoProvider()
+    summaries = asyncio.run(
+        provider.daily_summary(
+            Location(lat=1.0, lon=36.0, tz="Africa/Nairobi"),
+            date(2025, 1, 1),
+            date(2025, 1, 2),
+        )
+    )
+    assert len(summaries) == 2
+    first = summaries[0]
+    assert first.t_min_c == pytest.approx(10.0)
+    assert first.t_max_c == pytest.approx(20.0)
+    assert first.precipitation_mm == pytest.approx(5.0)
+    assert first.wind_speed_max_mps == pytest.approx(3.0)
+
+
+def test_open_meteo_current_with_missing_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    payload: dict[str, object] = {
+        "current": {
+            "time": "2025-01-01T10:00",
+            "temperature_2m": None,
+            "wind_speed_10m": None,
+        }
+    }
+
+    async def fake_request(
+        self: OpenMeteoProvider, params: dict[str, object]
+    ) -> dict[str, object]:
+        return payload
+
+    monkeypatch.setattr(OpenMeteoProvider, "_request", fake_request)
+    provider = OpenMeteoProvider()
+    result = asyncio.run(
+        provider.current(Location(lat=1.0, lon=36.0, tz="Africa/Nairobi"))
+    )
+    assert result.temperature_c is None
+    assert result.wind_speed_mps is None
+
+
+@pytest.mark.django_db
+def test_get_farm_current_weather_cache_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    from django.contrib.auth import get_user_model
+
+    from farms.models import Farm
+    from weather.services import get_farm_current_weather
+
+    user = get_user_model().objects.create_user(
+        username="farm-weather-user",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Test Farm",
+        slug="test-farm",
+        centroid_lat=Decimal("1.5"),
+        centroid_lon=Decimal("36.5"),
+    )
+
+    cached_weather = CurrentWeather(
+        observed_at=datetime(2025, 1, 1, tzinfo=UTC),
+        temperature_c=25.0,
+        wind_speed_mps=5.0,
+        source="open_meteo",
+    )
+    key = (
+        f"farm-weather:current:open_meteo:{farm.id}:"
+        f"1.5000:36.5000:Africa/Nairobi:-:-"
+    )
+    caches["default"].set(key, cached_weather, 60)
+
+    result = asyncio.run(get_farm_current_weather(farm, provider="open_meteo"))
+    assert result.temperature_c == 25.0
+
+
+@pytest.mark.django_db
+def test_get_farm_hourly_forecast_cache_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    from django.contrib.auth import get_user_model
+
+    from farms.models import Farm
+    from weather.engines.types import HourlyForecast
+    from weather.services import get_farm_hourly_forecast
+
+    user = get_user_model().objects.create_user(
+        username="farm-hourly-user",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Test Farm",
+        slug="test-farm",
+        centroid_lat=Decimal("1.5"),
+        centroid_lon=Decimal("36.5"),
+    )
+
+    cached_hourly = [
+        HourlyForecast(
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
+            temperature_c=20.0,
+            precipitation_mm=0.0,
+            wind_speed_mps=3.0,
+            cloud_cover_pct=50.0,
+            source="open_meteo",
+        )
+    ]
+    key = (
+        f"farm-weather:hourly:open_meteo:{farm.id}:"
+        f"1.5000:36.5000:Africa/Nairobi:24:-"
+    )
+    caches["default"].set(key, cached_hourly, 600)
+
+    result = asyncio.run(
+        get_farm_hourly_forecast(farm, hours=24, provider="open_meteo")
+    )
+    assert result == cached_hourly
+
+
+@pytest.mark.django_db
+def test_get_farm_daily_summary_cache_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    from django.contrib.auth import get_user_model
+
+    from farms.models import Farm
+    from weather.engines.types import DailySummary
+    from weather.services import get_farm_daily_summary
+
+    user = get_user_model().objects.create_user(
+        username="farm-daily-user",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Test Farm",
+        slug="test-farm",
+        centroid_lat=Decimal("1.5"),
+        centroid_lon=Decimal("36.5"),
+    )
+
+    cached_daily = [
+        DailySummary(
+            day=date(2025, 1, 1),
+            t_min_c=10.0,
+            t_max_c=20.0,
+            precipitation_mm=5.0,
+            wind_speed_max_mps=3.0,
+            source="open_meteo",
+        )
+    ]
+    key = (
+        f"farm-weather:daily:open_meteo:{farm.id}:"
+        f"1.5000:36.5000:Africa/Nairobi:-:7"
+    )
+    caches["default"].set(key, cached_daily, 1800)
+
+    result = asyncio.run(
+        get_farm_daily_summary(farm, days=7, provider="open_meteo")
+    )
+    assert result == cached_daily
+
+
+@pytest.mark.django_db
+def test_get_farm_current_weather_error_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    from django.contrib.auth import get_user_model
+
+    from farms.models import Farm
+    from weather.services import get_farm_current_weather
+
+    user = get_user_model().objects.create_user(
+        username="farm-error-user",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Test Farm",
+        slug="test-farm",
+        centroid_lat=Decimal("1.5"),
+        centroid_lon=Decimal("36.5"),
+    )
+
+    async def failing_current(*_: object, **__: object) -> None:
+        raise httpx.HTTPError("upstream failed")
+
+    provider = PROVIDER_REGISTRY["open_meteo"]
+    monkeypatch.setattr(provider, "current", failing_current)
+
+    with pytest.raises(Exception):  # noqa: B017
+        asyncio.run(get_farm_current_weather(farm, provider="open_meteo"))

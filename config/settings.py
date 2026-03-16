@@ -130,6 +130,16 @@ LOGGING = {
             "level": "DEBUG",
             "propagate": False,
         },
+        "httpx": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "httpcore": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
     },
 }
 
