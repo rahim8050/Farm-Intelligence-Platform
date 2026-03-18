@@ -45,6 +45,8 @@ IS_TESTING = (
     or "test" in sys.argv
 )
 
+DJANGO_DB_LOG_LEVEL = env.str("DJANGO_DB_LOG_LEVEL", default="WARNING").upper()
+
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DJANGO_DEBUG", default=False)
@@ -138,6 +140,11 @@ LOGGING = {
         "httpcore": {
             "handlers": ["console", "file"],
             "level": "INFO",
+            "propagate": False,
+        },
+        "django.db.backends": {
+            "handlers": ["console", "file"],
+            "level": DJANGO_DB_LOG_LEVEL,
             "propagate": False,
         },
     },

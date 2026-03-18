@@ -1168,8 +1168,16 @@ paths:
         Sync a farm using external identifiers.
 
         Inputs: external_farm_id, external_user_id, name, bbox, centroid.
+        Optional header: `Idempotency-Key`.
         Output: success envelope with farm metadata.
         Side effects: creates/updates Farm + FarmIntegrationAccess.
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: Client-generated key (trimmed to 191 chars) to deduplicate retry
+          attempts.
       tags:
       - v1
       requestBody:

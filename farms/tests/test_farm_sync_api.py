@@ -11,7 +11,11 @@ from django.core.files.base import ContentFile
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
-from farms.models import Farm, FarmIntegrationAccess
+from farms.models import (
+    Farm,
+    FarmIntegrationAccess,
+    FarmSyncIdempotencyRecord,
+)
 from integrations.tokens import mint_integration_access_token
 from ndvi.models import NdviRasterArtifact
 
@@ -107,6 +111,34 @@ class FarmSyncApiTests(APITestCase):
         farm.refresh_from_db()
         self.assertEqual(farm.name, "Updated Name")
         self.assertEqual(farm.slug, "old-name")
+
+    def test_sync_reuses_idempotency_key(self) -> None:
+        external_farm_id = uuid4()
+        idempotency_key = f"farm-sync:{external_farm_id}"
+        client = self._auth_client(client_id="client-5", scope="write")
+        payload = self._payload(external_farm_id=external_farm_id)
+
+        first = client.post(
+            "/api/v1/farms/sync",
+            payload,
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=idempotency_key,
+        )
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+
+        payload["name"] = "replayed-name"
+        second = client.post(
+            "/api/v1/farms/sync",
+            payload,
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=idempotency_key,
+        )
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.json(), first.json())
+
+        farm = Farm.objects.get(external_farm_id=external_farm_id)
+        self.assertEqual(farm.name, "north-field")
+        self.assertEqual(FarmSyncIdempotencyRecord.objects.count(), 1)
 
     def test_sync_requires_token(self) -> None:
         resp = self.client.post(

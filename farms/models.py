@@ -217,3 +217,22 @@ class FarmIntegrationAccess(models.Model):
 
     def __str__(self) -> str:
         return f"FarmIntegrationAccess {self.farm_id} {self.client_id}"
+
+
+class FarmSyncIdempotencyRecord(models.Model):
+    """Track Idempotency-Key outcomes for farm sync requests."""
+
+    key = models.CharField(max_length=191, unique=True, db_index=True)
+    external_farm_id = models.UUIDField(null=True, blank=True)
+    status_code = models.PositiveSmallIntegerField()
+    response_payload = models.JSONField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"FarmSyncIdempotencyRecord {self.key}"

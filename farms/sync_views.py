@@ -11,7 +11,12 @@ from typing import Any, cast
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
-from drf_spectacular.utils import extend_schema, inline_serializer
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    extend_schema,
+    inline_serializer,
+)
 from rest_framework import serializers, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -29,7 +34,11 @@ from integrations.authentication import (
     IntegrationTokenUser,
 )
 
-from .models import Farm, FarmIntegrationAccess
+from .models import (
+    Farm,
+    FarmIntegrationAccess,
+    FarmSyncIdempotencyRecord,
+)
 from .serializers import (
     FarmSyncBBoxSerializer,
     FarmSyncCentroidSerializer,
@@ -39,6 +48,8 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 User = get_user_model()
 SERVICE_USERNAME = "nextcloud-integration"
+IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
+IDEMPOTENCY_KEY_MAX_LENGTH = 191
 
 
 def _integration_scopes(request: Request) -> set[str]:
@@ -78,6 +89,16 @@ def _enforce_integration_scope(request: Request) -> None:
         raise PermissionDenied("Integration token scope not permitted.")
 
 
+def _normalize_idempotency_key(request: Request) -> str | None:
+    raw = request.headers.get(IDEMPOTENCY_KEY_HEADER)
+    if not raw:
+        return None
+    trimmed = raw.strip()
+    if trimmed == "":
+        return None
+    return trimmed[:IDEMPOTENCY_KEY_MAX_LENGTH]
+
+
 farm_sync_error_schema = error_envelope_serializer("FarmSyncErrorResponse")
 farm_sync_data_schema = inline_serializer(
     name="FarmSyncData",
@@ -102,6 +123,7 @@ class FarmSyncView(APIView):
 
     Auth: IntegrationJWTAuthentication.
     Permissions: IsAuthenticated.
+    Optional header: `Idempotency-Key` deduplicates retries.
     Request body: FarmSyncSerializer.
     Response data: farm identifiers, name, slug, bbox, and centroid.
     """
@@ -112,6 +134,18 @@ class FarmSyncView(APIView):
     @extend_schema(
         auth=cast(list[str], [{"BearerAuth": []}]),
         request=FarmSyncSerializer,
+        parameters=[
+            OpenApiParameter(
+                name=IDEMPOTENCY_KEY_HEADER,
+                location=OpenApiParameter.HEADER,
+                type=OpenApiTypes.STR,
+                description=(
+                    "Client-generated key (trimmed to 191 chars) "
+                    "to deduplicate retry attempts."
+                ),
+                required=False,
+            ),
+        ],
         responses={
             200: farm_sync_success_schema,
             400: farm_sync_error_schema,
@@ -123,11 +157,23 @@ class FarmSyncView(APIView):
         """Sync a farm using external identifiers.
 
         Inputs: external_farm_id, external_user_id, name, bbox, centroid.
+        Optional header: `Idempotency-Key`.
         Output: success envelope with farm metadata.
         Side effects: creates/updates Farm + FarmIntegrationAccess.
         """
 
         _enforce_integration_scope(request)
+
+        idempotency_key = _normalize_idempotency_key(request)
+        if idempotency_key:
+            existing = FarmSyncIdempotencyRecord.objects.filter(
+                key=idempotency_key
+            ).first()
+            if existing:
+                return Response(
+                    existing.response_payload, status=existing.status_code
+                )
+
         serializer = FarmSyncSerializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
@@ -238,7 +284,24 @@ class FarmSyncView(APIView):
             farm.external_user_id,
             client_id,
         )
-        return success_response(payload, message="Farm synced")
+        response = success_response(payload, message="Farm synced")
+        if idempotency_key:
+            try:
+                FarmSyncIdempotencyRecord.objects.create(
+                    key=idempotency_key,
+                    external_farm_id=farm.external_farm_id,
+                    response_payload=response.data,
+                    status_code=response.status_code,
+                )
+            except IntegrityError:
+                existing = FarmSyncIdempotencyRecord.objects.filter(
+                    key=idempotency_key
+                ).first()
+                if existing:
+                    return Response(
+                        existing.response_payload, status=existing.status_code
+                    )
+        return response
 
     def _log_sync_failed(self, request: Request, data: Any | None) -> None:
         client_id = getattr(request, "integration_client_id", None)
