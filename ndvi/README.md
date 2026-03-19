@@ -48,6 +48,7 @@ AuthZ notes:
 | POST | `/api/v1/farms/<farm_id>/ndvi/refresh/` | JWT or `X-API-Key` | Manual refresh trigger (cooldown) | no body |
 | GET | `/api/v1/farms/<farm_id>/ndvi/raster.png` | JWT or `X-API-Key` | Fetch raster PNG (binary) | query: `date`, optional `size`, optional `max_cloud` |
 | POST | `/api/v1/farms/<farm_id>/ndvi/raster/queue` | JWT or `X-API-Key` | Queue raster render job (cooldown) | body: `date`, optional `size`, optional `max_cloud` |
+| GET | `/api/v1/farm-state/<farm_id>/` | JWT or `X-API-Key` | Summarize last 30–60 days of NDVI to classify farm state | response: mean/max/coverage/trend plus state/action |
 | GET | `/api/v1/ndvi/jobs/<job_id>/` | JWT or `X-API-Key` | Job status for current user | path: `job_id` |
 
 ### Examples
