@@ -4,6 +4,7 @@ from django.urls import path
 
 from .proxy_views import NdviIngestProxyView
 from .views import (
+    FarmStateView,
     NdviJobStatusView,
     NdviLatestView,
     NdviRasterPngView,
@@ -13,6 +14,11 @@ from .views import (
 )
 
 urlpatterns = [
+    path(
+        "farm-state/<int:farm_id>/",
+        FarmStateView.as_view(),
+        name="farm-state",
+    ),
     path(
         "farms/<int:farm_id>/ndvi/timeseries/",
         NdviTimeseriesView.as_view(),

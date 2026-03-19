@@ -239,6 +239,51 @@ paths:
               schema:
                 $ref: '#/components/schemas/AuthErrorResponse'
           description: ''
+  /api/v1/farm-state/{farm_id}/:
+    get:
+      operationId: v1_farm_state_retrieve
+      description: |-
+        Return the derived farm state for the requested farm.
+
+        Inputs: path param farm_id.
+        Output: success envelope with NDVI metrics + classification.
+        Side effects: none.
+      parameters:
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmStateSuccess'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
   /api/v1/farms/:
     get:
       operationId: v1_farms_list
@@ -2685,6 +2730,58 @@ components:
       required:
       - event_type
       - observed_at
+    FarmState:
+      type: object
+      properties:
+        farm_id:
+          type: integer
+        mean_ndvi:
+          type: number
+          format: double
+          nullable: true
+        max_ndvi:
+          type: number
+          format: double
+          nullable: true
+        coverage_pct:
+          type: number
+          format: double
+          nullable: true
+        trend:
+          type: number
+          format: double
+          nullable: true
+        state:
+          type: string
+        interpretation:
+          type: string
+        action:
+          type: string
+      required:
+      - action
+      - coverage_pct
+      - farm_id
+      - interpretation
+      - max_ndvi
+      - mean_ndvi
+      - state
+      - trend
+    FarmStateSuccess:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/FarmState'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
     FarmSync:
       type: object
       properties:

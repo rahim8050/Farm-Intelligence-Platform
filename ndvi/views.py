@@ -49,10 +49,12 @@ from farms.authentication import FarmObservationAuthentication
 from farms.models import Farm
 from integrations.authentication import IntegrationTokenUser
 
+from .farm_state import build_farm_state
 from .metrics import ndvi_farms_stale_total
 from .models import NdviJob, NdviObservation, NdviRasterArtifact
 from .raster.registry import resolve_raster_engine_name
 from .serializers import (
+    FarmStateSerializer,
     LatestRequestSerializer,
     NdviJobSerializer,
     NdviObservationSerializer,
@@ -199,6 +201,10 @@ latest_data_schema = inline_serializer(
 )
 latest_success_response = success_envelope_serializer(
     "NdviLatestSuccess", data=latest_data_schema
+)
+
+farm_state_success_response = success_envelope_serializer(
+    "FarmStateSuccess", data=FarmStateSerializer()
 )
 
 job_success_response = success_envelope_serializer(
@@ -373,6 +379,36 @@ class BaseFarmView(APIView):
                 getattr(self.request, "path", ""),
             )
             raise
+
+
+class FarmStateView(BaseFarmView):
+    """Summarize NDVI-derived farm state for a farm.
+
+    Auth: IsAuthenticated.
+    Permissions: owner-only enforced per farm lookup.
+    Response data: farm_id, mean_ndvi, max_ndvi, coverage_pct, trend,
+    state, interpretation, action.
+    """
+
+    @extend_schema(
+        responses={
+            200: farm_state_success_response,
+            401: ndvi_error_response,
+            403: ndvi_error_response,
+            404: ndvi_error_response,
+        },
+    )
+    def get(self, request: Request, farm_id: int) -> Response:
+        """Return the derived farm state for the requested farm.
+
+        Inputs: path param farm_id.
+        Output: success envelope with NDVI metrics + classification.
+        Side effects: none.
+        """
+
+        farm = self._get_farm(farm_id, cast(int, request.user.id))
+        result = build_farm_state(farm=farm)
+        return success_response(result.as_payload(), message="Farm state")
 
 
 class BaseRasterView(BaseFarmView):

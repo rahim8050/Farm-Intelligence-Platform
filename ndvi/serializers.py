@@ -50,6 +50,17 @@ class NdviObservationSerializer(serializers.ModelSerializer):
         ]
 
 
+class FarmStateSerializer(serializers.Serializer):
+    farm_id = serializers.IntegerField()
+    mean_ndvi = serializers.FloatField(allow_null=True)
+    max_ndvi = serializers.FloatField(allow_null=True)
+    coverage_pct = serializers.FloatField(allow_null=True)
+    trend = serializers.FloatField(allow_null=True)
+    state = serializers.CharField()
+    interpretation = serializers.CharField()
+    action = serializers.CharField()
+
+
 class TimeseriesRequestSerializer(serializers.Serializer):
     start = FlexibleDateField()
     end = FlexibleDateField()
