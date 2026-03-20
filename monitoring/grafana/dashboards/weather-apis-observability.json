@@ -859,6 +859,131 @@
         "x": 12,
         "y": 32
       }
+    },
+    {
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        },
+        "displayMode": "line"
+      },
+      "id": 20,
+      "title": "Celery failures (rate)",
+      "targets": [
+        {
+          "expr": "sum by (task) (rate(celery_tasks_total{event=\"failed\"}[5m]))",
+          "legendFormat": "{{task}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      }
+    },
+    {
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "id": 21,
+      "title": "Celery tasks in progress",
+      "targets": [
+        {
+          "expr": "sum(celery_tasks_in_progress)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 44
+      }
+    },
+    {
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "id": 22,
+      "title": "Celery p95 runtime",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95,sum by(le,task)(rate(celery_task_runtime_seconds_bucket[5m])))",
+          "legendFormat": "{{task}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 44
+      }
     }
   ],
   "refresh": "10s",

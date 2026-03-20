@@ -180,3 +180,40 @@ groups:
         annotations:
           summary: "Weather provider error rate high"
           description: "Weather provider error rate > 20% for provider={{ $labels.provider }}."
+
+  - name: celery
+    rules:
+      - alert: CeleryTaskFailuresHigh
+        expr: |
+          sum by (task) (rate(celery_tasks_total{event="failed"}[10m]))
+          > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery task failures high"
+          description: "Celery task {{ $labels.task }} is failing more than 1/s for 10m."
+
+      - alert: CeleryTaskRuntimeHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (task, le) (
+              rate(celery_task_runtime_seconds_bucket[5m])
+            )
+          ) > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery task runtime high"
+          description: "p95 runtime for {{ $labels.task }} > 30s for 10m."
+
+      - alert: CeleryBacklogHigh
+        expr: sum(celery_tasks_in_progress) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery backlog high"
+          description: "More than 10 Celery tasks are in-progress."
