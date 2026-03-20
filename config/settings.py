@@ -89,6 +89,7 @@ INSTALLED_APPS = [
     "farms",
     "ndvi",
     "weather",
+    "django_celery_beat",
 ]
 
 MIDDLEWARE = [
@@ -610,6 +611,10 @@ CELERY_BEAT_SCHEDULE = {
     "ndvi-daily-refresh": {
         "task": "ndvi.tasks.enqueue_daily_refresh",
         "schedule": crontab(hour=3, minute=15),
+    },
+    "farm-state-daily-coverage": {
+        "task": "ndvi.tasks.enqueue_daily_farm_state_coverage",
+        "schedule": crontab(hour=3, minute=45),
     },
     "ndvi-weekly-gap-fill": {
         "task": "ndvi.tasks.enqueue_weekly_gap_fill",

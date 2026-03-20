@@ -41,4 +41,5 @@ repos:
           - mysqlclient
           - pytest-django
           - django-extensions
+          - django-celery-beat
           

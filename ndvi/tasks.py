@@ -13,6 +13,12 @@ from rest_framework.exceptions import ValidationError
 
 from farms.models import Farm
 from ndvi.engines.sentinelhub import SentinelHubAuthError
+from ndvi.farm_state import (
+    cache_coverage_for_farm,
+    compute_coverage_for_farm,
+    get_cached_coverage_for_farm,
+    get_coverage_threshold,
+)
 from ndvi.stac_client import StacProcessingError, StacUpstreamError
 
 from .metrics import ndvi_jobs_total
@@ -24,6 +30,7 @@ from .services import (
     enqueue_job,
     get_default_lookback_days,
     get_default_max_cloud,
+    get_default_ndvi_engine_name,
     get_default_step_days,
     get_engine,
     get_lock_timeout_seconds,
@@ -34,6 +41,15 @@ from .services import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_date(raw: str | None) -> date | None:
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(str(raw))
+    except ValueError:
+        return None
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
@@ -213,6 +229,101 @@ def enqueue_daily_refresh() -> int:
             },
         )
         run_ndvi_job.delay(job.id)
+        count += 1
+    return count
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=120)
+def compute_farm_state_coverage(
+    self: Any,
+    *,
+    farm_id: int,
+    engine: str | None = None,
+    target_date: str | None = None,
+    threshold: float | None = None,
+) -> str:
+    farm = Farm.objects.filter(is_active=True, id=farm_id).first()
+    if farm is None:
+        return "missing"
+    resolved_engine = engine or get_default_ndvi_engine_name()
+    resolved_threshold = (
+        float(threshold) if threshold is not None else get_coverage_threshold()
+    )
+    resolved_date = _parse_date(target_date)
+    if resolved_date is None:
+        latest = (
+            farm.ndvi_observations.filter(engine=resolved_engine)
+            .order_by("-bucket_date")
+            .first()
+        )
+        if not latest:
+            return "no_observations"
+        resolved_date = latest.bucket_date
+
+    cached, _ = get_cached_coverage_for_farm(
+        farm_id=farm.id,
+        engine=resolved_engine,
+        target_date=resolved_date,
+        threshold=resolved_threshold,
+    )
+    if cached:
+        return "cached"
+
+    try:
+        value = compute_coverage_for_farm(
+            farm=farm,
+            engine=resolved_engine,
+            target_date=resolved_date,
+            threshold=resolved_threshold,
+        )
+    except StacUpstreamError as exc:
+        if exc.retryable:
+            raise self.retry(exc=exc) from exc
+        value = None
+    cache_coverage_for_farm(
+        farm_id=farm.id,
+        engine=resolved_engine,
+        target_date=resolved_date,
+        threshold=resolved_threshold,
+        value=value,
+    )
+    return "ok"
+
+
+@shared_task
+def enqueue_daily_farm_state_coverage() -> int:
+    count = 0
+    engine = get_default_ndvi_engine_name()
+    threshold = get_coverage_threshold()
+    for farm in Farm.objects.filter(is_active=True):
+        if (
+            farm.bbox_south is None
+            or farm.bbox_west is None
+            or farm.bbox_north is None
+            or farm.bbox_east is None
+        ):
+            continue
+        latest = (
+            farm.ndvi_observations.filter(engine=engine)
+            .order_by("-bucket_date")
+            .first()
+        )
+        if not latest:
+            continue
+        cached, _ = get_cached_coverage_for_farm(
+            farm_id=farm.id,
+            engine=engine,
+            target_date=latest.bucket_date,
+            threshold=threshold,
+        )
+        if cached:
+            continue
+        compute_farm_state_coverage.delay(
+            farm_id=farm.id,
+            engine=engine,
+            target_date=latest.bucket_date.isoformat(),
+            threshold=threshold,
+        )
         count += 1
     return count
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 from datetime import date, timedelta
 
+import pytest
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -10,6 +11,14 @@ from rest_framework.test import APITestCase
 from farms.models import Farm
 from ndvi.models import NdviObservation
 from ndvi.services import get_default_ndvi_engine_name
+
+
+@pytest.fixture(autouse=True)
+def disable_coverage_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ndvi.farm_state._enqueue_coverage_compute",
+        lambda **kwargs: None,
+    )
 
 
 class FarmStateApiTests(APITestCase):

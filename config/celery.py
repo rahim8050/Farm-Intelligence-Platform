@@ -11,6 +11,10 @@ app = Celery("config")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
 
+from .celery_metrics import register_celery_metrics  # noqa: E402
+
+register_celery_metrics(register_collector=False, register_signals=True)
+
 
 @app.task(bind=True)
 def debug_task(self: Any) -> None:  # pragma: no cover - debug helper

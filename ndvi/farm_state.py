@@ -13,6 +13,7 @@ from datetime import date, timedelta
 
 import numpy as np
 from django.conf import settings
+from django.core.cache import caches
 from rest_framework.exceptions import ValidationError
 
 from config.api.responses import JSONValue
@@ -49,6 +50,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_TREND_WINDOW_DAYS = 30
 MIN_TREND_WINDOW_DAYS = 30
 MAX_TREND_WINDOW_DAYS = 60
+
+DEFAULT_COVERAGE_TTL_SECONDS = 21600
+DEFAULT_COVERAGE_LOCK_SECONDS = 300
 
 DEFAULT_ESTABLISHMENT_MEAN_THRESHOLD = 0.25
 DEFAULT_ESTABLISHMENT_MAX_THRESHOLD = 0.4
@@ -120,6 +124,26 @@ def get_trend_window_days() -> int:
     return max(MIN_TREND_WINDOW_DAYS, min(raw, MAX_TREND_WINDOW_DAYS))
 
 
+def get_coverage_cache_ttl_seconds() -> int:
+    return int(
+        getattr(
+            settings,
+            "FARM_STATE_COVERAGE_TTL_SECONDS",
+            DEFAULT_COVERAGE_TTL_SECONDS,
+        )
+    )
+
+
+def get_coverage_lock_seconds() -> int:
+    return int(
+        getattr(
+            settings,
+            "FARM_STATE_COVERAGE_LOCK_SECONDS",
+            DEFAULT_COVERAGE_LOCK_SECONDS,
+        )
+    )
+
+
 def get_establishment_mean_threshold() -> float:
     return float(
         getattr(
@@ -165,6 +189,94 @@ def _default_max_cloud_for_engine(engine: str) -> int:
     if engine == "stac":
         return int(getattr(settings, "NDVI_STAC_MAX_CLOUD_DEFAULT", 30))
     return get_default_max_cloud()
+
+
+def _coverage_cache_key(
+    *, farm_id: int, engine: str, target_date: date, threshold: float
+) -> str:
+    threshold_key = f"{threshold:.3f}"
+    return (
+        f"farm_state:coverage:{farm_id}:{engine}:{target_date}:{threshold_key}"
+    )
+
+
+def _coverage_lock_key(
+    *, farm_id: int, engine: str, target_date: date, threshold: float
+) -> str:
+    threshold_key = f"{threshold:.3f}"
+    return (
+        "farm_state:coverage:lock:"
+        f"{farm_id}:{engine}:{target_date}:{threshold_key}"
+    )
+
+
+def _get_cached_coverage(
+    *, farm_id: int, engine: str, target_date: date, threshold: float
+) -> tuple[bool, float | None]:
+    cache = caches["default"]
+    cached = cache.get(
+        _coverage_cache_key(
+            farm_id=farm_id,
+            engine=engine,
+            target_date=target_date,
+            threshold=threshold,
+        )
+    )
+    if isinstance(cached, dict) and "value" in cached:
+        return True, cached["value"]
+    return False, None
+
+
+def _set_cached_coverage(
+    *,
+    farm_id: int,
+    engine: str,
+    target_date: date,
+    threshold: float,
+    value: float | None,
+) -> None:
+    cache = caches["default"]
+    cache.set(
+        _coverage_cache_key(
+            farm_id=farm_id,
+            engine=engine,
+            target_date=target_date,
+            threshold=threshold,
+        ),
+        {"value": value},
+        timeout=get_coverage_cache_ttl_seconds(),
+    )
+
+
+def _acquire_coverage_lock(
+    *, farm_id: int, engine: str, target_date: date, threshold: float
+) -> bool:
+    cache = caches["default"]
+    return bool(
+        cache.add(
+            _coverage_lock_key(
+                farm_id=farm_id,
+                engine=engine,
+                target_date=target_date,
+                threshold=threshold,
+            ),
+            "1",
+            timeout=get_coverage_lock_seconds(),
+        )
+    )
+
+
+def _enqueue_coverage_compute(
+    *, farm_id: int, engine: str, target_date: date, threshold: float
+) -> None:
+    from ndvi.tasks import compute_farm_state_coverage
+
+    compute_farm_state_coverage.delay(
+        farm_id=farm_id,
+        engine=engine,
+        target_date=target_date.isoformat(),
+        threshold=threshold,
+    )
 
 
 def _compute_mean_ndvi(
@@ -259,24 +371,19 @@ def _compute_stac_coverage_pct(
     return _coverage_pct_from_ndvi_array(ndvi, threshold=threshold)
 
 
-def _compute_coverage_pct(
+def _compute_coverage_value(
     *,
     farm: Farm,
     engine: str,
-    observations: list[NdviObservation],
+    target_date: date,
+    threshold: float,
 ) -> float | None:
-    if engine != "stac":
-        return None
-    if not observations:
-        return None
     try:
         bbox = normalize_bbox(farm)
         enforce_quota(farm, bbox)
     except ValidationError:
         return None
     max_cloud = _default_max_cloud_for_engine(engine)
-    threshold = get_coverage_threshold()
-    target_date = observations[-1].bucket_date
     try:
         return _compute_stac_coverage_pct(
             farm_id=farm.id,
@@ -304,6 +411,77 @@ def _compute_coverage_pct(
             exc,
         )
         return None
+
+
+def _compute_coverage_pct(
+    *,
+    farm: Farm,
+    engine: str,
+    observations: list[NdviObservation],
+) -> float | None:
+    if engine != "stac":
+        return None
+    if not observations:
+        return None
+    target_date = observations[-1].bucket_date
+    threshold = get_coverage_threshold()
+    cached, value = _get_cached_coverage(
+        farm_id=farm.id,
+        engine=engine,
+        target_date=target_date,
+        threshold=threshold,
+    )
+    if cached:
+        return value
+    if _acquire_coverage_lock(
+        farm_id=farm.id,
+        engine=engine,
+        target_date=target_date,
+        threshold=threshold,
+    ):
+        _enqueue_coverage_compute(
+            farm_id=farm.id,
+            engine=engine,
+            target_date=target_date,
+            threshold=threshold,
+        )
+    return None
+
+
+def compute_coverage_for_farm(
+    *, farm: Farm, engine: str, target_date: date, threshold: float
+) -> float | None:
+    return _compute_coverage_value(
+        farm=farm, engine=engine, target_date=target_date, threshold=threshold
+    )
+
+
+def cache_coverage_for_farm(
+    *,
+    farm_id: int,
+    engine: str,
+    target_date: date,
+    threshold: float,
+    value: float | None,
+) -> None:
+    _set_cached_coverage(
+        farm_id=farm_id,
+        engine=engine,
+        target_date=target_date,
+        threshold=threshold,
+        value=value,
+    )
+
+
+def get_cached_coverage_for_farm(
+    *, farm_id: int, engine: str, target_date: date, threshold: float
+) -> tuple[bool, float | None]:
+    return _get_cached_coverage(
+        farm_id=farm_id,
+        engine=engine,
+        target_date=target_date,
+        threshold=threshold,
+    )
 
 
 def classify_farm_state(

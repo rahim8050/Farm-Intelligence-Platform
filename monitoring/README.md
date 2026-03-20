@@ -7,6 +7,10 @@
 - Custom metrics:
   - NDVI: `ndvi_jobs_total`, `ndvi_upstream_requests_total`, `ndvi_upstream_latency_seconds`, `ndvi_cache_hit_total`, `ndvi_farms_stale_total`
   - Weather: `weather_provider_requests_total`, `weather_provider_errors_total`, `weather_provider_latency_seconds`, `weather_cache_hits_total`, `weather_cache_misses_total`
+  - Celery: `celery_tasks_total`, `celery_tasks_in_progress`, `celery_task_runtime_seconds`
+
+Celery metrics are aggregated via the shared cache; ensure the Celery workers
+and Django API share the same Redis cache in production.
 - Monitoring scaffolding exists in `docker-compose.monitoring.yml` and `monitoring/prometheus/prometheus.yml`.
 
 ## Cardinality Guardrails (Summary)
@@ -14,6 +18,7 @@
 All custom metrics use low-cardinality labels only:
 - NDVI labels: `status`, `type`, `engine`, `outcome`, `layer`
 - Weather labels: `provider`, `endpoint`, `error_type`
+- Celery labels: `task`, `event`
 
 Do not add labels with `job_id`, `farm_id`, `user_id`, raw URL paths, request IDs, timestamps, or exception messages.
 

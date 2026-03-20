@@ -241,8 +241,12 @@ class FarmSyncView(APIView):
             self._log_sync_failed(request, serializer.validated_data)
             logger.exception("IntegrityError during farm sync: %s", str(e))
             return error_response(
-                "Farm sync failed due to data conflict. "
-                "Please check farm name and try again.",
+                "Farm name or slug already exists. "
+                "Please choose a different name and try again.",
+                errors={
+                    "code": "farm_conflict",
+                    "reason": "name_or_slug_conflict",
+                },
                 status_code=status.HTTP_409_CONFLICT,
             )
 

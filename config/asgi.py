@@ -13,4 +13,8 @@ from django.core.asgi import get_asgi_application
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
+from .celery_metrics import register_celery_metrics  # noqa: E402
+
+register_celery_metrics(register_collector=True, register_signals=False)
+
 application = get_asgi_application()
