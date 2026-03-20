@@ -22,6 +22,7 @@ Django==5.1.15
 daphne==4.2.1
 django-environ==0.13.0
 django-extensions==4.1
+django-celery-beat==2.9.0
 django-prometheus==2.4.1
 django-redis==5.4.0
 django-stubs==5.2.9
