@@ -50,7 +50,7 @@
       "title": "Top 5 views by avg latency",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "description": "Shows the five Django views with the highest average request latency over 5m.",
       "targets": [
@@ -90,7 +90,7 @@
       "title": "Request rate by view",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "description": "Requests per second per view so you can spot high-traffic endpoints.",
       "targets": [
@@ -130,7 +130,7 @@
       "title": "Prometheus up",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -172,7 +172,7 @@
       "title": "Prometheus scrape duration",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -215,7 +215,7 @@
       "title": "Node CPU usage",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -258,7 +258,7 @@
       "title": "Node memory usage",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -299,7 +299,7 @@
       "type": "stat",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -342,7 +342,7 @@
       "type": "stat",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -387,7 +387,7 @@
       "title": "Debug: integration-token/POST requests (5m)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {

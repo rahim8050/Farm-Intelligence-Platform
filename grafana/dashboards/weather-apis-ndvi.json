@@ -50,7 +50,7 @@
       "title": "NDVI jobs (last 15m)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -88,7 +88,7 @@
       "title": "Upstream requests (rps)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -126,7 +126,7 @@
       "title": "Upstream latency p95",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -164,7 +164,7 @@
       "title": "Cache hits (rps)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -202,7 +202,7 @@
       "title": "Stale farms (by engine)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -245,7 +245,7 @@
       "title": "Jobs by type (last 15m)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {

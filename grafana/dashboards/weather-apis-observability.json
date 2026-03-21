@@ -61,7 +61,7 @@
       "title": "RPS (farm-list)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -104,7 +104,7 @@
       "title": "P95 latency (farm-list)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -147,7 +147,7 @@
       "title": "Requests last 5m (farm-list)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -190,7 +190,7 @@
       "title": "DB p95 query latency",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -233,7 +233,7 @@
       "title": "DB execute rate",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -276,7 +276,7 @@
       "title": "5xx error rate %",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -319,7 +319,7 @@
       "title": "Login throttling 429 (last 5m)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -362,7 +362,7 @@
       "title": "farm-list 401 (last 5m)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -405,7 +405,7 @@
       "title": "Non-2xx error rate % by view",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -442,7 +442,7 @@
       "title": "Top 5 views by avg latency",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "description": "Shows the five Django views with the highest average request latency over 5m.",
       "targets": [
@@ -482,7 +482,7 @@
       "title": "Request rate by view",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "description": "Requests per second per view so you can spot high-traffic endpoints.",
       "targets": [
@@ -522,7 +522,7 @@
       "title": "Node CPU usage",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -565,7 +565,7 @@
       "title": "Node memory usage",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -606,7 +606,7 @@
       "type": "stat",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -649,7 +649,7 @@
       "type": "stat",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -692,7 +692,7 @@
       "type": "stat",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -735,7 +735,7 @@
       "type": "stat",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -778,7 +778,7 @@
       "type": "stat",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -821,7 +821,7 @@
       "type": "stat",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -864,7 +864,7 @@
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -903,7 +903,7 @@
       "type": "stat",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -946,7 +946,7 @@
       "type": "stat",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {

@@ -69,7 +69,7 @@
         "label": "View",
         "datasource": {
           "type": "prometheus",
-          "uid": "${DS_PROMETHEUS}"
+          "uid": "prometheus"
         },
         "query": {
           "query": "label_values(django_http_requests_total_by_view_transport_method_total, view)",
@@ -90,7 +90,7 @@
         "label": "Method",
         "datasource": {
           "type": "prometheus",
-          "uid": "${DS_PROMETHEUS}"
+          "uid": "prometheus"
         },
         "query": {
           "query": "label_values(django_http_requests_total_by_view_transport_method_total, method)",
@@ -111,7 +111,7 @@
         "label": "Node instance",
         "datasource": {
           "type": "prometheus",
-          "uid": "${DS_PROMETHEUS}"
+          "uid": "prometheus"
         },
         "query": {
           "query": "label_values(up{job=\"node_exporter\"}, instance)",
@@ -161,7 +161,7 @@
       "title": "Up by job",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -191,7 +191,7 @@
       "title": "Blackbox probe_success",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -228,7 +228,7 @@
       "title": "Blackbox probe duration (s)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -265,7 +265,7 @@
       "title": "Scrape samples (5m)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -300,7 +300,7 @@
       "title": "Prometheus up",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -342,7 +342,7 @@
       "title": "Prometheus scrape duration",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -385,7 +385,7 @@
       "title": "MySQL exporter up",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -425,7 +425,7 @@
       "title": "Postgres exporter up",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -478,7 +478,7 @@
       "title": "RPS overall (excl home/metrics)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -515,7 +515,7 @@
       "title": "RPS by view (top 10)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -552,7 +552,7 @@
       "title": "RPS by method for $view",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -589,7 +589,7 @@
       "title": "Requests last 5m for $view",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -637,7 +637,7 @@
       "title": "5xx rate % overall",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -680,7 +680,7 @@
       "title": "4xx rate % overall",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -723,7 +723,7 @@
       "title": "Non-2xx rate % by view",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -760,7 +760,7 @@
       "title": "p95 latency overall",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -797,7 +797,7 @@
       "title": "p95 latency for $view/$method",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -847,7 +847,7 @@
       "title": "p95 request body bytes",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -897,7 +897,7 @@
       "title": "CPU % busy",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -934,7 +934,7 @@
       "title": "Memory used %",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -971,7 +971,7 @@
       "title": "Disk used % (root)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -1008,7 +1008,7 @@
       "title": "Load average (1m)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -1056,7 +1056,7 @@
       "title": "Redis exporter up",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -1096,7 +1096,7 @@
       "title": "Redis memory used bytes",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -1138,7 +1138,7 @@
       "title": "Redis ops/sec",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -1181,7 +1181,7 @@
       "title": "Redis connected clients",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -1234,7 +1234,7 @@
       "title": "MySQL threads connected",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -1274,7 +1274,7 @@
       "title": "MySQL threads running",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -1314,7 +1314,7 @@
       "title": "MySQL QPS",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -1351,7 +1351,7 @@
       "title": "MySQL bytes in/out",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -1393,7 +1393,7 @@
       "title": "MySQL slow queries/sec",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
@@ -1436,7 +1436,7 @@
       "title": "Postgres exporter up",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "prometheus"
       },
       "targets": [
         {
