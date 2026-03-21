@@ -10,6 +10,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     IntegrationClientViewSet,
+    IntegrationHealthView,
     IntegrationPingView,
     IntegrationTokenView,
     IntegrationWhoAmIView,
@@ -43,6 +44,11 @@ urlpatterns = [
     ),
     path("ping/", IntegrationPingView.as_view(), name="integration-ping"),
     path("token/", IntegrationTokenView.as_view(), name="integration-token"),
+    path(
+        "health/",
+        IntegrationHealthView.as_view(),
+        name="integration-health",
+    ),
     path(
         "whoami/", IntegrationWhoAmIView.as_view(), name="integration-whoami"
     ),

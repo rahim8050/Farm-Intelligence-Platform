@@ -762,7 +762,7 @@
       "title": "RPS (integration-token)",
       "targets": [
         {
-          "expr": "sum(rate(django_http_requests_total_by_view_transport_method_total{job=\"django\",view=\"integration-token\",method=\"POST\"}[5m])) or vector(0)",
+          "expr": "sum(rate(django_http_responses_total_by_status_view_method_total{job=\"django\",view=\"integration-token\",method=\"POST\",status=\"200\"}[5m])) or vector(0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -848,7 +848,7 @@
       "title": "Requests last 5m (integration-token)",
       "targets": [
         {
-          "expr": "round(sum(increase(django_http_requests_total_by_view_transport_method_total{job=\"django\",view=\"integration-token\",method=\"POST\"}[5m]))) or vector(0)",
+          "expr": "round(sum(increase(django_http_responses_total_by_status_view_method_total{job=\"django\",view=\"integration-token\",method=\"POST\",status=\"200\"}[5m]))) or vector(0)",
           "legendFormat": "",
           "refId": "A"
         }

@@ -169,6 +169,18 @@ integration_token_success_schema = success_envelope_serializer(
     data=integration_token_data_schema,
 )
 
+integration_health_data_schema = inline_serializer(
+    name="IntegrationHealthData",
+    fields={
+        "ok": serializers.BooleanField(),
+        "server_time": serializers.DateTimeField(),
+    },
+)
+integration_health_success_schema = success_envelope_serializer(
+    "IntegrationHealthSuccessResponse",
+    data=integration_health_data_schema,
+)
+
 integration_whoami_data_schema = inline_serializer(
     name="IntegrationWhoamiData",
     fields={
@@ -499,6 +511,26 @@ class IntegrationTokenView(APIView):
             "expires_in": expires_in,
         }
         return success_response(data, message="Integration token issued")
+
+
+class IntegrationHealthView(APIView):
+    """Simple health probe for the integration service.
+
+    Authentication: none (AllowAny).
+    Permissions: none beyond AllowAny.
+    Response data: `ok` plus current `server_time`.
+    """
+
+    permission_classes = (AllowAny,)
+
+    @extend_schema(
+        responses={200: integration_health_success_schema},
+    )
+    def get(self, request: Request) -> Response:
+        """Return an OK envelope for automated probes."""
+
+        data = {"ok": True, "server_time": timezone.now()}
+        return success_response(data, message="Integration health OK")
 
 
 @extend_schema(auth=cast(list[str], [{"BearerAuth": []}]))

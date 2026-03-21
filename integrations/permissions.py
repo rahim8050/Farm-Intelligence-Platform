@@ -41,14 +41,18 @@ def _log_failure(
     client_id = request.headers.get(INTEGRATIONS_CLIENT_ID_HEADER)
     if not client_id:
         client_id = request.headers.get(NEXTCLOUD_CLIENT_ID_HEADER, "")
+    remote_addr = request.META.get("REMOTE_ADDR", "unknown")
+    user_agent = request.headers.get("User-Agent") or "unknown"
     logger.warning(
         "nextcloud_hmac.denied code=%s path=%s method=%s request_id=%s "
-        "client_id=%s",
+        "client_id=%s remote_addr=%s user_agent=%s",
         exc.code,
         request.path,
         request.method,
         request_id,
         client_id or "unknown",
+        remote_addr,
+        user_agent,
     )
 
 
