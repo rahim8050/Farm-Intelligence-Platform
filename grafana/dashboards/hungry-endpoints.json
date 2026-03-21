@@ -55,7 +55,7 @@
       "description": "Shows the five Django views with the highest average request latency over 5m.",
       "targets": [
         {
-          "expr": "topk(5, sum by (view,method) (rate(django_http_requests_latency_seconds_by_view_method_sum{job=\"django\"}[5m])) / sum by (view,method) (rate(django_http_requests_latency_seconds_by_view_method_count{job=\"django\"}[5m])))",
+          "expr": "topk(5, sum by (view,method) (increase(django_http_requests_latency_seconds_by_view_method_sum{job=\"django\"}[5m])) / sum by (view,method) (increase(django_http_requests_latency_seconds_by_view_method_count{job=\"django\"}[5m]))) and (sum by (view,method) (increase(django_http_requests_latency_seconds_by_view_method_count{job=\"django\"}[5m])) > 0)",
           "legendFormat": "{{view}}/{{method}}",
           "refId": "A"
         }
@@ -379,6 +379,48 @@
         "w": 6,
         "x": 6,
         "y": 16
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Debug: integration-token/POST requests (5m)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "increase(django_http_requests_latency_seconds_by_view_method_count{job=\"django\",view=\"integration-token\",method=\"POST\"}[5m])",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 8
       }
     }
   ],

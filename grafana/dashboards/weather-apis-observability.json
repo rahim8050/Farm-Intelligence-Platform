@@ -447,7 +447,7 @@
       "description": "Shows the five Django views with the highest average request latency over 5m.",
       "targets": [
         {
-          "expr": "topk(5, sum by (view,method) (rate(django_http_requests_latency_seconds_by_view_method_sum{job=\"django\"}[5m])) / sum by (view,method) (rate(django_http_requests_latency_seconds_by_view_method_count{job=\"django\"}[5m])))",
+          "expr": "topk(5, sum by (view,method) (increase(django_http_requests_latency_seconds_by_view_method_sum{job=\"django\"}[5m])) / sum by (view,method) (increase(django_http_requests_latency_seconds_by_view_method_count{job=\"django\"}[5m]))) and (sum by (view,method) (increase(django_http_requests_latency_seconds_by_view_method_count{job=\"django\"}[5m])) > 0)",
           "legendFormat": "{{view}}/{{method}}",
           "refId": "A"
         }
