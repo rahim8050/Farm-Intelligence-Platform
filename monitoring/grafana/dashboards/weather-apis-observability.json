@@ -887,7 +887,7 @@
       "title": "Celery failures (rate)",
       "targets": [
         {
-          "expr": "sum by (task) (rate(celery_tasks_total{event=\"failed\"}[5m]))",
+          "expr": "sum by (task) (rate(celery_tasks_total{event=\"failed\"}[3h]))",
           "legendFormat": "{{task}}",
           "refId": "A"
         }
@@ -973,7 +973,7 @@
       "title": "Celery p95 runtime",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95,sum by(le,task)(rate(celery_task_runtime_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95,sum by(le,task)(rate(celery_task_runtime_seconds_bucket[3h])))",
           "legendFormat": "{{task}}",
           "refId": "A"
         }
