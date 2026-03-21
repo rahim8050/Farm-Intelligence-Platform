@@ -14,6 +14,7 @@ omit =
     */staticfiles/*
     */dist/*
     */build/*
+    import_dashboards.py
 
 [report]
 show_missing = True
