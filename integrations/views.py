@@ -529,7 +529,10 @@ class IntegrationHealthView(APIView):
     def get(self, request: Request) -> Response:
         """Return an OK envelope for automated probes."""
 
-        data = {"ok": True, "server_time": timezone.now()}
+        data: dict[str, JSONValue] = {
+            "ok": True,
+            "server_time": timezone.now().isoformat(),
+        }
         return success_response(data, message="Integration health OK")
 
 

@@ -47,11 +47,20 @@ from weather.services import (
     DEFAULT_TZ,
     PROVIDER_REGISTRY,
     CacheKey,
+    FarmCacheKey,
     _aggregate_weekly,
     _fetch_daily_forecasts,
+    _handle_upstream_error,
+    _lock_cache_key,
+    _resolve_farm_location,
     _select_provider,
+    _stale_cache_key,
+    _wait_for_cached_value,
     get_current_weather,
     get_daily_forecast,
+    get_farm_current_weather,
+    get_farm_daily_summary,
+    get_farm_hourly_forecast,
     get_weekly_report,
 )
 
@@ -1113,7 +1122,6 @@ def test_resolve_farm_location_with_centroid() -> None:
     from django.contrib.auth import get_user_model
 
     from farms.models import Farm
-    from weather.services import _resolve_farm_location
 
     user_model = get_user_model()
     user = user_model.objects.create_user(
@@ -1138,7 +1146,6 @@ def test_resolve_farm_location_with_bbox() -> None:
     from django.contrib.auth import get_user_model
 
     from farms.models import Farm
-    from weather.services import _resolve_farm_location
 
     user_model = get_user_model()
     user = user_model.objects.create_user(
@@ -1167,7 +1174,6 @@ def test_resolve_farm_location_missing_raises() -> None:
     from django.contrib.auth import get_user_model
 
     from farms.models import Farm
-    from weather.services import _resolve_farm_location
 
     user_model = get_user_model()
     user = user_model.objects.create_user(
@@ -1191,8 +1197,6 @@ def test_resolve_farm_location_missing_raises() -> None:
 
 
 def test_stale_and_lock_cache_keys() -> None:
-    from weather.services import _lock_cache_key, _stale_cache_key
-
     key = "weather:current:open_meteo:1.0:36.0:Africa/Nairobi:-:-"
     assert _stale_cache_key(key) == f"{key}:stale"
     assert _lock_cache_key(key) == f"{key}:lock"
@@ -1202,8 +1206,6 @@ def test_wait_for_cached_value_found_quickly() -> None:
     import asyncio
 
     from django.core.cache import cache as default_cache
-
-    from weather.services import _wait_for_cached_value
 
     _clear_cache()
     key = "test:wait:quick"
@@ -1225,8 +1227,6 @@ def test_wait_for_cached_value_from_stale() -> None:
 
     from django.core.cache import cache as default_cache
 
-    from weather.services import _wait_for_cached_value
-
     _clear_cache()
     key = "test:wait:stale"
     stale_key = f"{key}:stale"
@@ -1247,8 +1247,6 @@ def test_wait_for_cached_value_timeout() -> None:
 
     from django.core.cache import cache as default_cache
 
-    from weather.services import _wait_for_cached_value
-
     _clear_cache()
     key = "test:wait:timeout"
     stale_key = f"{key}:stale"
@@ -1264,7 +1262,7 @@ def test_wait_for_cached_value_timeout() -> None:
 
 
 def test_handle_upstream_error_raises() -> None:
-    from weather.services import WeatherUpstreamError, _handle_upstream_error
+    from weather.services import WeatherUpstreamError
 
     exc = Exception("upstream failed")
     with pytest.raises(WeatherUpstreamError):
@@ -1576,8 +1574,6 @@ def test_get_current_with_stale_cache_fallback(
     from weather.engines.types import CurrentWeather
     from weather.services import (
         PROVIDER_REGISTRY,
-        _lock_cache_key,
-        _stale_cache_key,
         get_current_weather,
     )
 
@@ -1755,7 +1751,6 @@ def test_get_farm_current_weather_cache_hit(
     from django.contrib.auth import get_user_model
 
     from farms.models import Farm
-    from weather.services import get_farm_current_weather
 
     user = get_user_model().objects.create_user(
         username="farm-weather-user",
@@ -1794,7 +1789,6 @@ def test_get_farm_hourly_forecast_cache_hit(
 
     from farms.models import Farm
     from weather.engines.types import HourlyForecast
-    from weather.services import get_farm_hourly_forecast
 
     user = get_user_model().objects.create_user(
         username="farm-hourly-user",
@@ -1839,7 +1833,6 @@ def test_get_farm_daily_summary_cache_hit(
 
     from farms.models import Farm
     from weather.engines.types import DailySummary
-    from weather.services import get_farm_daily_summary
 
     user = get_user_model().objects.create_user(
         username="farm-daily-user",
@@ -1883,7 +1876,6 @@ def test_get_farm_current_weather_error_propagates(
     from django.contrib.auth import get_user_model
 
     from farms.models import Farm
-    from weather.services import get_farm_current_weather
 
     user = get_user_model().objects.create_user(
         username="farm-error-user",
@@ -1905,3 +1897,587 @@ def test_get_farm_current_weather_error_propagates(
 
     with pytest.raises(Exception):  # noqa: B017
         asyncio.run(get_farm_current_weather(farm, provider="open_meteo"))
+
+
+# =============================================================================
+# Additional tests for uncovered lines in weather/services.py
+# =============================================================================
+
+
+def test_farm_cache_key_as_string_with_hours() -> None:
+    """Test FarmCacheKey.as_string() with hours parameter."""
+    key = FarmCacheKey(
+        endpoint="hourly",
+        provider="open_meteo",
+        farm_id=123,
+        lat=1.5,
+        lon=36.5,
+        tz="Africa/Nairobi",
+        hours=24,
+        days=None,
+    )
+    result = key.as_string()
+    assert "farm-weather:hourly:open_meteo:123" in result
+    assert "1.5000:36.5000:Africa/Nairobi:24:-" in result
+
+
+def test_farm_cache_key_as_string_with_days() -> None:
+    """Test FarmCacheKey.as_string() with days parameter."""
+    key = FarmCacheKey(
+        endpoint="daily",
+        provider="nasa_power",
+        farm_id=456,
+        lat=-1.0,
+        lon=37.0,
+        tz="UTC",
+        hours=None,
+        days=7,
+    )
+    result = key.as_string()
+    assert "farm-weather:daily:nasa_power:456" in result
+    assert "-1.0000:37.0000:UTC:-:7" in result
+
+
+def test_cache_key_with_dates() -> None:
+    """Test CacheKey.as_string() with start and end dates."""
+    start = date(2025, 1, 1)
+    end = date(2025, 1, 7)
+    key = CacheKey(
+        endpoint="daily",
+        provider="open_meteo",
+        lat=1.0,
+        lon=36.0,
+        tz="Africa/Nairobi",
+        start=start,
+        end=end,
+    )
+    result = key.as_string()
+    assert "2025-01-01:2025-01-07" in result
+
+
+def test_stale_and_lock_cache_keys_roundtrip() -> None:
+    """Test _stale_cache_key and _lock_cache_key functions."""
+
+    base_key = "weather:current:open_meteo:1.0:36.0:Africa/Nairobi"
+    assert _stale_cache_key(base_key) == f"{base_key}:stale"
+    assert _lock_cache_key(base_key) == f"{base_key}:lock"
+
+
+def test_wait_for_cached_value_returns_cached() -> None:
+    """Test _wait_for_cached_value when value is already cached."""
+    from django.core.cache import cache as default_cache
+
+    async def _run_test() -> None:
+        _clear_cache()
+        test_value = CurrentWeather(
+            observed_at=datetime(2025, 1, 1, tzinfo=UTC),
+            temperature_c=25.0,
+            wind_speed_mps=3.0,
+            source="open_meteo",
+        )
+        key = "test:wait:for:cached"
+        default_cache.set(key, test_value, 60)
+
+        result, from_stale = await _wait_for_cached_value(
+            default_cache, key, f"{key}:stale", timeout=1.0
+        )
+        assert result == test_value
+        assert from_stale is False
+        default_cache.delete(key)
+
+    asyncio.run(_run_test())
+
+
+def test_wait_for_cached_value_returns_stale() -> None:
+    """Test _wait_for_cached_value when only stale value exists."""
+    from django.core.cache import cache as default_cache
+
+    async def _run_test() -> None:
+        _clear_cache()
+        stale_value = CurrentWeather(
+            observed_at=datetime(2025, 1, 1, tzinfo=UTC),
+            temperature_c=24.0,
+            wind_speed_mps=2.5,
+            source="nasa_power",
+        )
+        key = "test:wait:stale"
+        stale_key = f"{key}:stale"
+        default_cache.set(stale_key, stale_value, 60)
+
+        result, from_stale = await _wait_for_cached_value(
+            default_cache, key, stale_key, timeout=0.2
+        )
+        assert result == stale_value
+        assert from_stale is True
+        default_cache.delete(stale_key)
+
+    asyncio.run(_run_test())
+
+
+def test_wait_for_cached_value_returns_none() -> None:
+    """Test _wait_for_cached_value when no value exists."""
+    from django.core.cache import cache as default_cache
+
+    async def _run_test() -> None:
+        _clear_cache()
+        key = "test:wait:none"
+        stale_key = f"{key}:stale"
+
+        result, from_stale = await _wait_for_cached_value(
+            default_cache, key, stale_key, timeout=0.1
+        )
+        assert result is None
+        assert from_stale is False
+
+    asyncio.run(_run_test())
+
+
+def test_handle_upstream_error() -> None:
+    """Test _handle_upstream_error raises WeatherUpstreamError."""
+    from weather.services import WeatherUpstreamError
+
+    test_exc = ValueError("test error")
+    with pytest.raises(WeatherUpstreamError) as exc_info:
+        _handle_upstream_error(test_exc)
+    assert exc_info.value.__cause__ is test_exc
+
+
+@pytest.mark.django_db
+def test_get_current_weather_cache_hit_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test get_current_weather returns cached value."""
+    _clear_cache()
+
+    from weather.services import get_current_weather
+
+    cached_value = CurrentWeather(
+        observed_at=datetime(2025, 1, 1, tzinfo=UTC),
+        temperature_c=22.0,
+        wind_speed_mps=4.0,
+        source="open_meteo",
+    )
+    key_str = "weather:current:open_meteo:1.0000:36.0000:Africa/Nairobi:-:-"
+    caches["default"].set(key_str, cached_value, 120)
+
+    result = asyncio.run(
+        get_current_weather(lat=1.0, lon=36.0, provider="open_meteo")
+    )
+    assert result == cached_value
+
+
+@pytest.mark.django_db
+def test_get_current_weather_lock_wait_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test get_current_weather waits for lock and returns stale value."""
+    _clear_cache()
+
+    from weather.services import get_current_weather
+
+    stale_value = CurrentWeather(
+        observed_at=datetime(2025, 1, 1, tzinfo=UTC),
+        temperature_c=23.0,
+        wind_speed_mps=3.5,
+        source="open_meteo",
+    )
+    key_str = "weather:current:open_meteo:2.0000:37.0000:Africa/Nairobi:-:-"
+    stale_key = f"{key_str}:stale"
+    lock_key = f"{key_str}:lock"
+    caches["default"].set(stale_key, stale_value, 300)
+    caches["default"].set(lock_key, 1, timeout=10)
+
+    async def slow_current(*_: object, **__: object) -> CurrentWeather:
+        await asyncio.sleep(0.5)
+        return CurrentWeather(
+            observed_at=datetime(2025, 1, 2, tzinfo=UTC),
+            temperature_c=24.0,
+            wind_speed_mps=4.0,
+            source="open_meteo",
+        )
+
+    provider = PROVIDER_REGISTRY["open_meteo"]
+    monkeypatch.setattr(provider, "current", slow_current)
+
+    result = asyncio.run(
+        get_current_weather(lat=2.0, lon=37.0, provider="open_meteo")
+    )
+    assert result == stale_value
+    caches["default"].delete(lock_key)
+
+
+@pytest.mark.django_db
+def test_get_current_weather_stale_fallback_on_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test get_current_weather returns stale value on upstream error."""
+    _clear_cache()
+
+    from weather.services import get_current_weather
+
+    stale_value = CurrentWeather(
+        observed_at=datetime(2025, 1, 1, tzinfo=UTC),
+        temperature_c=21.0,
+        wind_speed_mps=3.0,
+        source="open_meteo",
+    )
+    key_str = "weather:current:open_meteo:3.0000:38.0000:Africa/Nairobi:-:-"
+    stale_key = f"{key_str}:stale"
+    caches["default"].set(stale_key, stale_value, 300)
+
+    async def failing_current(*_: object, **__: object) -> None:
+        raise httpx.HTTPError("upstream failed")
+
+    provider = PROVIDER_REGISTRY["open_meteo"]
+    monkeypatch.setattr(provider, "current", failing_current)
+
+    result = asyncio.run(
+        get_current_weather(lat=3.0, lon=38.0, provider="open_meteo")
+    )
+    assert result == stale_value
+
+
+@pytest.mark.django_db
+def test_resolve_farm_location_with_centroid_override() -> None:
+    """Test _resolve_farm_location uses centroid when available."""
+    from django.contrib.auth import get_user_model
+
+    from farms.models import Farm
+
+    user = get_user_model().objects.create_user(
+        username="centroid-user",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Centroid Farm",
+        slug="centroid-farm",
+        centroid_lat=Decimal("-1.2921"),
+        centroid_lon=Decimal("36.8219"),
+    )
+
+    location = _resolve_farm_location(farm)
+    assert location.lat == -1.2921
+    assert location.lon == 36.8219
+
+
+@pytest.mark.django_db
+def test_resolve_farm_location_with_bbox_override() -> None:
+    """Ensure _resolve_farm_location falls back to bbox centroid."""
+    from django.contrib.auth import get_user_model
+
+    from farms.models import Farm
+
+    user = get_user_model().objects.create_user(
+        username="bbox-user",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="BBox Farm",
+        slug="bbox-farm",
+        centroid_lat=None,
+        centroid_lon=None,
+        bbox_south=Decimal("-2.0"),
+        bbox_west=Decimal("35.0"),
+        bbox_north=Decimal("-1.0"),
+        bbox_east=Decimal("37.0"),
+    )
+
+    location = _resolve_farm_location(farm)
+    assert location.lat == -1.5  # (-2.0 + -1.0) / 2
+    assert location.lon == 36.0  # (35.0 + 37.0) / 2
+
+
+@pytest.mark.django_db
+def test_resolve_farm_location_error() -> None:
+    """Ensure _resolve_farm_location raises when location data is missing."""
+    from django.contrib.auth import get_user_model
+    from rest_framework.exceptions import ValidationError
+
+    from farms.models import Farm
+
+    user = get_user_model().objects.create_user(
+        username="no-location-user",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="No Location Farm",
+        slug="no-location-farm",
+        centroid_lat=None,
+        centroid_lon=None,
+        bbox_south=None,
+        bbox_west=None,
+        bbox_north=None,
+        bbox_east=None,
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        _resolve_farm_location(farm)
+    assert "Farm must have a centroid or bounding box" in str(exc_info.value)
+
+
+@pytest.mark.django_db
+def test_get_farm_current_weather_cache_hit_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test get_farm_current_weather returns cached value."""
+    _clear_cache()
+
+    from django.contrib.auth import get_user_model
+
+    from farms.models import Farm
+
+    user = get_user_model().objects.create_user(
+        username="farm-cache-user",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Cache Test Farm",
+        slug="cache-test-farm",
+        centroid_lat=Decimal("0.5"),
+        centroid_lon=Decimal("36.0"),
+    )
+
+    cached_value = CurrentWeather(
+        observed_at=datetime(2025, 1, 1, tzinfo=UTC),
+        temperature_c=26.0,
+        wind_speed_mps=2.0,
+        source="open_meteo",
+    )
+    key = (
+        f"farm-weather:current:open_meteo:{farm.id}:"
+        f"0.5000:36.0000:Africa/Nairobi:-:-"
+    )
+    caches["default"].set(key, cached_value, 60)
+
+    result = asyncio.run(get_farm_current_weather(farm, provider="open_meteo"))
+    assert result == cached_value
+
+
+def test_select_provider_invalid() -> None:
+    """Test _select_provider raises ValidationError for invalid provider."""
+    from rest_framework.exceptions import ValidationError
+
+    from weather.services import _select_provider
+
+    with pytest.raises(ValidationError) as exc_info:
+        _select_provider("invalid_provider_xyz")
+    assert "invalid_provider_xyz" in str(exc_info.value)
+
+
+def test_aggregate_weekly_empty() -> None:
+    """Test _aggregate_weekly with empty forecasts list."""
+    from weather.services import _aggregate_weekly
+
+    result = _aggregate_weekly([], "open_meteo")
+    assert result == []
+
+
+def test_aggregate_weekly_single_day() -> None:
+    """Test _aggregate_weekly with single forecast."""
+    from weather.services import _aggregate_weekly
+
+    forecasts = [
+        DailyForecast(
+            day=date(2025, 1, 6),  # Monday
+            t_min_c=15.0,
+            t_max_c=25.0,
+            precipitation_mm=5.0,
+            source="open_meteo",
+            wind_speed_max_mps=4.0,
+        )
+    ]
+    result = _aggregate_weekly(forecasts, "open_meteo")
+    assert len(result) == 1
+    assert result[0].week_start == date(2025, 1, 6)
+    assert result[0].week_end == date(2025, 1, 12)
+    assert result[0].t_min_avg_c == 15.0
+    assert result[0].t_max_avg_c == 25.0
+    assert result[0].precipitation_sum_mm == 5.0
+
+
+def test_aggregate_weekly_multiple_weeks_continued() -> None:
+    """Test _aggregate_weekly spans multiple weeks."""
+    from weather.services import _aggregate_weekly
+
+    forecasts = [
+        DailyForecast(
+            day=date(2025, 1, 5),  # Sunday (week before)
+            t_min_c=10.0,
+            t_max_c=20.0,
+            precipitation_mm=0.0,
+            source="open_meteo",
+            wind_speed_max_mps=3.0,
+        ),
+        DailyForecast(
+            day=date(2025, 1, 6),  # Monday (new week)
+            t_min_c=15.0,
+            t_max_c=25.0,
+            precipitation_mm=5.0,
+            source="open_meteo",
+            wind_speed_max_mps=4.0,
+        ),
+    ]
+    result = _aggregate_weekly(forecasts, "open_meteo")
+    assert len(result) == 2
+    assert result[0].week_start == date(2024, 12, 30)
+    assert result[1].week_start == date(2025, 1, 6)
+
+
+def test_aggregate_weekly_with_nulls() -> None:
+    """Test _aggregate_weekly handles None values correctly."""
+    from weather.services import _aggregate_weekly
+
+    forecasts = [
+        DailyForecast(
+            day=date(2025, 1, 6),
+            t_min_c=None,
+            t_max_c=None,
+            precipitation_mm=None,
+            source="open_meteo",
+            wind_speed_max_mps=None,
+        )
+    ]
+    result = _aggregate_weekly(forecasts, "open_meteo")
+    assert len(result) == 1
+    assert result[0].t_min_avg_c is None
+    assert result[0].t_max_avg_c is None
+    assert result[0].precipitation_sum_mm is None
+
+
+# =============================================================================
+# Additional tests for uncovered lines in weather/engines/open_meteo.py
+# =============================================================================
+
+
+def test_open_meteo_daily_summary_with_empty_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test OpenMeteoProvider.daily_summary handles empty daily block."""
+    _clear_cache()
+
+    async def _run_test() -> None:
+        async def fake_request(
+            self: OpenMeteoProvider, params: dict[str, object]
+        ) -> dict[str, object]:
+            return {"daily": {}}
+
+        monkeypatch.setattr(OpenMeteoProvider, "_request", fake_request)
+        provider = OpenMeteoProvider()
+        location = Location(lat=1.0, lon=36.0, tz="Africa/Nairobi")
+        start = date(2025, 1, 1)
+        end = date(2025, 1, 7)
+
+        result = await provider.daily_summary(location, start, end)
+        assert result == []
+
+    asyncio.run(_run_test())
+
+
+def test_open_meteo_hourly_with_empty_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test OpenMeteoProvider.hourly handles empty hourly block."""
+    _clear_cache()
+
+    async def _run_test() -> None:
+        async def fake_request(
+            self: OpenMeteoProvider, params: dict[str, object]
+        ) -> dict[str, object]:
+            return {"hourly": {}}
+
+        monkeypatch.setattr(OpenMeteoProvider, "_request", fake_request)
+        provider = OpenMeteoProvider()
+        location = Location(lat=1.0, lon=36.0, tz="Africa/Nairobi")
+
+        result = await provider.hourly(location, hours=24)
+        assert result == []
+
+    asyncio.run(_run_test())
+
+
+def test_open_meteo_daily_with_non_dict_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test OpenMeteoProvider.daily handles non-dict payload."""
+    _clear_cache()
+
+    async def _run_test() -> None:
+        async def fake_request(
+            self: OpenMeteoProvider, params: dict[str, object]
+        ) -> dict[str, object]:
+            return {}  # No 'daily' key
+
+        monkeypatch.setattr(OpenMeteoProvider, "_request", fake_request)
+        provider = OpenMeteoProvider()
+        location = Location(lat=1.0, lon=36.0, tz="Africa/Nairobi")
+        start = date(2025, 1, 1)
+        end = date(2025, 1, 7)
+
+        result = await provider.daily(location, start, end)
+        assert result == []
+
+    asyncio.run(_run_test())
+
+
+def test_open_meteo_parse_datetime_invalid() -> None:
+    """Test OpenMeteoProvider._parse_datetime handles invalid formats."""
+    provider = OpenMeteoProvider()
+    zone = ZoneInfo("Africa/Nairobi")
+
+    assert provider._parse_datetime(None, zone) is None  # type: ignore[arg-type]
+    assert provider._parse_datetime(123, zone) is None  # type: ignore[arg-type]
+    assert provider._parse_datetime("not-a-date", zone) is None
+
+
+def test_open_meteo_parse_date_invalid() -> None:
+    """Test OpenMeteoProvider._parse_date handles invalid formats."""
+    provider = OpenMeteoProvider()
+
+    assert provider._parse_date(None) is None  # type: ignore[arg-type]
+    assert provider._parse_date(123) is None  # type: ignore[arg-type]
+    assert provider._parse_date("not-a-date") is None
+
+
+def test_open_meteo_list_value_out_of_range() -> None:
+    """Test OpenMeteoProvider._list_value when index is out of range."""
+    provider = OpenMeteoProvider()
+    values = [1.0, 2.0, 3.0]
+
+    assert provider._list_value(values, 10) is None
+
+
+def test_open_meteo_to_float_invalid() -> None:
+    """Test OpenMeteoProvider._to_float handles invalid values."""
+    provider = OpenMeteoProvider()
+
+    assert provider._to_float(None) is None
+    assert provider._to_float("not-a-number") is None
+    assert provider._to_float(object()) is None  # type: ignore[arg-type]
+
+
+def test_open_meteo_current_missing_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure OpenMeteoProvider.current uses now when response lacks time."""
+    _clear_cache()
+
+    async def _run_test() -> None:
+        async def fake_request(
+            self: OpenMeteoProvider, params: dict[str, object]
+        ) -> dict[str, object]:
+            return {"current": {"temperature_2m": 22.0, "wind_speed_10m": 3.0}}
+
+        monkeypatch.setattr(OpenMeteoProvider, "_request", fake_request)
+        provider = OpenMeteoProvider()
+        location = Location(lat=1.0, lon=36.0, tz="Africa/Nairobi")
+
+        result = await provider.current(location)
+        assert result.temperature_c == 22.0
+        assert result.wind_speed_mps == 3.0
+        assert result.source == "open_meteo"
+
+    asyncio.run(_run_test())
