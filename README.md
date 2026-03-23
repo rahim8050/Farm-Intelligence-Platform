@@ -35,6 +35,8 @@ flowchart LR
   Django -->|Weather| NasaPower[NASA POWER API]
 ```
 
+See [NDVI Pipeline Evolution](docs/architecture/ndvi-pipeline-evolution.md) for the planned Redis Sentinel + Streams rollout and operational checkpoints.
+
 ## Quickstart (local dev)
 
 ### Requirements
