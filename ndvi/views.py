@@ -391,6 +391,7 @@ class FarmStateView(BaseFarmView):
     """
 
     @extend_schema(
+        operation_id="v1_farm_state_retrieve",
         responses={
             200: farm_state_success_response,
             401: ndvi_error_response,
