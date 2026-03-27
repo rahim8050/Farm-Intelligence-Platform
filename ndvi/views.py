@@ -384,13 +384,75 @@ class BaseFarmView(APIView):
 class FarmStateView(BaseFarmView):
     """Summarize NDVI-derived farm state for a farm.
 
-    Auth: IsAuthenticated.
-    Permissions: owner-only enforced per farm lookup.
+    Auth: API key, user JWT, or integration JWT.
+    Permissions: owner-only for user/API key requests.
+    Integration access: allow-listed per farm via FarmIntegrationAccess.
+    Integration scope: read.
     Response data: farm_id, mean_ndvi, max_ndvi, coverage_pct, trend,
     state, interpretation, action.
     """
 
+    authentication_classes = (FarmObservationAuthentication,)
+    permission_classes = [IsAuthenticated]
+
+    def _integration_scopes(self, request: Request) -> set[str]:
+        auth_obj: Any = getattr(request, "auth", None)
+
+        def _claim(key: str) -> str:
+            if isinstance(auth_obj, dict):
+                return str(auth_obj.get(key, "") or "")
+            getter = getattr(auth_obj, "get", None)
+            if callable(getter):
+                try:
+                    value = getter(key)
+                except Exception:
+                    value = None
+                else:
+                    if value is not None:
+                        return str(value or "")
+            try:
+                return str(auth_obj[key] or "")
+            except Exception:
+                return ""
+
+        scope = _claim("scope")
+        if not scope:
+            return set()
+        normalized = scope.replace(",", " ")
+        return {item for item in normalized.split() if item}
+
+    def _enforce_integration_scope(
+        self, request: Request, *, write: bool
+    ) -> None:
+        if not isinstance(request.user, IntegrationTokenUser):
+            return
+        scopes = self._integration_scopes(request)
+        if not scopes:
+            raise PermissionDenied("Integration token scope missing.")
+        read_scopes = {"read", "write", "admin"}
+        write_scopes = {"write", "admin"}
+        allowed = write_scopes if write else read_scopes
+        if not scopes.intersection(allowed):
+            raise PermissionDenied("Integration token scope not permitted.")
+
+    def _get_farm_for_request(self, request: Request, farm_id: int) -> Farm:
+        if isinstance(request.user, IntegrationTokenUser):
+            return get_object_or_404(
+                Farm,
+                id=farm_id,
+                is_active=True,
+                integration_access__client_id=request.user.client_id,
+                integration_access__is_active=True,
+            )
+
+        user_id = getattr(request.user, "id", None)
+        if user_id is None:
+            raise Http404
+
+        return self._get_farm(farm_id, cast(int, user_id))
+
     @extend_schema(
+        auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
         operation_id="v1_farm_state_retrieve",
         responses={
             200: farm_state_success_response,
@@ -407,7 +469,8 @@ class FarmStateView(BaseFarmView):
         Side effects: none.
         """
 
-        farm = self._get_farm(farm_id, cast(int, request.user.id))
+        self._enforce_integration_scope(request, write=False)
+        farm = self._get_farm_for_request(request, farm_id)
         result = build_farm_state(farm=farm)
         return success_response(result.as_payload(), message="Farm state")
 

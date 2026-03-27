@@ -6,9 +6,12 @@ from datetime import date, timedelta
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
-from farms.models import Farm
+from api_keys.auth import generate_plaintext_key, hash_api_key
+from api_keys.models import ApiKey, ApiKeyScope
+from farms.models import Farm, FarmIntegrationAccess
+from integrations.tokens import mint_integration_access_token
 from ndvi.models import NdviObservation
 from ndvi.services import get_default_ndvi_engine_name
 
@@ -65,7 +68,7 @@ class FarmStateApiTests(APITestCase):
 
     def test_farm_state_requires_auth(self) -> None:
         resp = self.client.get(self.url)
-        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_farm_state_returns_404_for_missing_farm(self) -> None:
         self.client.force_authenticate(user=self.user)
@@ -103,6 +106,47 @@ class FarmStateApiTests(APITestCase):
         self.assertIn("state", data)
         self.assertIn("interpretation", data)
         self.assertIn("action", data)
+
+    def test_farm_state_accepts_api_key(self) -> None:
+        self._add_observation(
+            farm=self.farm,
+            days_ago=5,
+            mean=0.3,
+            max_value=0.33,
+        )
+        plaintext = generate_plaintext_key()
+        ApiKey.objects.create(
+            user=self.user,
+            name="Farm State Key",
+            key_hash=hash_api_key(plaintext),
+            prefix=plaintext[:12],
+            last4=plaintext[-4:],
+            scope=ApiKeyScope.READ,
+        )
+        client = APIClient()
+        client.credentials(HTTP_X_API_KEY=plaintext)
+        resp = client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.json()["data"]["farm_id"], self.farm.id)
+
+    def test_farm_state_allows_integration_read(self) -> None:
+        self._add_observation(
+            farm=self.farm,
+            days_ago=5,
+            mean=0.3,
+            max_value=0.33,
+        )
+        access, _ = mint_integration_access_token(
+            user_id="client-1", scope="read"
+        )
+        FarmIntegrationAccess.objects.create(
+            farm=self.farm, client_id="client-1"
+        )
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        resp = client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.json()["data"]["farm_id"], self.farm.id)
 
     def test_farm_state_classification_edges(self) -> None:
         cases: list[tuple[str, list[tuple[int, float, float]]]] = [

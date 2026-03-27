@@ -11,15 +11,20 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 import os
+import re
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import parse_qs, urlparse
 
 import dj_database_url
 import environ
 from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
+from redis.connection import URL_QUERY_ARGUMENT_PARSERS
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -220,19 +225,174 @@ if IS_TESTING:
     }
 
 
-# Caches
-def _redis_cache(location: str) -> dict[str, Any]:
+# Caches helpers
+
+
+@dataclass(frozen=True)
+class RedisSentinelConfig:
+    service_name: str
+    sentinels: tuple[tuple[str, int], ...]
+    db: int
+    username: str | None = None
+    password: str | None = None
+    sentinel_kwargs: dict[str, Any] | None = None
+
+
+def _split_host_port(raw: str) -> tuple[str, int]:
+    raw = raw.strip()
+    if raw.startswith("["):
+        match = re.match(r"\[(?P<host>[^\]]+)\](?::(?P<port>\d+))?$", raw)
+        if not match:
+            raise ImproperlyConfigured(f"Invalid sentinel address '{raw}'")
+        host = match.group("host")
+        port = match.group("port") or "26379"
+    else:
+        if ":" in raw:
+            host, port = raw.split(":", 1)
+        else:
+            host, port = raw, "26379"
+    try:
+        return host, int(port)
+    except ValueError as exc:
+        raise ImproperlyConfigured(
+            f"Invalid sentinel port in '{raw}'"
+        ) from exc
+
+
+def _parse_redis_sentinel_url(
+    value: str, service_name_override: str | None = None
+) -> tuple[str, RedisSentinelConfig]:
+    parsed = urlparse(value)
+    if parsed.scheme != "redis-sentinel":
+        raise ImproperlyConfigured("Expected redis-sentinel scheme")
+
+    if "@" in parsed.netloc:
+        _, host_segment = parsed.netloc.split("@", 1)
+    else:
+        host_segment = parsed.netloc
+
+    sentinel_hosts = tuple(
+        _split_host_port(part)
+        for part in re.split(r"[;,]", host_segment)
+        if part.strip()
+    )
+    if not sentinel_hosts:
+        raise ImproperlyConfigured("No sentinel hosts provided")
+
+    query = parse_qs(parsed.query or "")
+    service_name = (
+        query.pop("service_name", [None])[0]
+        or query.pop("master_name", [None])[0]
+        or service_name_override
+    )
+    if not service_name:
+        raise ImproperlyConfigured(
+            "Redis sentinel URL is missing service_name"
+        )
+
+    db_value_raw = query.pop("db", [None])[0]
+    db_value: int
+    if db_value_raw is None:
+        if parsed.path and parsed.path not in ("/", ""):
+            try:
+                db_value = int(parsed.path.lstrip("/"))
+            except ValueError as exc:
+                raise ImproperlyConfigured("Invalid redis DB in path") from exc
+        else:
+            db_value = 0
+    else:
+        try:
+            db_value = int(db_value_raw)
+        except ValueError as exc:
+            raise ImproperlyConfigured("Invalid redis DB value") from exc
+
+    password = parsed.password or query.pop("password", [None])[0]
+    username = parsed.username or query.pop("username", [None])[0]
+
+    sentinel_kwargs: dict[str, Any] = {}
+    for key, values in list(query.items()):
+        if not values:
+            continue
+        value = values[0]
+        parser = URL_QUERY_ARGUMENT_PARSERS.get(key)
+        if parser:
+            parsed_value = cast(Callable[[str], Any], parser)(value)
+        else:
+            parsed_value = value
+        if key.startswith("sentinel_"):
+            sentinel_kwargs[key[len("sentinel_") :]] = parsed_value
+        elif key in {
+            "socket_timeout",
+            "socket_connect_timeout",
+            "socket_keepalive",
+            "socket_keepalive_options",
+        }:
+            sentinel_kwargs[key] = parsed_value
+
+    final_sentinel_kwargs = sentinel_kwargs or None
+    location = f"redis://{service_name}/{db_value}"
+    return (
+        location,
+        RedisSentinelConfig(
+            service_name=service_name,
+            sentinels=sentinel_hosts,
+            db=db_value,
+            username=username,
+            password=password,
+            sentinel_kwargs=final_sentinel_kwargs,
+        ),
+    )
+
+
+def _parse_cache_url(value: str) -> tuple[str, RedisSentinelConfig | None]:
+    if value.startswith("redis-sentinel://"):
+        return _parse_redis_sentinel_url(value)
+    return value, None
+
+
+def _redis_cache(
+    location: str, sentinel_config: RedisSentinelConfig | None = None
+) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "CLIENT_CLASS": "django_redis.client.DefaultClient",
+    }
+    if sentinel_config:
+        options.update(
+            {
+                "CLIENT_CLASS": "django_redis.client.SentinelClient",
+                "CONNECTION_FACTORY": (
+                    "django_redis.pool.SentinelConnectionFactory"
+                ),
+                "SENTINELS": list(sentinel_config.sentinels),
+            }
+        )
+        if sentinel_config.password:
+            options["PASSWORD"] = sentinel_config.password
+        if sentinel_config.username:
+            options["USERNAME"] = sentinel_config.username
+        if sentinel_config.sentinel_kwargs:
+            options["SENTINEL_KWARGS"] = sentinel_config.sentinel_kwargs
+
     return {
         "BACKEND": "django_redis.cache.RedisCache",
         "LOCATION": location,
-        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+        "OPTIONS": options,
     }
 
 
-REDIS_URL = env("REDIS_URL", default=None)
+REDIS_URL_RAW = env("REDIS_URL", default=None)
+REDIS_SENTINEL_CONFIG: RedisSentinelConfig | None = None
+REDIS_URL: str | None = None
+
+if REDIS_URL_RAW:
+    REDIS_URL, REDIS_SENTINEL_CONFIG = _parse_cache_url(REDIS_URL_RAW)
+else:
+    REDIS_URL = None
 
 if REDIS_URL:
-    default_cache_config = _redis_cache(REDIS_URL)
+    default_cache_config = _redis_cache(
+        REDIS_URL, sentinel_config=REDIS_SENTINEL_CONFIG
+    )
     throttle_cache_config = dict(default_cache_config)
 else:
     default_cache_config = {

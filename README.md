@@ -81,6 +81,14 @@ DATABASE_URL=sqlite:///db.sqlite3
 # Cache (required when DJANGO_ENV=production; see config/settings.py)
 REDIS_URL=redis://localhost:6379/0
 
+# For Phase 1 deployments running Redis Sentinel, point `REDIS_URL` at a
+# `redis-sentinel://` URI containing all sentinel endpoints, the `service_name`
+# for the master, and the desired DB (e.g. `redis-sentinel://sentinel1:26379;
+# sentinel2:26379/0?service_name=mymaster`). The settings code parses that URL to
+# wire `django-redis` to `SentinelConnectionFactory` so caches always read from
+# the elected master. Celery broker/result URLs should be updated alongside the
+# rollout (see docs/architecture/ndvi-pipeline-evolution.md).
+
 # API keys (required for staging/production; otherwise defaults to "dev-pepper")
 DJANGO_API_KEY_PEPPER=long-random-string
 
