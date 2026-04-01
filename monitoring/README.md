@@ -33,10 +33,19 @@ docker compose -f docker-compose.monitoring.yml up -d
 Set exporter connection variables (examples below). These are read by docker compose:
 
 ```bash
-REDIS_ADDR=redis://host.docker.internal:6379
+REDIS_ADDR=redis://host.docker.internal:26379
 MYSQL_EXPORTER_DSN=user:password@(host.docker.internal:3306)/
 POSTGRES_EXPORTER_DSN=postgresql://user:password@host.docker.internal:5432/postgres?sslmode=disable
 ```
+
+For Redis Sentinel validation, point `REDIS_ADDR` at a published Sentinel port
+instead of the standalone Redis port. With the current `redis_exporter` image,
+Sentinel health is exposed via `redis_sentinel_*` series such as:
+
+- `redis_sentinel_master_status`
+- `redis_sentinel_master_ok_sentinels`
+- `redis_sentinel_master_ok_slaves`
+- `redis_sentinel_masters`
 
 If you use MySQL, enable the MySQL exporter profile:
 

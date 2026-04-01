@@ -7,6 +7,8 @@ services:
       - ./ops/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     hostname: redis-master
     container_name: redis-master
+    ports:
+      - "16379:6379"
   redis-replica:
     image: redis:8
     depends_on:

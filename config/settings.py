@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
+import json
 import os
 import re
 import sys
@@ -18,7 +19,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import dj_database_url
 import environ
@@ -378,6 +379,66 @@ def _redis_cache(
         "LOCATION": location,
         "OPTIONS": options,
     }
+
+
+def _parse_transport_options(
+    raw: str | None, setting_name: str
+) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ImproperlyConfigured(
+            f"{setting_name} must be valid JSON"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ImproperlyConfigured(f"{setting_name} must be a JSON object")
+    return cast(dict[str, Any], parsed)
+
+
+def _redis_sentinel_to_celery_url(
+    sentinel_config: RedisSentinelConfig,
+) -> str:
+    credentials = ""
+    if sentinel_config.username is not None:
+        credentials = quote(sentinel_config.username, safe="")
+        if sentinel_config.password is not None:
+            credentials += f":{quote(sentinel_config.password, safe='')}"
+        credentials += "@"
+    elif sentinel_config.password is not None:
+        credentials = f":{quote(sentinel_config.password, safe='')}@"
+
+    return ";".join(
+        f"sentinel://{credentials}{host}:{port}/{sentinel_config.db}"
+        for host, port in sentinel_config.sentinels
+    )
+
+
+def _parse_celery_redis_url(
+    value: str,
+    transport_options_raw: str | None,
+    transport_setting_name: str,
+) -> tuple[str, dict[str, Any]]:
+    transport_options = _parse_transport_options(
+        transport_options_raw, transport_setting_name
+    )
+    if not value.startswith("redis-sentinel://"):
+        return value, transport_options
+
+    _, sentinel_config = _parse_redis_sentinel_url(value)
+    sentinel_transport_options: dict[str, Any] = {
+        "master_name": sentinel_config.service_name,
+    }
+    if sentinel_config.sentinel_kwargs:
+        sentinel_transport_options["sentinel_kwargs"] = (
+            sentinel_config.sentinel_kwargs
+        )
+    sentinel_transport_options.update(transport_options)
+    return (
+        _redis_sentinel_to_celery_url(sentinel_config),
+        sentinel_transport_options,
+    )
 
 
 REDIS_URL_RAW = env("REDIS_URL", default=None)
@@ -754,11 +815,31 @@ SCHEMA_CACHE_WARM_INTERVAL_SECONDS = env.int(
 )
 
 # Celery
-CELERY_BROKER_URL = env("CELERY_BROKER_URL", default=REDIS_URL or "memory://")
-CELERY_RESULT_BACKEND = env(
+CELERY_BROKER_URL_RAW = env(
+    "CELERY_BROKER_URL", default=REDIS_URL_RAW or REDIS_URL or "memory://"
+)
+CELERY_BROKER_URL, CELERY_BROKER_TRANSPORT_OPTIONS = _parse_celery_redis_url(
+    CELERY_BROKER_URL_RAW,
+    env("CELERY_BROKER_TRANSPORT_OPTIONS", default=None),
+    "CELERY_BROKER_TRANSPORT_OPTIONS",
+)
+CELERY_RESULT_BACKEND_RAW = env(
     "CELERY_RESULT_BACKEND",
     default="cache+memory://",
 )
+CELERY_RESULT_BACKEND, CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = (
+    _parse_celery_redis_url(
+        CELERY_RESULT_BACKEND_RAW,
+        env("CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS", default=None),
+        "CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS",
+    )
+)
+# Celery's URL properties prefer process env vars over Django settings, so keep
+# the translated URLs in sync after reading the raw `.env` values.
+os.environ["CELERY_BROKER_URL"] = CELERY_BROKER_URL
+os.environ.setdefault("CELERY_BROKER_READ_URL", CELERY_BROKER_URL)
+os.environ.setdefault("CELERY_BROKER_WRITE_URL", CELERY_BROKER_URL)
+os.environ["CELERY_RESULT_BACKEND"] = CELERY_RESULT_BACKEND
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"

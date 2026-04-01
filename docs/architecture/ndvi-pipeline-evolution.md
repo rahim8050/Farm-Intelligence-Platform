@@ -21,7 +21,7 @@
 - Deploy a Redis Sentinel trio.
 - Update `.env` URLs (`CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `DJANGO_CACHE_URL`, `REDIS_URL`) to Sentinel URIs (`redis-sentinel://...` with `service_name`).
 - **Failover validation:** stop the master, confirm Sentinel election, observe Celery reconnect logs, and run farm-state tasks during failover to ensure success.
-- **Checkpoint:** Sentinel metrics (`redis_master_up`, `sentinel_master_up`) are in Prometheus before moving on.
+- **Checkpoint:** Sentinel metrics (`redis_sentinel_master_status`, `redis_sentinel_master_ok_sentinels`) are in Prometheus before moving on.
 
 ### Phase 2 – Redis Streams for NDVI (Next phase)
 **Objective:** Give NDVI coverage jobs durable, observable queue semantics without touching the rest of Celery.
@@ -61,7 +61,7 @@
 
 ## 4. Operational considerations
 - **Failure modes:**
-  - Sentinel: watch `sentinel_master_up`, `redis_master_last_ping`; expect short-lived `celery_broker_disconnects`.
+  - Sentinel: watch `redis_sentinel_master_status`, `redis_sentinel_master_ok_sentinels`, and the `master_address` label; expect short-lived `celery_broker_disconnects`.
   - Streams: monitor `XPENDING`, pending age; reclaim stale entries and use a DLQ for repeated failures.
 - **Rollback:** The stream queue configuration is a simple Celery flag; revert to list-backed behavior if needed with no code changes.
 - **Memory/retention:** Trim streams via `MAXLEN`/`XTRIM`, keep Redis maxmemory/eviction policies, and pause producers when `XPENDING` exceeds thresholds.

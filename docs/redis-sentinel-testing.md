@@ -21,7 +21,7 @@ Documenting how to validate the Redis Sentinel setup for this project using Dock
    docker compose --file docker-compose.redis-sentinel.yml exec sentinel1 redis-cli -p 26379 sentinel get-master-addr-by-name mymaster
    ```
    The output should show the master host/port.
-4. (Optional) Add `redis_exporter` configured with `REDIS_ADDR=redis://sentinel1:26379` to exercise the metrics that populate Prometheus dashboards in the architecture plan.
+4. (Optional) Add `redis_exporter` configured with `REDIS_ADDR=redis://host.docker.internal:26379` (or another published Sentinel port) to exercise the metrics that populate Prometheus dashboards in the architecture plan.
 
 ### Phase 1 evidence (sentinel stack)
 
@@ -89,8 +89,110 @@ Documenting how to validate the Redis Sentinel setup for this project using Dock
    ```
    The host/port should now point to the promoted replica.
 3. Execute a cache-dependent API call or Celery task during the failover; the request should succeed once the new master is ready. Celery logs may show reconnects but should not abort.
-4. Monitor the Prometheus metrics `redis_master_up` and `sentinel_master_up` (if exporter is attached) to confirm visibility of the election.
+4. Monitor the Prometheus metrics `redis_sentinel_master_status`, `redis_sentinel_master_ok_sentinels`, and `redis_sentinel_master_ok_slaves` (if exporter is attached) to confirm visibility of the election.
 5. Restart the original master so it rejoins as a replica, restoring the three-node topology.
+
+### Phase 3 evidence (failover drill on Apr 1, 2026)
+
+- Baseline before failover:
+  - `docker compose -p sentinel --file docker-compose.redis-sentinel.yml exec sentinel1 redis-cli -p 26379 sentinel get-master-addr-by-name mymaster`
+    ```
+    172.20.0.2
+    6379
+    ```
+  - `python manage.py shell -c "from django.core.cache import caches; cache = caches['default']; cache.set('phase3_baseline', 'before', 30); print(cache.get('phase3_baseline'))"`
+    ```
+    before
+    ```
+  - `python -c "from config.celery import debug_task; result = debug_task.delay(); print(result.id); print(result.get(timeout=20, propagate=False))"`
+    ```
+    3f1d24c1-dd16-469f-a7ed-7a4e5699da97
+    None
+    ```
+- Failover trigger:
+  - `docker compose -p sentinel --file docker-compose.redis-sentinel.yml stop redis-master`
+    ```
+    Container redis-master Stopped
+    ```
+  - First successful post-stop poll already showed the promoted replica:
+    ```
+    poll=1
+    172.20.0.3
+    6379
+    ```
+  - `docker compose -p sentinel --file docker-compose.redis-sentinel.yml logs sentinel1 --tail 60`
+    ```
+    sentinel1-1  | 1:X 01 Apr 2026 17:28:57.572 # +sdown master mymaster 172.20.0.2 6379
+    sentinel1-1  | 1:X 01 Apr 2026 17:28:58.678 # +odown master mymaster 172.20.0.2 6379 #quorum 3/2
+    sentinel1-1  | 1:X 01 Apr 2026 17:28:58.989 # +switch-master mymaster 172.20.0.2 6379 172.20.0.3 6379
+    sentinel1-1  | 1:X 01 Apr 2026 17:28:59.017 * +slave slave 172.20.0.2:6379 172.20.0.2 6379 @ mymaster 172.20.0.3 6379
+    ```
+- Runtime behavior during failover:
+  - Django cache stayed available:
+    - `python manage.py shell -c "from django.core.cache import caches; cache = caches['default']; cache.set('phase3_failover', 'during', 30); print(cache.get('phase3_failover'))"`
+      ```
+      during
+      ```
+  - Celery accepted a task during failover, but the initial wait exceeded 30 seconds:
+    - `python -c "from config.celery import debug_task; result = debug_task.delay(); print(result.id); print(result.get(timeout=30, propagate=False))"`
+      ```
+      d9c23bb8-0751-4816-a3b7-070fc1a26529
+      celery.exceptions.TimeoutError: The operation timed out.
+      ```
+    - After recovery, the same task settled successfully:
+      - `python -c "from celery.result import AsyncResult; from config.celery import app; result = AsyncResult('d9c23bb8-0751-4816-a3b7-070fc1a26529', app=app); print(result.state); print(result.ready())"`
+        ```
+        SUCCESS
+        True
+        ```
+- Recovery after failover:
+  - `docker compose -p sentinel --file docker-compose.redis-sentinel.yml start redis-master`
+    ```
+    Container redis-master Started
+    ```
+  - The promoted master remained stable on repeated polls:
+    ```
+    poll=2
+    172.20.0.3
+    6379
+    ...
+    poll=11
+    172.20.0.3
+    6379
+    ```
+  - The original master rejoined as a replica:
+    - `docker compose -p sentinel --file docker-compose.redis-sentinel.yml exec sentinel1 redis-cli -p 26379 sentinel replicas mymaster`
+      ```
+      name
+      172.20.0.2:6379
+      flags
+      slave
+      master-link-status
+      ok
+      master-host
+      172.20.0.3
+      master-port
+      6379
+      ```
+  - A fresh Celery task succeeded after recovery:
+    - `python -c "from config.celery import debug_task; result = debug_task.delay(); print(result.id); print(result.get(timeout=20, propagate=False))"`
+      ```
+      8cf6b561-841e-480d-8432-12955019e71d
+      None
+      ```
+
+### Phase 3 current status
+
+- Sentinel election and topology recovery are verified.
+- Django cache traffic is verified during failover.
+- Celery recovered, but the task dispatched during failover did not complete within the initial 30 second wait; it reached `SUCCESS` only after recovery stabilized.
+- The Prometheus checkpoint is verified through `redis_exporter` in Sentinel mode:
+  - `redis_instance_info{job="redis_exporter"}` reports `redis_mode="sentinel"` and `tcp_port="26379"`.
+  - `redis_sentinel_master_status{job="redis_exporter"}` reports the active `master_address` and `master_status="ok"`.
+  - `redis_sentinel_master_ok_sentinels{job="redis_exporter"}` reports `3`.
+  - `redis_sentinel_master_ok_slaves{job="redis_exporter"}` reports `1`.
+- A second metrics-aware failover drill on Apr 1, 2026 switched the elected master from `172.20.0.3:6379` to `172.20.0.2:6379`, and Prometheus reflected the new `master_address` label after the next scrape.
+- Celery task dispatch during that drill remained `PENDING` for about `54.7s` before returning `SUCCESS`; this is tolerable for background NDVI-style work but too slow for latency-sensitive queueing.
 
 ## Notes & references
 
