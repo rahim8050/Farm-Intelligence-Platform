@@ -7,12 +7,13 @@ Documenting how to validate the Redis Sentinel setup for this project using Dock
 1. Use the provided `docker-compose.redis-sentinel.yml` (root) plus the configs under `ops/redis/` to run a stack containing:
    - A Redis master service exposing `6379` with `redis-server` and a simple `redis.conf`.
    - One or more replicas launched as slaves of the master.
-   - Three Sentinel services (Sentinel requires a quorum) pointing at the service name you plan to use (`mymaster`) and the master port. Mount a `sentinel.conf` that contains:
+   - Three Sentinel services (Sentinel requires a quorum) that each mount `ops/redis/start-sentinel.sh`. The script waits until `redis-master` resolves on the Docker network, writes a temporary `sentinel.conf` using the IP it discovered, and starts `redis-server --sentinel` with the same monitor/failover settings you would otherwise put in a static config.
      ```ini
-     sentinel monitor mymaster redis-master 6379 2
+     sentinel monitor mymaster <master-ip> 6379 2
      sentinel down-after-milliseconds mymaster 5000
      sentinel failover-timeout mymaster 10000
      sentinel parallel-syncs mymaster 1
+     sentinel deny-scripts-reconfig yes
      ```
 2. Start the stack with `docker compose --file docker-compose.redis-sentinel.yml up -d` (or drop to `docker-compose` if needed) and wait for the health checks to pass.
 3. Verify the sentinel trio has registered the master:

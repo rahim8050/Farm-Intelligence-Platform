@@ -5,8 +5,8 @@ services:
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
       - ./ops/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-    ports:
-      - "6379:6379"
+    hostname: redis-master
+    container_name: redis-master
   redis-replica:
     image: redis:8
     depends_on:
@@ -19,9 +19,11 @@ services:
     depends_on:
       - redis-master
       - redis-replica
-    command: ["redis-server", "/etc/redis/sentinel.conf", "--sentinel"]
+    environment:
+      - SKIP_FIX_PERMS=1
     volumes:
-      - ./ops/redis/sentinel.conf:/etc/redis/sentinel.conf:ro
+      - ./ops/redis/start-sentinel.sh:/usr/local/bin/start-sentinel.sh:ro
+    command: ["/usr/local/bin/start-sentinel.sh"]
     ports:
       - "26379:26379"
   sentinel2:
@@ -29,9 +31,11 @@ services:
     depends_on:
       - redis-master
       - redis-replica
-    command: ["redis-server", "/etc/redis/sentinel.conf", "--sentinel"]
+    environment:
+      - SKIP_FIX_PERMS=1
     volumes:
-      - ./ops/redis/sentinel.conf:/etc/redis/sentinel.conf:ro
+      - ./ops/redis/start-sentinel.sh:/usr/local/bin/start-sentinel.sh:ro
+    command: ["/usr/local/bin/start-sentinel.sh"]
     ports:
       - "26380:26379"
   sentinel3:
@@ -39,8 +43,10 @@ services:
     depends_on:
       - redis-master
       - redis-replica
-    command: ["redis-server", "/etc/redis/sentinel.conf", "--sentinel"]
+    environment:
+      - SKIP_FIX_PERMS=1
     volumes:
-      - ./ops/redis/sentinel.conf:/etc/redis/sentinel.conf:ro
+      - ./ops/redis/start-sentinel.sh:/usr/local/bin/start-sentinel.sh:ro
+    command: ["/usr/local/bin/start-sentinel.sh"]
     ports:
       - "26381:26379"
