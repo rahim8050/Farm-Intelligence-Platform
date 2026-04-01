@@ -23,6 +23,50 @@ Documenting how to validate the Redis Sentinel setup for this project using Dock
    The output should show the master host/port.
 4. (Optional) Add `redis_exporter` configured with `REDIS_ADDR=redis://sentinel1:26379` to exercise the metrics that populate Prometheus dashboards in the architecture plan.
 
+### Phase 1 evidence (sentinel stack)
+
+- `docker compose -p sentinel --file docker-compose.redis-sentinel.yml logs sentinel1 | tail -n 20`
+  ```
+  sentinel1-1  | resolved redis-master -> 172.20.0.2
+  sentinel1-1  | writing sentinel config
+  sentinel1-1  | 1:X 01 Apr 2026 15:17:28.460 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+  sentinel1-1  | 1:X 01 Apr 2026 15:17:28.460 * Redis version=8.6.0, bits=64, commit=00000000, modified=1, pid=1, just started
+  sentinel1-1  | 1:X 01 Apr 2026 15:17:28.460 * Configuration loaded
+  sentinel1-1  | 1:X 01 Apr 2026 15:17:28.471 * monotonic clock: POSIX clock_gettime
+  sentinel1-1  | 1:X 01 Apr 2026 15:17:28.473 * Running mode=sentinel, port=26379.
+  sentinel1-1  | 1:X 01 Apr 2026 15:17:28.653 * Sentinel new configuration saved on disk
+  sentinel1-1  | 1:X 01 Apr 2026 15:17:28.653 # +monitor master mymaster 172.20.0.2 6379 quorum 2
+  sentinel1-1  | 1:X 01 Apr 2026 15:17:28.655 * +slave slave 172.20.0.3:6379 172.20.0.3 6379 @ mymaster 172.20.0.2 6379
+  sentinel1-1  | 1:X 01 Apr 2026 15:17:30.141 * +sentinel sentinel 4cbf5c9973171eb5065d34eb2f4e46755b1ad0f5 172.20.0.4 26379 @ mymaster 172.20.0.2 6379
+  sentinel1-1  | 1:X 01 Apr 2026 15:17:30.402 * +sentinel sentinel d4d764a422ea9a07e1b750702407218c49c8400b 172.20.0.5 26379 @ mymaster 172.20.0.2 6379
+  ```
+- `docker compose -p sentinel --file docker-compose.redis-sentinel.yml exec sentinel1 redis-cli -p 26379 sentinel masters`
+  ```
+  name
+  mymaster
+  ip
+  172.20.0.2
+  port
+  6379
+  flags
+  master
+  num-slaves
+  1
+  num-other-sentinels
+  2
+  quorum
+  2
+  ```
+- `docker compose -p sentinel --file docker-compose.redis-sentinel.yml ps`
+  ```
+  NAME                       IMAGE     COMMAND                  SERVICE         CREATED         STATUS         PORTS
+  redis-master               redis:8   "docker-entrypoint.s…"   redis-master    7 minutes ago   Up 7 minutes   6379/tcp
+  sentinel-redis-replica-1   redis:8   "docker-entrypoint.s…"   redis-replica   7 minutes ago   Up 7 minutes   6379/tcp
+  sentinel-sentinel1-1       redis:8   "docker-entrypoint.s…"   sentinel1       7 minutes ago   Up 7 minutes   6379/tcp, 0.0.0.0:26379->26379/tcp
+  sentinel-sentinel2-1       redis:8   "docker-entrypoint.s…"   sentinel2       7 minutes ago   Up 7 minutes   6379/tcp, 0.0.0.0:26380->26379/tcp
+  sentinel-sentinel3-1       redis:8   "docker-entrypoint.s…"   sentinel3       7 minutes ago   Up 7 minutes   6379/tcp, 0.0.0.0:26381->26379/tcp
+  ```
+
 ## Phase 2 – Point Django/Celery at Sentinel
 
 1. Update your local `.env` or test environment to use sentinel-aware URLs, mirroring the README guidance:
