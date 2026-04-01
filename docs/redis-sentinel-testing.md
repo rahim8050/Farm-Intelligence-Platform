@@ -4,7 +4,7 @@ Documenting how to validate the Redis Sentinel setup for this project using Dock
 
 ## Phase 1 – Stand up the Sentinel stack
 
-1. Create a dedicated `docker compose` file (e.g., `docker-compose.sentinel.yml`) that runs:
+1. Use the provided `docker-compose.redis-sentinel.yml` (root) plus the configs under `ops/redis/` to run a stack containing:
    - A Redis master service exposing `6379` with `redis-server` and a simple `redis.conf`.
    - One or more replicas launched as slaves of the master.
    - Three Sentinel services (Sentinel requires a quorum) pointing at the service name you plan to use (`mymaster`) and the master port. Mount a `sentinel.conf` that contains:
@@ -14,10 +14,10 @@ Documenting how to validate the Redis Sentinel setup for this project using Dock
      sentinel failover-timeout mymaster 10000
      sentinel parallel-syncs mymaster 1
      ```
-2. Start the stack with `docker compose -f docker-compose.sentinel.yml up -d` and wait for the health checks to pass.
+2. Start the stack with `docker compose --file docker-compose.redis-sentinel.yml up -d` (or drop to `docker-compose` if needed) and wait for the health checks to pass.
 3. Verify the sentinel trio has registered the master:
    ```bash
-   docker compose -f docker-compose.sentinel.yml exec sentinel1 redis-cli -p 26379 sentinel get-master-addr-by-name mymaster
+   docker compose --file docker-compose.redis-sentinel.yml exec sentinel1 redis-cli -p 26379 sentinel get-master-addr-by-name mymaster
    ```
    The output should show the master host/port.
 4. (Optional) Add `redis_exporter` configured with `REDIS_ADDR=redis://sentinel1:26379` to exercise the metrics that populate Prometheus dashboards in the architecture plan.
@@ -37,10 +37,10 @@ Documenting how to validate the Redis Sentinel setup for this project using Dock
 
 ## Phase 3 – Failover verification
 
-1. While the stack is still running, stop the master container (`docker compose -f docker-compose.sentinel.yml stop redis-master`).
+1. While the stack is still running, stop the master container (`docker compose --file docker-compose.redis-sentinel.yml stop redis-master`).
 2. Wait a few seconds for Sentinel to elect a new master and then run:
    ```bash
-   docker compose -f docker-compose.sentinel.yml exec sentinel1 redis-cli -p 26379 sentinel get-master-addr-by-name mymaster
+   docker compose --file docker-compose.redis-sentinel.yml exec sentinel1 redis-cli -p 26379 sentinel get-master-addr-by-name mymaster
    ```
    The host/port should now point to the promoted replica.
 3. Execute a cache-dependent API call or Celery task during the failover; the request should succeed once the new master is ready. Celery logs may show reconnects but should not abort.

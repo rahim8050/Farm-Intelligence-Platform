@@ -1,0 +1,46 @@
+version: "3.9"
+services:
+  redis-master:
+    image: redis:8
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    volumes:
+      - ./ops/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    ports:
+      - "6379:6379"
+  redis-replica:
+    image: redis:8
+    depends_on:
+      - redis-master
+    command: ["sh", "-c", "sleep 1 && redis-server --replicaof redis-master 6379 --port 6379"]
+    volumes:
+      - ./ops/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+  sentinel1:
+    image: redis:8
+    depends_on:
+      - redis-master
+      - redis-replica
+    command: ["redis-server", "/etc/redis/sentinel.conf", "--sentinel"]
+    volumes:
+      - ./ops/redis/sentinel.conf:/etc/redis/sentinel.conf:ro
+    ports:
+      - "26379:26379"
+  sentinel2:
+    image: redis:8
+    depends_on:
+      - redis-master
+      - redis-replica
+    command: ["redis-server", "/etc/redis/sentinel.conf", "--sentinel"]
+    volumes:
+      - ./ops/redis/sentinel.conf:/etc/redis/sentinel.conf:ro
+    ports:
+      - "26380:26379"
+  sentinel3:
+    image: redis:8
+    depends_on:
+      - redis-master
+      - redis-replica
+    command: ["redis-server", "/etc/redis/sentinel.conf", "--sentinel"]
+    volumes:
+      - ./ops/redis/sentinel.conf:/etc/redis/sentinel.conf:ro
+    ports:
+      - "26381:26379"
