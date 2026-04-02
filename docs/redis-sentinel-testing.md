@@ -80,6 +80,52 @@ Documenting how to validate the Redis Sentinel setup for this project using Dock
 2. Restart the Django app (and any Celery worker/beat processes) so they pick up the new URLs; you can confirm the sentinel config by rerunning `python -m pytest tests/test_settings_redis_sentinel.py`.
 3. Trigger a cache-backed API call or enqueue an NDVI/Celery task to exercise the sentinel-backed broker/cache; logs should show connections to the sentinels and ACK/WRITE operations aimed at the master.
 
+### Phase 2 evidence (Django/Celery wiring on Apr 1, 2026)
+
+- Environment and settings wiring:
+  - `.env`
+    ```dotenv
+    CELERY_BROKER_URL="redis-sentinel://127.0.0.1:26379;127.0.0.1:26380;127.0.0.1:26381/0?service_name=mymaster"
+    CELERY_RESULT_BACKEND="redis-sentinel://127.0.0.1:26379;127.0.0.1:26380;127.0.0.1:26381/1?service_name=mymaster"
+    DJANGO_CACHE_URL="redis-sentinel://127.0.0.1:26379;127.0.0.1:26380;127.0.0.1:26381/2?service_name=mymaster"
+    REDIS_URL="redis-sentinel://127.0.0.1:26379;127.0.0.1:26380;127.0.0.1:26381/2?service_name=mymaster"
+    ```
+  - `python -c "from config import settings; print(settings.CELERY_BROKER_URL); print(settings.CELERY_BROKER_TRANSPORT_OPTIONS); print(settings.CELERY_RESULT_BACKEND); print(settings.CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS)"`
+    ```
+    sentinel://127.0.0.1:26379/0;sentinel://127.0.0.1:26380/0;sentinel://127.0.0.1:26381/0
+    {'master_name': 'mymaster', 'sentinels': [['127.0.0.1', 26379], ['127.0.0.1', 26380], ['127.0.0.1', 26381]]}
+    sentinel://127.0.0.1:26379/1;sentinel://127.0.0.1:26380/1;sentinel://127.0.0.1:26381/1
+    {'master_name': 'mymaster', 'sentinels': [['127.0.0.1', 26379], ['127.0.0.1', 26380], ['127.0.0.1', 26381]]}
+    ```
+- Settings and parser verification:
+  - `pytest tests/test_settings_redis_sentinel.py`
+    ```
+    collected 3 items
+    tests/test_settings_redis_sentinel.py ...                                [100%]
+    ============================== 3 passed in 0.18s ===============================
+    ```
+- Django cache verification:
+  - `python manage.py shell -c "from django.core.cache import caches; cache = caches['default']; cache.set('phase2_probe', 'ok', 30); print(cache.get('phase2_probe'))"`
+    ```
+    ok
+    ```
+- Celery broker and backend verification:
+  - `python -c "from config.celery import app; conn = app.connection(); conn.ensure_connection(max_retries=1); print(conn.transport.driver_name)"`
+    ```
+    redis
+    ```
+  - `python -c "from config.celery import app; backend = app.backend; print(type(backend).__name__); print(backend.client.ping())"`
+    ```
+    SentinelBackend
+    True
+    ```
+
+### Phase 2 current status
+
+- Django cache is using `django_redis.client.SentinelClient`.
+- Celery broker and result backend are translated to `sentinel://...` URLs with `master_name=mymaster`.
+- Fresh Django and Celery processes connect through Sentinel successfully.
+
 ## Phase 3 – Failover verification
 
 1. While the stack is still running, stop the master container (`docker compose --file docker-compose.redis-sentinel.yml stop redis-master`).
