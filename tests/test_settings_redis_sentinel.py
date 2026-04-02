@@ -43,7 +43,11 @@ def test_parse_celery_sentinel_url_and_transport_options() -> None:
 def test_celery_app_uses_translated_sentinel_urls() -> None:
     assert celery_app.conf.broker_write_url == settings.CELERY_BROKER_URL
     assert celery_app.conf.broker_read_url == settings.CELERY_BROKER_URL
-    assert (
-        celery_app.backend.as_uri(include_password=False)
-        == settings.CELERY_RESULT_BACKEND
-    )
+    backend_uri = celery_app.backend.as_uri(include_password=False)
+    if settings.CELERY_RESULT_BACKEND.startswith("sentinel://"):
+        assert backend_uri == settings.CELERY_RESULT_BACKEND
+        return
+
+    # Celery normalizes the default cache+memory backend alias to memory:///.
+    assert settings.CELERY_RESULT_BACKEND == "cache+memory://"
+    assert backend_uri == "memory:///"
