@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_ENGINES = ("sentinelhub", "stac")
 
 DEFAULT_NDVI_ENGINE_NAME = "sentinelhub"
+DEFAULT_NDVI_QUEUE_BACKEND = "celery"
 DEFAULT_MAX_AREA_KM2 = 5000.0
 DEFAULT_MAX_DATERANGE_DAYS = 370
 DEFAULT_STEP_DAYS = 7
@@ -49,6 +50,12 @@ def _get_float_setting(name: str, default: float) -> float:
 def get_default_ndvi_engine_name() -> str:
     return str(
         getattr(settings, "NDVI_ENGINE", DEFAULT_NDVI_ENGINE_NAME)
+    ).lower()
+
+
+def get_ndvi_queue_backend() -> str:
+    return str(
+        getattr(settings, "NDVI_QUEUE_BACKEND", DEFAULT_NDVI_QUEUE_BACKEND)
     ).lower()
 
 
@@ -439,6 +446,34 @@ def enqueue_job(
         engine_source,
     )
     return job
+
+
+def dispatch_ndvi_job(job: NdviJob | int) -> None:
+    # Stage 1 keeps the existing Celery dispatch path intact. Later queue
+    # backends should branch here instead of at every call site.
+    from .tasks import run_ndvi_job
+
+    job_id = job.id if isinstance(job, NdviJob) else int(job)
+    run_ndvi_job.delay(job_id)
+
+
+def dispatch_farm_state_coverage(
+    *,
+    farm_id: int,
+    engine: str | None = None,
+    target_date: date,
+    threshold: float,
+) -> None:
+    # Coverage jobs still use Celery directly in Stage 1; this helper creates
+    # a single routing boundary for the later Redis Streams work.
+    from .tasks import compute_farm_state_coverage
+
+    compute_farm_state_coverage.delay(
+        farm_id=farm_id,
+        engine=engine,
+        target_date=target_date.isoformat(),
+        threshold=threshold,
+    )
 
 
 def is_stale(observation: NdviObservation | None, lookback_days: int) -> bool:

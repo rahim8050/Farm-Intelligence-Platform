@@ -123,7 +123,7 @@ class NdviRasterApiTests(APITestCase):
     def test_queue_success_and_cooldown(self) -> None:
         self.client.force_authenticate(user=self.user)
         payload = {"date": "2024-02-01", "size": 256, "max_cloud": 20}
-        with patch("ndvi.views.run_ndvi_job.delay") as mock_delay:
+        with patch("ndvi.views.dispatch_ndvi_job") as mock_delay:
             resp = self.client.post(self.queue_url, payload, format="json")
         self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(

@@ -79,7 +79,7 @@ class NdviApiTests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
-    @patch("ndvi.views.run_ndvi_job.delay")
+    @patch("ndvi.views.dispatch_ndvi_job")
     def test_timeseries_accepts_mmddyyyy(self, mock_delay: MagicMock) -> None:
         """MM/DD/YYYY dates are normalized and accepted."""
 
@@ -96,7 +96,7 @@ class NdviApiTests(APITestCase):
         self.assertEqual(data.get("end"), "2024-01-10")
         mock_delay.assert_called_once()
 
-    @patch("ndvi.views.run_ndvi_job.delay")
+    @patch("ndvi.views.dispatch_ndvi_job")
     def test_timeseries_engine_override(self, mock_delay: MagicMock) -> None:
         """Query param engine overrides the default engine."""
 
@@ -115,7 +115,7 @@ class NdviApiTests(APITestCase):
             self.assertEqual(job.engine, "stac")
         mock_delay.assert_called_once()
 
-    @patch("ndvi.views.run_ndvi_job.delay")
+    @patch("ndvi.views.dispatch_ndvi_job")
     def test_latest_response_contract_shape(
         self, mock_delay: MagicMock
     ) -> None:
@@ -131,7 +131,7 @@ class NdviApiTests(APITestCase):
         self.assertIn("errors", body)
         mock_delay.assert_called_once()
 
-    @patch("ndvi.views.run_ndvi_job.delay")
+    @patch("ndvi.views.dispatch_ndvi_job")
     def test_gap_detection_enqueues_job(self, mock_delay: MagicMock) -> None:
         """Gap detection schedules a gap-fill job without blocking."""
 
@@ -159,7 +159,7 @@ class NdviApiTests(APITestCase):
         )
         mock_delay.assert_called_once()
 
-    @patch("ndvi.views.run_ndvi_job.delay")
+    @patch("ndvi.views.dispatch_ndvi_job")
     def test_idempotent_job_creation(self, mock_delay: MagicMock) -> None:
         """Same params create a single queued job."""
 
@@ -279,7 +279,7 @@ class NdviApiTests(APITestCase):
             "step_days": "1",
         }
 
-        with patch("ndvi.views.run_ndvi_job.delay"):
+        with patch("ndvi.views.dispatch_ndvi_job"):
             first = self.client.get(
                 self.timeseries_url, payload, format="json"
             )
@@ -290,7 +290,7 @@ class NdviApiTests(APITestCase):
         self.assertEqual(second.status_code, status.HTTP_200_OK)
         mock_enqueue.assert_not_called()
 
-    @patch("ndvi.views.run_ndvi_job.delay")
+    @patch("ndvi.views.dispatch_ndvi_job")
     def test_timeseries_complete_does_not_enqueue(
         self, mock_delay: MagicMock
     ) -> None:
@@ -325,7 +325,7 @@ class NdviApiTests(APITestCase):
         self.assertEqual(data["missing_buckets_count"], 0)
         mock_delay.assert_not_called()
 
-    @patch("ndvi.views.run_ndvi_job.delay")
+    @patch("ndvi.views.dispatch_ndvi_job")
     def test_latest_view_stale_enqueues_refresh(
         self, mock_delay: MagicMock
     ) -> None:
@@ -386,7 +386,7 @@ class NdviApiTests(APITestCase):
         self.assertEqual(resp.json()["data"], cached_payload)
         mock_enqueue.assert_not_called()
 
-    @patch("ndvi.views.run_ndvi_job.delay")
+    @patch("ndvi.views.dispatch_ndvi_job")
     def test_refresh_view_throttle_and_success(
         self, mock_delay: MagicMock
     ) -> None:

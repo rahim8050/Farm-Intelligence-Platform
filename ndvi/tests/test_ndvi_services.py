@@ -5,6 +5,7 @@ import secrets
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Protocol
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -18,12 +19,15 @@ from ndvi.services import (
     LatestParams,
     TimeseriesParams,
     cache_latest_response,
+    dispatch_farm_state_coverage,
+    dispatch_ndvi_job,
     enforce_quota,
     enqueue_job,
     get_cached_latest_response,
     get_default_ndvi_engine_name,
     get_engine,
     get_max_daterange_days,
+    get_ndvi_queue_backend,
     is_stale,
     normalize_latest_params,
     normalize_timeseries_params,
@@ -33,6 +37,7 @@ from ndvi.services import (
 
 class SettingsLike(Protocol):
     NDVI_ENGINE: str
+    NDVI_QUEUE_BACKEND: str
     NDVI_STAC_COLLECTION: str
 
 
@@ -61,10 +66,43 @@ def test_resolve_ndvi_engine_name_reads_settings_at_call_time(
     assert resolve_ndvi_engine_name(None) == "stac"
 
 
+def test_get_ndvi_queue_backend_reads_settings(
+    settings: SettingsLike,
+) -> None:
+    settings.NDVI_QUEUE_BACKEND = "stream"
+    assert get_ndvi_queue_backend() == "stream"
+
+
 def test_no_default_engine_constant() -> None:
     import ndvi.services as services
 
     assert not hasattr(services, "DEFAULT_ENGINE")
+
+
+def test_dispatch_ndvi_job_uses_celery_delay() -> None:
+    with patch("ndvi.tasks.run_ndvi_job.delay") as mock_delay:
+        dispatch_ndvi_job(123)
+
+    mock_delay.assert_called_once_with(123)
+
+
+def test_dispatch_farm_state_coverage_uses_celery_delay() -> None:
+    target_date = date(2025, 1, 3)
+
+    with patch("ndvi.tasks.compute_farm_state_coverage.delay") as mock_delay:
+        dispatch_farm_state_coverage(
+            farm_id=7,
+            engine="stac",
+            target_date=target_date,
+            threshold=0.4,
+        )
+
+    mock_delay.assert_called_once_with(
+        farm_id=7,
+        engine="stac",
+        target_date="2025-01-03",
+        threshold=0.4,
+    )
 
 
 def test_normalize_timeseries_params_validation() -> None:

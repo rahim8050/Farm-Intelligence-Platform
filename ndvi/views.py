@@ -67,6 +67,7 @@ from .services import (
     cache_latest_response,
     cache_timeseries_response,
     detect_gaps,
+    dispatch_ndvi_job,
     enforce_quota,
     enqueue_job,
     expected_buckets,
@@ -79,7 +80,6 @@ from .services import (
     normalize_bbox,
     resolve_ndvi_engine_name,
 )
-from .tasks import run_ndvi_job
 
 logger = logging.getLogger(__name__)
 
@@ -639,7 +639,7 @@ class NdviTimeseriesView(BaseFarmView):
                     "max_cloud": params.max_cloud,
                 },
             )
-            run_ndvi_job.delay(job.id)
+            dispatch_ndvi_job(job)
 
         payload: dict[str, Any] = {
             "observations": serialized,
@@ -724,7 +724,7 @@ class NdviLatestView(BaseFarmView):
                     "max_cloud": params.max_cloud,
                 },
             )
-            run_ndvi_job.delay(job.id)
+            dispatch_ndvi_job(job)
         else:
             ndvi_farms_stale_total.labels(engine=engine_name).set(0)
 
@@ -926,7 +926,7 @@ class NdviRasterQueueView(BaseRasterView):
                 "max_cloud": params["max_cloud"],
             },
         )
-        run_ndvi_job.delay(job.id)
+        dispatch_ndvi_job(job)
 
         return success_response(
             {"job_id": job.id},
@@ -978,7 +978,7 @@ class NdviRefreshView(BaseFarmView):
                 "max_cloud": get_default_max_cloud(),
             },
         )
-        run_ndvi_job.delay(job.id)
+        dispatch_ndvi_job(job)
 
         return success_response(
             {"job_id": job.id},

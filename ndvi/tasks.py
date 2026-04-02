@@ -26,6 +26,8 @@ from .models import NdviJob, NdviRasterArtifact
 from .raster.service import render_ndvi_png
 from .services import (
     acquire_lock,
+    dispatch_farm_state_coverage,
+    dispatch_ndvi_job,
     enforce_quota,
     enqueue_job,
     get_default_lookback_days,
@@ -228,7 +230,7 @@ def enqueue_daily_refresh() -> int:
                 "max_cloud": get_default_max_cloud(),
             },
         )
-        run_ndvi_job.delay(job.id)
+        dispatch_ndvi_job(job)
         count += 1
     return count
 
@@ -318,10 +320,10 @@ def enqueue_daily_farm_state_coverage() -> int:
         )
         if cached:
             continue
-        compute_farm_state_coverage.delay(
+        dispatch_farm_state_coverage(
             farm_id=farm.id,
             engine=engine,
-            target_date=latest.bucket_date.isoformat(),
+            target_date=latest.bucket_date,
             threshold=threshold,
         )
         count += 1
@@ -353,6 +355,6 @@ def enqueue_weekly_gap_fill() -> int:
                 "max_cloud": get_default_max_cloud(),
             },
         )
-        run_ndvi_job.delay(job.id)
+        dispatch_ndvi_job(job)
         count += 1
     return count

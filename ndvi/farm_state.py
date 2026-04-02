@@ -27,6 +27,7 @@ from ndvi.engines.stac import (
 )
 from ndvi.models import NdviObservation
 from ndvi.services import (
+    dispatch_farm_state_coverage,
     enforce_quota,
     get_default_max_cloud,
     get_default_ndvi_engine_name,
@@ -269,12 +270,10 @@ def _acquire_coverage_lock(
 def _enqueue_coverage_compute(
     *, farm_id: int, engine: str, target_date: date, threshold: float
 ) -> None:
-    from ndvi.tasks import compute_farm_state_coverage
-
-    compute_farm_state_coverage.delay(
+    dispatch_farm_state_coverage(
         farm_id=farm_id,
         engine=engine,
-        target_date=target_date.isoformat(),
+        target_date=target_date,
         threshold=threshold,
     )
 

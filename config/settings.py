@@ -691,6 +691,7 @@ if IS_TESTING:
 
 # NDVI defaults and limits
 NDVI_ENGINE = env("NDVI_ENGINE", default="sentinelhub")
+NDVI_QUEUE_BACKEND = env("NDVI_QUEUE_BACKEND", default="celery")
 NDVI_MAX_AREA_KM2 = env.float("NDVI_MAX_AREA_KM2", default=5000.0)
 NDVI_MAX_DATERANGE_DAYS = env.int("NDVI_MAX_DATERANGE_DAYS", default=370)
 NDVI_LOCK_TIMEOUT_SECONDS = env.int("NDVI_LOCK_TIMEOUT_SECONDS", default=300)

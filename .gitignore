@@ -32,3 +32,4 @@ ndvi/rasters/**
 celerybeat-schedule
 cert.pem
 key.pem
+.codex

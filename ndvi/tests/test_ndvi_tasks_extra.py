@@ -374,7 +374,7 @@ def test_enqueue_daily_refresh_only_bbox_farms() -> None:
         is_active=True,
     )
     Farm.objects.create(owner=user, name="No bbox", slug="nobbox")
-    with patch("ndvi.tasks.run_ndvi_job.delay") as mock_delay:
+    with patch("ndvi.tasks.dispatch_ndvi_job") as mock_delay:
         count = enqueue_daily_refresh()
     assert count == 1
     assert (
@@ -403,7 +403,7 @@ def test_enqueue_weekly_gap_fill_only_bbox_farms() -> None:
         is_active=True,
     )
     Farm.objects.create(owner=user, name="No bbox", slug="nobbox-weekly")
-    with patch("ndvi.tasks.run_ndvi_job.delay") as mock_delay:
+    with patch("ndvi.tasks.dispatch_ndvi_job") as mock_delay:
         count = enqueue_weekly_gap_fill()
     assert count == 1
     assert (
