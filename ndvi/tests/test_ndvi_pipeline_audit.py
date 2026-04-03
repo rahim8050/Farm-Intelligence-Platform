@@ -5,7 +5,6 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import cast
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from django.http import HttpResponse
@@ -75,6 +74,7 @@ def test_ndvi_pipeline_audit_synthetic_random() -> None:
     p2, p98 = np.percentile(ndvi, (2, 98))
     stretched = np.clip((ndvi - p2) / (p98 - p2 + 1e-6), 0.0, 1.0)
     _log_stage("Percentiles", p2=float(p2), p98=float(p98))
+    plt = pytest.importorskip("matplotlib.pyplot")
     cmap = plt.get_cmap("RdYlGn")
     colored_raw = cmap(norm)
     colored_stretched = cmap(stretched)
