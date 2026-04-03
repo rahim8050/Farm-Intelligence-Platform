@@ -742,7 +742,7 @@ NDVI_RASTER_ENGINE_PATH = env(
 )
 NDVI_RASTER_ENGINE_NAME = env(
     "NDVI_RASTER_ENGINE_NAME",
-    default="sentinelhub",
+    default=NDVI_ENGINE,
 )
 NDVI_RASTER_MAX_SIZE = env.int("NDVI_RASTER_MAX_SIZE", default=1024)
 NDVI_RASTER_DEFAULT_SIZE = env.int(

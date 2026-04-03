@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from typing import Final, Literal, NoReturn
 
 import numpy as np
@@ -13,20 +13,21 @@ from rest_framework.exceptions import ValidationError
 from ndvi.stac_client import (
     StacClient,
     StacItem,
+    StacProcessingError,
+    StacUpstreamError,
     build_asset_candidates,
     compute_ndvi_stats,
     load_ndvi_array,
     normalize_stac_bbox,
     resolve_asset_href_candidates,
-    select_best_item,
 )
 
 from .base import NdviRasterEngine, RasterRequest
 
 DEFAULT_TIMEOUT_SECONDS: Final[float] = 30.0
 DEFAULT_DATE_WINDOW_DAYS: Final[int] = 3
-DEFAULT_ASSET_RED: Final[str] = "B04"
-DEFAULT_ASSET_NIR: Final[str] = "B08"
+DEFAULT_ASSET_RED: Final[str] = "B04_10m"
+DEFAULT_ASSET_NIR: Final[str] = "B08_10m"
 RASTER_NOT_FOUND_MESSAGE: Final[str] = "Raster not found"
 RASTER_NOT_FOUND_CODE: Final[str] = "raster_not_found"
 RasterNotFoundReason = Literal["no_items", "no_best_item", "missing_assets"]
@@ -104,6 +105,39 @@ def _raise_raster_not_found(
     )
 
 
+def _rank_candidate_items(
+    items: list[StacItem],
+    *,
+    target_date: date,
+    window_days: int,
+) -> list[StacItem]:
+    ranked: list[tuple[float, int, datetime, StacItem]] = []
+    for item in items:
+        delta_days = abs((item.date - target_date).days)
+        if delta_days > window_days:
+            continue
+        cloud_rank = (
+            item.cloud_cover if item.cloud_cover is not None else 101.0
+        )
+        ranked.append((cloud_rank, delta_days, item.datetime, item))
+    ranked.sort(key=lambda row: (row[0], row[1], row[2]))
+    return [row[3] for row in ranked]
+
+
+def _summarize_processing_failures(
+    failures: list[tuple[StacItem, str]],
+    *,
+    limit: int = 3,
+) -> str:
+    snippets: list[str] = []
+    for item, message in failures[:limit]:
+        snippets.append(f"{item.id}: {message}")
+    remaining = len(failures) - limit
+    if remaining > 0:
+        snippets.append(f"+{remaining} more")
+    return "; ".join(snippets)
+
+
 class StacComputeRasterEngine(NdviRasterEngine):
     """Render NDVI rasters by fetching STAC COG assets."""
 
@@ -165,12 +199,12 @@ class StacComputeRasterEngine(NdviRasterEngine):
                     "nir": nir_candidates,
                 },
             )
-        item = select_best_item(
+        candidate_items = _rank_candidate_items(
             items,
             target_date=request.date,
             window_days=self.date_window_days,
         )
-        if item is None:
+        if not candidate_items:
             _raise_raster_not_found(
                 reason="no_best_item",
                 request=request,
@@ -184,49 +218,89 @@ class StacComputeRasterEngine(NdviRasterEngine):
                 },
             )
 
-        red_href = resolve_asset_href_candidates(item, red_candidates)
-        nir_href = resolve_asset_href_candidates(item, nir_candidates)
-        if not red_href or not nir_href:
-            _raise_raster_not_found(
-                reason="missing_assets",
-                request=request,
-                window_days=self.date_window_days,
-                item=item,
-                items_count=len(items),
-                collections=collections,
-                item_collection=item.collection,
-                available_assets=sorted(item.assets.keys()),
-                expected_assets={
-                    "red": red_candidates,
-                    "nir": nir_candidates,
-                },
+        processing_failures: list[tuple[StacItem, str]] = []
+        stats_failures: list[StacItem] = []
+        representative_item = candidate_items[0]
+
+        for candidate in candidate_items:
+            red_href = resolve_asset_href_candidates(candidate, red_candidates)
+            nir_href = resolve_asset_href_candidates(candidate, nir_candidates)
+            if not red_href or not nir_href:
+                logger.warning(
+                    "ndvi.raster.skip_item reason=missing_assets job_id=%s "
+                    "farm_id=%s item_id=%s available_assets=%s "
+                    "expected_assets=%s",
+                    request.job_id if request.job_id is not None else "-",
+                    request.farm_id if request.farm_id is not None else "-",
+                    candidate.id,
+                    sorted(candidate.assets.keys()),
+                    {
+                        "red": red_candidates,
+                        "nir": nir_candidates,
+                    },
+                )
+                continue
+
+            try:
+                ndvi = load_ndvi_array(
+                    red_href=red_href,
+                    nir_href=nir_href,
+                    bbox=request.bbox,
+                    size=request.size,
+                    timeout_seconds=self.timeout_seconds,
+                )
+            except StacProcessingError as exc:
+                processing_failures.append((candidate, str(exc)))
+                logger.warning(
+                    "ndvi.raster.skip_item reason=processing_failed "
+                    "job_id=%s farm_id=%s item_id=%s err=%s",
+                    request.job_id if request.job_id is not None else "-",
+                    request.farm_id if request.farm_id is not None else "-",
+                    candidate.id,
+                    exc,
+                )
+                continue
+
+            if compute_ndvi_stats(ndvi) is None:
+                stats_failures.append(candidate)
+                logger.warning(
+                    "ndvi.raster.skip_item reason=empty_stats job_id=%s "
+                    "farm_id=%s item_id=%s",
+                    request.job_id if request.job_id is not None else "-",
+                    request.farm_id if request.farm_id is not None else "-",
+                    candidate.id,
+                )
+                continue
+
+            return self._encode_png(ndvi)
+
+        if processing_failures:
+            summary = _summarize_processing_failures(processing_failures)
+            raise StacUpstreamError(
+                (
+                    "Raster processing failed for all candidate STAC items. "
+                    f"{summary}"
+                ),
+                retryable=True,
             )
 
-        ndvi = load_ndvi_array(
-            red_href=red_href,
-            nir_href=nir_href,
-            bbox=request.bbox,
-            size=request.size,
-            timeout_seconds=self.timeout_seconds,
+        failed_item = (
+            stats_failures[0] if stats_failures else representative_item
         )
-
-        if compute_ndvi_stats(ndvi) is None:
-            _raise_raster_not_found(
-                reason="missing_assets",
-                request=request,
-                window_days=self.date_window_days,
-                item=item,
-                items_count=len(items),
-                collections=collections,
-                item_collection=item.collection,
-                available_assets=sorted(item.assets.keys()),
-                expected_assets={
-                    "red": red_candidates,
-                    "nir": nir_candidates,
-                },
-            )
-
-        return self._encode_png(ndvi)
+        _raise_raster_not_found(
+            reason="missing_assets",
+            request=request,
+            window_days=self.date_window_days,
+            item=failed_item,
+            items_count=len(items),
+            collections=collections,
+            item_collection=failed_item.collection,
+            available_assets=sorted(failed_item.assets.keys()),
+            expected_assets={
+                "red": red_candidates,
+                "nir": nir_candidates,
+            },
+        )
 
     def _encode_png(self, ndvi: np.ndarray) -> bytes:
         clamped = np.clip(ndvi, -1.0, 1.0)

@@ -23,7 +23,13 @@ from ndvi.raster.sentinelhub_engine import (
     SentinelHubRasterError,
 )
 from ndvi.raster.stac_compute_engine import StacComputeRasterEngine
-from ndvi.stac_client import NdviStats, StacClient, StacItem
+from ndvi.stac_client import (
+    NdviStats,
+    StacClient,
+    StacItem,
+    StacProcessingError,
+    StacUpstreamError,
+)
 
 CLIENT_SECRET = secrets.token_urlsafe(12)
 
@@ -54,10 +60,15 @@ def _raster_request() -> RasterRequest:
 
 
 def _stac_item(
-    *, item_date: date, assets: dict[str, str], collection: str | None = None
+    *,
+    item_date: date,
+    assets: dict[str, str],
+    collection: str | None = None,
+    item_id: str = "item-1",
+    cloud_cover: float = 5.0,
 ) -> StacItem:
     return StacItem(
-        id="item-1",
+        id=item_id,
         datetime=datetime(
             item_date.year,
             item_date.month,
@@ -65,7 +76,7 @@ def _stac_item(
             tzinfo=UTC,
         ),
         assets=assets,
-        cloud_cover=5.0,
+        cloud_cover=cloud_cover,
         collection=collection,
     )
 
@@ -205,6 +216,113 @@ def test_stac_compute_engine_missing_stats_raises_not_found(
     assert detail["detail"] == "Raster not found"
     assert detail["code"] == "raster_not_found"
     assert detail["reason"] == "missing_assets"
+
+
+def test_stac_compute_engine_skips_processing_failure_and_uses_next_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def search(
+            self, *, bbox: object, start: object, end: object, max_cloud: int
+        ) -> list[StacItem]:
+            return [
+                _stac_item(
+                    item_date=date(2025, 1, 1),
+                    item_id="broken-item",
+                    cloud_cover=1.0,
+                    assets={
+                        "B04": "broken-red.tif",
+                        "B08": "broken-nir.tif",
+                    },
+                ),
+                _stac_item(
+                    item_date=date(2025, 1, 1),
+                    item_id="healthy-item",
+                    cloud_cover=5.0,
+                    assets={
+                        "B04": "healthy-red.tif",
+                        "B08": "healthy-nir.tif",
+                    },
+                ),
+            ]
+
+    attempts: list[str] = []
+
+    def fake_load_ndvi_array(**kwargs: object) -> np.ndarray:
+        red_href = cast(str, kwargs["red_href"])
+        attempts.append(red_href)
+        if red_href == "broken-red.tif":
+            raise StacProcessingError(
+                "Raster processing failed: opj_get_decoded_tile() failed"
+            )
+        return np.array([[0.2]], dtype=np.float32)
+
+    monkeypatch.setattr(
+        stac_compute_engine, "load_ndvi_array", fake_load_ndvi_array
+    )
+    monkeypatch.setattr(
+        stac_compute_engine,
+        "compute_ndvi_stats",
+        lambda _ndvi: NdviStats(
+            mean=0.2,
+            min=0.1,
+            max=0.3,
+            sample_count=1,
+        ),
+    )
+
+    engine = StacComputeRasterEngine(client=cast(StacClient, FakeClient()))
+    png = engine.render_png(_raster_request())
+
+    assert png.startswith(b"\x89PNG")
+    assert attempts == ["broken-red.tif", "healthy-red.tif"]
+
+
+def test_stac_compute_engine_all_processing_failures_are_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def search(
+            self, *, bbox: object, start: object, end: object, max_cloud: int
+        ) -> list[StacItem]:
+            return [
+                _stac_item(
+                    item_date=date(2025, 1, 1),
+                    item_id="broken-item-1",
+                    cloud_cover=1.0,
+                    assets={
+                        "B04": "broken-red-1.tif",
+                        "B08": "broken-nir-1.tif",
+                    },
+                ),
+                _stac_item(
+                    item_date=date(2025, 1, 1),
+                    item_id="broken-item-2",
+                    cloud_cover=2.0,
+                    assets={
+                        "B04": "broken-red-2.tif",
+                        "B08": "broken-nir-2.tif",
+                    },
+                ),
+            ]
+
+    def fake_load_ndvi_array(**_kwargs: object) -> np.ndarray:
+        raise StacProcessingError(
+            "Raster processing failed: opj_get_decoded_tile() failed"
+        )
+
+    monkeypatch.setattr(
+        stac_compute_engine, "load_ndvi_array", fake_load_ndvi_array
+    )
+
+    engine = StacComputeRasterEngine(client=cast(StacClient, FakeClient()))
+
+    with pytest.raises(StacUpstreamError) as exc:
+        engine.render_png(_raster_request())
+
+    assert exc.value.retryable is True
+    assert "all candidate STAC items" in str(exc.value)
+    assert "broken-item-1" in str(exc.value)
 
 
 def test_stac_compute_engine_renders_png_with_stats(
