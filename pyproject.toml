@@ -12,6 +12,7 @@ dependencies = [
   "django-prometheus>=2.3,<2.4",
   "django-redis>=5.4,<5.5",
   "httpx>=0.27,<0.29",
+  "matplotlib>=3.9,<3.11",
   "python-dotenv>=1.0,<2.0",
   "django-environ>=0.11,<0.14",
 ]
@@ -85,4 +86,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["rasterio", "rasterio.*", "PIL", "PIL.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["matplotlib", "matplotlib.*"]
 ignore_missing_imports = true

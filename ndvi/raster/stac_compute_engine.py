@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import io
 import logging
 from datetime import date, datetime, timedelta
 from typing import Final, Literal, NoReturn
 
 import numpy as np
 from django.conf import settings
-from PIL import Image
 from rest_framework.exceptions import ValidationError
 
 from ndvi.stac_client import (
@@ -23,6 +21,7 @@ from ndvi.stac_client import (
 )
 
 from .base import NdviRasterEngine, RasterRequest
+from .png import ndvi_to_png_bytes
 
 DEFAULT_TIMEOUT_SECONDS: Final[float] = 30.0
 DEFAULT_DATE_WINDOW_DAYS: Final[int] = 3
@@ -272,6 +271,7 @@ class StacComputeRasterEngine(NdviRasterEngine):
                 )
                 continue
 
+            self._log_ndvi_distribution(ndvi)
             return self._encode_png(ndvi)
 
         if processing_failures:
@@ -302,13 +302,23 @@ class StacComputeRasterEngine(NdviRasterEngine):
             },
         )
 
+    def _log_ndvi_distribution(self, ndvi: np.ndarray) -> None:
+        clean = ndvi.astype(np.float64)
+        ndvi_min = float(np.nanmin(clean))
+        ndvi_max = float(np.nanmax(clean))
+        ndvi_mean = float(np.nanmean(clean))
+        logger.info(
+            "NDVI stats | min=%s max=%s mean=%s",
+            ndvi_min,
+            ndvi_max,
+            ndvi_mean,
+        )
+        p2, p98 = np.nanpercentile(clean, (2, 98))
+        logger.info(
+            "NDVI percentiles | p2=%s p98=%s",
+            float(p2),
+            float(p98),
+        )
+
     def _encode_png(self, ndvi: np.ndarray) -> bytes:
-        clamped = np.clip(ndvi, -1.0, 1.0)
-        normalized = ((clamped + 1.0) / 2.0) * 255.0
-        channel = np.nan_to_num(normalized, nan=0.0).astype(np.uint8)
-        alpha = np.where(np.isfinite(clamped), 255, 0).astype(np.uint8)
-        rgba = np.stack([channel, channel, channel, alpha], axis=-1)
-        image = Image.fromarray(rgba, mode="RGBA")
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        return buffer.getvalue()
+        return ndvi_to_png_bytes(ndvi)

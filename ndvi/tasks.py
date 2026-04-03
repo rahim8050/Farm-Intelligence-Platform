@@ -128,6 +128,10 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             artifact.owner_id = job.owner_id
             artifact.last_error = None
             artifact.image.save(filename, ContentFile(content), save=False)
+            logger.info(
+                "NDVI raster saved at path=%s",
+                artifact.image.path or artifact.image.name,
+            )
             artifact.save()
         else:
             engine = get_engine(job.engine)
@@ -150,6 +154,10 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                     farm=job.farm, engine=job.engine, points=points
                 )
         job.mark_finished(NdviJob.JobStatus.SUCCESS)
+        logger.info(
+            "NDVI raster job completed successfully for farm_id=%s",
+            job.farm_id,
+        )
         ndvi_jobs_total.labels(
             status=NdviJob.JobStatus.SUCCESS,
             type=job.job_type,
@@ -182,6 +190,10 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             job.id,
             exc,
         )
+        logger.exception(
+            "NDVI raster job failed for farm_id=%s",
+            job.farm_id,
+        )
         job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
         ndvi_jobs_total.labels(
             status=NdviJob.JobStatus.FAILED,
@@ -191,6 +203,10 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
         return "invalid"
     except ValidationError as exc:
         logger.warning("ndvi.job.invalid job_id=%s err=%s", job.id, exc)
+        logger.exception(
+            "NDVI raster job failed for farm_id=%s",
+            job.farm_id,
+        )
         job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
         ndvi_jobs_total.labels(
             status=NdviJob.JobStatus.FAILED,
@@ -200,6 +216,10 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
         return "invalid"
     except Exception as exc:  # noqa: BLE001
         logger.exception("ndvi.job.failed job_id=%s err=%s", job.id, exc)
+        logger.exception(
+            "NDVI raster job failed for farm_id=%s",
+            job.farm_id,
+        )
         job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
         ndvi_jobs_total.labels(
             status=NdviJob.JobStatus.FAILED,

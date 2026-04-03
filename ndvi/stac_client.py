@@ -365,6 +365,19 @@ def load_ndvi_array(
 
     red_data = red.filled(np.nan).astype(np.float32)
     nir_data = nir.filled(np.nan).astype(np.float32)
+    logger.info("RED shape=%s", red_data.shape)
+    logger.info("NIR shape=%s", nir_data.shape)
+    logger.info("RED sample row=%s", np.round(red_data[0, :10], 6))
+    logger.info("NIR sample row=%s", np.round(nir_data[0, :10], 6))
+    _validate_band_variation(nir_data, "NIR")
+    _validate_band_variation(red_data, "RED")
+    logger.info(
+        "Bands | NIR min=%s max=%s | RED min=%s max=%s",
+        float(np.nanmin(nir_data)),
+        float(np.nanmax(nir_data)),
+        float(np.nanmin(red_data)),
+        float(np.nanmax(red_data)),
+    )
     denom = nir_data + red_data
     with np.errstate(divide="ignore", invalid="ignore"):
         ndvi = np.where(
@@ -373,6 +386,15 @@ def load_ndvi_array(
             np.nan,
         )
     return ndvi.astype(np.float32)
+
+
+def _validate_band_variation(data: np.ndarray, band_name: str) -> None:
+    """Ensure each band has spatial variation."""
+
+    min_val = float(np.nanmin(data))
+    max_val = float(np.nanmax(data))
+    if np.isclose(min_val, max_val):
+        raise StacProcessingError(f"Invalid {band_name} band: constant raster")
 
 
 @lru_cache(maxsize=1)
