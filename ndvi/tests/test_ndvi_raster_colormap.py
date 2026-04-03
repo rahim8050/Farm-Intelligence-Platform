@@ -56,9 +56,13 @@ def test_ndvi_to_png_bytes_mixed_values_do_not_render_all_white() -> None:
 def test_ndvi_to_rgb_maps_nan_to_zero_deterministically() -> None:
     ndvi = np.array([[np.nan, 0.1]], dtype=np.float32)
 
+    plt = pytest.importorskip("matplotlib.pyplot")
+    colormap = plt.get_cmap("RdYlGn")
     rgb = ndvi_to_rgb(ndvi)
+    zero_color = np.array(colormap(0.5)[:3] * 255, dtype=np.uint8)
 
-    assert np.array_equal(rgb[0, 0], rgb[0, 1])
+    assert np.array_equal(rgb[0, 0], zero_color)
+    assert not np.array_equal(rgb[0, 0], rgb[0, 1])
 
 
 def test_ndvi_to_rgb_rejects_non_float_input() -> None:
