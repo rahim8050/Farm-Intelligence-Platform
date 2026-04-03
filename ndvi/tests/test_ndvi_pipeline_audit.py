@@ -11,7 +11,12 @@ from django.http import HttpResponse
 
 from ndvi.engines.base import BBox
 from ndvi.raster.base import RasterRequest
-from ndvi.raster.png import NDVI_MAX, NDVI_MIN, ndvi_to_png_bytes
+from ndvi.raster.png import (
+    NDVI_MAX,
+    NDVI_MIN,
+    _fallback_rdylgn_bytes,
+    ndvi_to_png_bytes,
+)
 from ndvi.raster.stac_compute_engine import StacComputeRasterEngine
 from ndvi.stac_client import (
     StacClient,
@@ -74,14 +79,10 @@ def test_ndvi_pipeline_audit_synthetic_random() -> None:
     p2, p98 = np.percentile(ndvi, (2, 98))
     stretched = np.clip((ndvi - p2) / (p98 - p2 + 1e-6), 0.0, 1.0)
     _log_stage("Percentiles", p2=float(p2), p98=float(p98))
-    plt = pytest.importorskip("matplotlib.pyplot")
-    cmap = plt.get_cmap("RdYlGn")
-    colored_raw = cmap(norm)
-    colored_stretched = cmap(stretched)
-    assert colored_raw.shape[2] == 4
-    assert colored_stretched.shape[2] == 4
-    rgb_raw = (colored_raw[:, :, :3] * 255).astype(np.uint8)
-    rgb_stretched = (colored_stretched[:, :, :3] * 255).astype(np.uint8)
+    rgb_raw = _fallback_rdylgn_bytes(norm.astype(np.float32))
+    rgb_stretched = _fallback_rdylgn_bytes(stretched.astype(np.float32))
+    assert rgb_raw.shape[2] == 3
+    assert rgb_stretched.shape[2] == 3
     assert not np.all(rgb_raw == rgb_raw[0, 0])
     assert not np.all(rgb_stretched == rgb_stretched[0, 0])
     png_bytes = ndvi_to_png_bytes(ndvi)

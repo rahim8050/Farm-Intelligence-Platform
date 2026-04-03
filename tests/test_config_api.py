@@ -5,12 +5,18 @@ from decimal import Decimal
 from typing import Any
 from unittest.mock import patch
 
+import httpx
+from django.core.cache import caches
 from django.test import Client
 from rest_framework.exceptions import Throttled
+from rest_framework.parsers import JSONParser
+from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.test import APIRequestFactory
 
 from config.api.exceptions import _to_json_value, custom_exception_handler
 from config.api.openapi import remove_deprecated_integration_aliases
+from config.api.proxy import proxy_json_request
 from config.api.responses import error_response
 
 
@@ -83,3 +89,175 @@ def test_remove_deprecated_aliases_strips_deprecated_paths() -> None:
     assert "/api/v1/integrations/nextcloud/ping/" in updated["paths"]
     assert "/api/v1/integration/ping/" not in updated["paths"]
     assert "/api/v1/integrations/integrations/ping/" not in updated["paths"]
+
+
+def test_proxy_json_request_returns_503_when_upstream_missing() -> None:
+    request = Request(APIRequestFactory().get("/proxy"))
+
+    response = proxy_json_request(request, "", "/api/v1/upstream")
+
+    assert response is not None
+    assert response.status_code == 503
+    assert response.data["message"] == "Upstream service not configured"
+
+
+def test_proxy_json_request_missing_upstream_with_fallback() -> None:
+    request = Request(APIRequestFactory().get("/proxy"))
+
+    response = proxy_json_request(
+        request,
+        "",
+        "/api/v1/upstream",
+        fallback_on_error=True,
+    )
+
+    assert response is None
+
+
+@patch("config.api.proxy.httpx.request")
+def test_proxy_json_request_returns_cached_payload(
+    mock_request: Any,
+) -> None:
+    caches["default"].clear()
+    cached_payload = {"status": 0, "message": "OK", "data": {"cached": True}}
+    caches["default"].set("proxy-cache-key", cached_payload, timeout=60)
+    request = Request(APIRequestFactory().get("/proxy"))
+
+    response = proxy_json_request(
+        request,
+        "http://upstream",
+        "/api/v1/upstream",
+        cache_key="proxy-cache-key",
+        cache_ttl_s=60,
+    )
+
+    assert response is not None
+    assert response.status_code == 200
+    assert response.data == cached_payload
+    mock_request.assert_not_called()
+
+
+@patch("config.api.proxy.httpx.request")
+@patch("config.api.proxy.settings.PROXY_TIMEOUT_SECONDS", 10.0)
+def test_proxy_json_request_uses_request_data_for_post(
+    mock_request: Any,
+) -> None:
+    request = Request(
+        APIRequestFactory().post(
+            "/proxy",
+            {"value": 1},
+            format="json",
+            HTTP_AUTHORIZATION="Bearer token",
+        ),
+        parsers=[JSONParser()],
+    )
+    mock_request.return_value = httpx.Response(
+        status_code=201,
+        json={"status": 0, "message": "OK", "data": {"created": True}},
+        headers={"content-type": "application/json"},
+        request=httpx.Request("POST", "http://upstream/api/v1/upstream"),
+    )
+
+    response = proxy_json_request(
+        request, "http://upstream", "/api/v1/upstream"
+    )
+
+    assert response is not None
+    assert response.status_code == 201
+    mock_request.assert_called_once_with(
+        "POST",
+        "http://upstream/api/v1/upstream",
+        params={},
+        json={"value": 1},
+        headers={"authorization": "Bearer token"},
+        timeout=10.0,
+    )
+
+
+@patch("config.api.proxy.httpx.request")
+def test_proxy_json_request_handles_request_error_without_fallback(
+    mock_request: Any,
+) -> None:
+    request = Request(APIRequestFactory().get("/proxy"))
+    mock_request.side_effect = httpx.RequestError(
+        "boom",
+        request=httpx.Request("GET", "http://upstream/api/v1/upstream"),
+    )
+
+    response = proxy_json_request(
+        request, "http://upstream", "/api/v1/upstream"
+    )
+
+    assert response is not None
+    assert response.status_code == 503
+    assert response.data["message"] == "Upstream service unavailable"
+
+
+@patch("config.api.proxy.httpx.request")
+def test_proxy_json_request_handles_request_error_with_fallback(
+    mock_request: Any,
+) -> None:
+    request = Request(APIRequestFactory().get("/proxy"))
+    mock_request.side_effect = httpx.RequestError(
+        "boom",
+        request=httpx.Request("GET", "http://upstream/api/v1/upstream"),
+    )
+
+    response = proxy_json_request(
+        request,
+        "http://upstream",
+        "/api/v1/upstream",
+        fallback_on_error=True,
+    )
+
+    assert response is None
+
+
+@patch("config.api.proxy.httpx.request")
+def test_proxy_json_request_handles_invalid_json(
+    mock_request: Any,
+) -> None:
+    request = Request(APIRequestFactory().get("/proxy"))
+    upstream_response = httpx.Response(
+        status_code=200,
+        text="not-json",
+        headers={"content-type": "application/json"},
+        request=httpx.Request("GET", "http://upstream/api/v1/upstream"),
+    )
+
+    def raise_value_error() -> Any:
+        raise ValueError("invalid")
+
+    upstream_response.json = raise_value_error  # type: ignore[assignment]
+    mock_request.return_value = upstream_response
+
+    response = proxy_json_request(
+        request, "http://upstream", "/api/v1/upstream"
+    )
+
+    assert response is not None
+    assert response.status_code == 502
+    assert response.data["message"] == "Upstream returned invalid JSON"
+
+
+@patch("config.api.proxy.httpx.request")
+def test_proxy_json_request_returns_non_json_response_text(
+    mock_request: Any,
+) -> None:
+    request = Request(APIRequestFactory().get("/proxy"))
+    mock_request.return_value = httpx.Response(
+        status_code=202,
+        text="plain-text",
+        headers={"content-type": "text/plain"},
+        request=httpx.Request("GET", "http://upstream/api/v1/upstream"),
+    )
+
+    response = proxy_json_request(
+        request, "http://upstream", "/api/v1/upstream"
+    )
+
+    assert response is not None
+    assert response.status_code == 202
+    assert response.content_type == "text/plain"
+    assert response.data == "plain-text"
+    assert response.data == "plain-text"
