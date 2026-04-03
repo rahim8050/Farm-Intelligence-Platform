@@ -200,7 +200,7 @@ def test_stac_compute_engine_missing_stats_raises_not_found(
     monkeypatch.setattr(
         stac_compute_engine,
         "load_ndvi_array",
-        lambda **_kwargs: np.array([[0.2]], dtype=np.float32),
+        lambda **_kwargs: np.array([[0.2, 0.3], [0.4, 0.1]], dtype=np.float32),
     )
     monkeypatch.setattr(
         stac_compute_engine,
@@ -255,7 +255,10 @@ def test_stac_compute_engine_skips_processing_failure_and_uses_next_item(
             raise StacProcessingError(
                 "Raster processing failed: opj_get_decoded_tile() failed"
             )
-        return np.array([[0.2]], dtype=np.float32)
+        return np.array(
+            [[0.2, 0.25], [0.35, 0.1]],
+            dtype=np.float32,
+        )
 
     monkeypatch.setattr(
         stac_compute_engine, "load_ndvi_array", fake_load_ndvi_array
@@ -342,7 +345,10 @@ def test_stac_compute_engine_renders_png_with_stats(
     monkeypatch.setattr(
         stac_compute_engine,
         "load_ndvi_array",
-        lambda **_kwargs: np.array([[0.2]], dtype=np.float32),
+        lambda **_kwargs: np.array(
+            [[0.2, 0.3], [0.5, 0.1]],
+            dtype=np.float32,
+        ),
     )
     monkeypatch.setattr(
         stac_compute_engine,
@@ -381,7 +387,10 @@ def test_stac_compute_engine_falls_back_to_suffixed_assets(
     def fake_load_ndvi_array(**kwargs: object) -> np.ndarray:
         captured["red_href"] = cast(str, kwargs["red_href"])
         captured["nir_href"] = cast(str, kwargs["nir_href"])
-        return np.array([[0.2]], dtype=np.float32)
+        return np.array(
+            [[0.2, 0.45], [0.5, 0.1]],
+            dtype=np.float32,
+        )
 
     monkeypatch.setattr(
         stac_compute_engine, "load_ndvi_array", fake_load_ndvi_array
