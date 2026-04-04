@@ -30,6 +30,7 @@ from .services import (
     dispatch_ndvi_job,
     enforce_quota,
     enqueue_job,
+    get_default_colormap_normalization,
     get_default_lookback_days,
     get_default_max_cloud,
     get_default_ndvi_engine_name,
@@ -100,6 +101,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             if raster_size * raster_size > 1024 * 1024:
                 raise ValidationError("Raster size exceeds pixel limit.")
             max_cloud = job.max_cloud or get_default_max_cloud()
+            colormap_norm = get_default_colormap_normalization()
             content, content_hash = render_ndvi_png(
                 farm=job.farm,
                 bbox=bbox,
@@ -108,6 +110,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 max_cloud=max_cloud,
                 engine_name=job.engine,
                 job_id=job.id,
+                colormap_normalization=colormap_norm,
             )
             filename = (
                 f"ndvi_raster_{job.farm_id}_{raster_date}_{raster_size}_"

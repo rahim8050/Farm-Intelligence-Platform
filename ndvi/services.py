@@ -21,6 +21,7 @@ from .engines.base import BBox, NDVIEngine, NdviPoint
 from .engines.sentinelhub import SentinelHubEngine
 from .metrics import ndvi_cache_hit_total, ndvi_jobs_total
 from .models import NdviJob, NdviObservation
+from .raster.base import ColormapNormalization
 from .raster.registry import resolve_raster_engine_name
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ DEFAULT_LOOKBACK_DAYS = 14
 DEFAULT_LOCK_TIMEOUT_SECONDS = 60
 DEFAULT_CACHE_TTL_TIMESERIES_SECONDS = 86400
 DEFAULT_CACHE_TTL_LATEST_SECONDS = 21600
+DEFAULT_COLORMAP_NORMALIZATION = "histogram"
 
 
 def _get_int_setting(name: str, default: int) -> int:
@@ -81,6 +83,26 @@ def get_default_lookback_days() -> int:
     return _get_int_setting(
         "NDVI_DEFAULT_LOOKBACK_DAYS", DEFAULT_LOOKBACK_DAYS
     )
+
+
+def get_default_colormap_normalization() -> ColormapNormalization:
+    """Get the default colormap normalization mode from settings."""
+    mode_str = str(
+        getattr(
+            settings,
+            "NDVI_COLORMAP_NORMALIZATION",
+            DEFAULT_COLORMAP_NORMALIZATION,
+        )
+    ).lower()
+    try:
+        return ColormapNormalization(mode_str)
+    except ValueError:
+        logger.warning(
+            "Invalid NDVI_COLORMAP_NORMALIZATION '%s', "
+            "using default 'histogram'",
+            mode_str,
+        )
+        return ColormapNormalization.HISTOGRAM
 
 
 def get_lock_timeout_seconds() -> int:

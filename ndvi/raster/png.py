@@ -3,6 +3,13 @@
 The NDVI raster endpoint already bounds raster dimensions at the request layer.
 These helpers validate array shape and dtype, normalize values to the expected
 range, apply the canonical red-yellow-green colormap, and encode a binary PNG.
+
+Colormap Normalization Modes
+-----------------------------
+- histogram: Per-image min-max stretching. Shows maximum detail within each
+  image by utilizing the full colormap spectrum for the actual NDVI range.
+- fixed: Fixed NDVI range mapping [-1.0, 1.0] → [0.0, 1.0]. Provides consistent
+  colors across different images (e.g., 0.5 always maps to yellow).
 """
 
 from __future__ import annotations
@@ -15,6 +22,8 @@ from typing import Any, Final
 
 import numpy as np
 from PIL import Image
+
+from ndvi.raster.base import ColormapNormalization
 
 NDVI_MIN: Final[float] = -1.0
 NDVI_MAX: Final[float] = 1.0
@@ -93,9 +102,47 @@ def _load_matplotlib_colormaps() -> Any:
     return colormaps
 
 
-def ndvi_to_rgb(ndvi: np.ndarray) -> np.ndarray:
-    """Map a 2D NDVI array into an RGB uint8 image using RdYlGn."""
+def _normalize_ndvi(
+    ndvi_float: np.ndarray,
+    mode: ColormapNormalization,
+) -> np.ndarray:
+    """Normalize NDVI values to [0, 1] range for colormap application.
 
+    Args:
+        ndvi_float: 2D NDVI array (already validated and clipped to [-1, 1]).
+        mode: Normalization strategy.
+
+    Returns:
+        Normalized array in [0, 1] range.
+    """
+    if mode == ColormapNormalization.HISTOGRAM:
+        ndvi_min = float(np.nanmin(ndvi_float))
+        ndvi_max = float(np.nanmax(ndvi_float))
+        if np.isclose(ndvi_max, ndvi_min, atol=1e-6):
+            raise ValueError("NDVI has no variation")
+        return (ndvi_float - ndvi_min) / (ndvi_max - ndvi_min)
+    else:
+        # Fixed mapping: [-1, 1] → [0, 1]
+        return (ndvi_float + 1.0) / 2.0
+
+
+def ndvi_to_rgb(
+    ndvi: np.ndarray,
+    colormap_normalization: ColormapNormalization = (
+        ColormapNormalization.HISTOGRAM
+    ),
+) -> np.ndarray:
+    """Map a 2D NDVI array into an RGB uint8 image using RdYlGn.
+
+    Args:
+        ndvi: 2D NDVI array with float32/float64 dtype.
+        colormap_normalization: Strategy for mapping NDVI to colormap.
+            HISTOGRAM stretches the actual NDVI range to use full colormap.
+            FIXED uses a constant [-1, 1] → [0, 1] mapping.
+
+    Returns:
+        RGB uint8 array with shape (H, W, 3).
+    """
     ndvi_float = _validated_ndvi(ndvi)
     np.nan_to_num(
         ndvi_float,
@@ -105,10 +152,7 @@ def ndvi_to_rgb(ndvi: np.ndarray) -> np.ndarray:
         neginf=NDVI_MIN,
     )
     np.clip(ndvi_float, NDVI_MIN, NDVI_MAX, out=ndvi_float)
-    normalized = (ndvi_float + 1.0) / 2.0
-
-    if np.isclose(np.nanmax(ndvi_float), np.nanmin(ndvi_float), atol=1e-6):
-        raise ValueError("NDVI has no variation")
+    normalized = _normalize_ndvi(ndvi_float, colormap_normalization)
 
     try:
         colormaps = _load_matplotlib_colormaps()
@@ -138,7 +182,21 @@ def rgb_to_png_bytes(rgb: np.ndarray) -> bytes:
     return buffer.getvalue()
 
 
-def ndvi_to_png_bytes(ndvi: np.ndarray) -> bytes:
-    """Convert a validated NDVI array into deterministic PNG bytes."""
+def ndvi_to_png_bytes(
+    ndvi: np.ndarray,
+    colormap_normalization: ColormapNormalization = (
+        ColormapNormalization.HISTOGRAM
+    ),
+) -> bytes:
+    """Convert a validated NDVI array into deterministic PNG bytes.
 
-    return rgb_to_png_bytes(ndvi_to_rgb(ndvi))
+    Args:
+        ndvi: 2D NDVI array with float32/float64 dtype.
+        colormap_normalization: Strategy for mapping NDVI to colormap.
+
+    Returns:
+        Binary PNG bytes.
+    """
+    return rgb_to_png_bytes(
+        ndvi_to_rgb(ndvi, colormap_normalization=colormap_normalization)
+    )

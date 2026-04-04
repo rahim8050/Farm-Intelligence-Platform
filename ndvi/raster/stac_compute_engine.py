@@ -20,7 +20,7 @@ from ndvi.stac_client import (
     resolve_asset_href_candidates,
 )
 
-from .base import NdviRasterEngine, RasterRequest
+from .base import ColormapNormalization, NdviRasterEngine, RasterRequest
 from .png import ndvi_to_png_bytes
 
 DEFAULT_TIMEOUT_SECONDS: Final[float] = 30.0
@@ -272,7 +272,7 @@ class StacComputeRasterEngine(NdviRasterEngine):
                 continue
 
             self._log_ndvi_distribution(ndvi)
-            return self._encode_png(ndvi)
+            return self._encode_png(ndvi, request.colormap_normalization)
 
         if processing_failures:
             summary = _summarize_processing_failures(processing_failures)
@@ -320,5 +320,18 @@ class StacComputeRasterEngine(NdviRasterEngine):
             float(p98),
         )
 
-    def _encode_png(self, ndvi: np.ndarray) -> bytes:
-        return ndvi_to_png_bytes(ndvi)
+    def _encode_png(
+        self,
+        ndvi: np.ndarray,
+        colormap_normalization: ColormapNormalization,
+    ) -> bytes:
+        """Encode NDVI array to PNG bytes with specified normalization.
+
+        Args:
+            ndvi: 2D NDVI array.
+            colormap_normalization: Normalization strategy.
+
+        Returns:
+            PNG binary bytes.
+        """
+        return ndvi_to_png_bytes(ndvi, colormap_normalization)

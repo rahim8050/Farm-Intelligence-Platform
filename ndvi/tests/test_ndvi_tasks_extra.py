@@ -235,6 +235,7 @@ def test_run_ndvi_job_raster_size_and_error_recorded(
         max_cloud: object,
         engine_name: object,
         job_id: int | None = None,
+        colormap_normalization: object = None,
     ) -> tuple[bytes, str]:
         captured["size"] = size
         raise SentinelHubRasterError(

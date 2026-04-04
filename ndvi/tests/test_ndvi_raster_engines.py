@@ -36,9 +36,11 @@ CLIENT_SECRET = secrets.token_urlsafe(12)
 
 @override_settings(NDVI_STAC_COLLECTION="collection")
 def test_stac_compute_engine_encodes_png() -> None:
+    from ndvi.raster.base import ColormapNormalization
+
     engine = StacComputeRasterEngine()
     ndvi = np.array([[0.0, 0.5], [1.0, -1.0]], dtype=np.float32)
-    png = engine._encode_png(ndvi)
+    png = engine._encode_png(ndvi, ColormapNormalization.HISTOGRAM)
     assert png.startswith(b"\x89PNG")
 
 
