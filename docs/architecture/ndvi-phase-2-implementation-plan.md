@@ -34,6 +34,15 @@ worker execution model unchanged.
 Create a single dispatch boundary for NDVI-related async work before adding any
 Redis Streams behavior.
 
+### Current Status (as of April 4, 2026)
+
+- ✅ Dispatch helpers implemented (`dispatch_ndvi_job`, `dispatch_farm_state_coverage`)
+- ✅ All 9 call sites migrated from direct `.delay()` to dispatch helpers
+- ✅ `NDVI_QUEUE_BACKEND` setting added with `get_ndvi_queue_backend()` helper
+- ✅ Tests exist for helper functions
+- ❌ **Routing switch not implemented** (dispatch functions ignore setting value)
+- ❌ Routing tests missing
+
 ### Work
 
 - Add one NDVI dispatch helper in `ndvi/services.py`.
@@ -43,6 +52,7 @@ Redis Streams behavior.
 - Introduce a routing switch in settings, for example:
   - `NDVI_QUEUE_BACKEND=celery`
   - future value: `NDVI_QUEUE_BACKEND=stream`
+- **Routing switch must check `get_ndvi_queue_backend()` and branch accordingly**
 
 ### File targets
 
@@ -56,6 +66,13 @@ Redis Streams behavior.
 - No runtime behavior change yet.
 - All NDVI enqueue behavior flows through one place.
 - Future Redis Streams logic can be added without editing every call site.
+
+### Remaining Work to Complete Stage 1
+
+1. Add routing switch to `dispatch_ndvi_job()` (~8 lines)
+2. Add routing switch to `dispatch_farm_state_coverage()` (~8 lines)
+3. Add 4 routing tests (~30 lines)
+4. **Estimated effort:** ~1 hour
 
 ## Stage 2 - Choose the transport model
 
@@ -103,10 +120,31 @@ Publish NDVI jobs into a dedicated stream using deterministic identifiers.
   - `job_type`
   - serialized params
   - enqueue timestamp
+  - `colormap_normalization` (added April 2026: "histogram" or "fixed")
 - Reuse `request_hash` from `enqueue_job(...)` as the idempotency key.
 - Add helper functions such as:
   - `publish_ndvi_job(job: NdviJob) -> str`
   - `publish_farm_state_coverage(...) -> str`
+
+### Stream Payload Schema (Updated April 2026)
+
+```python
+{
+    "job_id": int,                    # NdviJob.id
+    "request_hash": str,              # Idempotency key
+    "farm_id": int,                   # Farm reference
+    "owner_id": int,                  # Job owner
+    "engine": str,                    # "stac" or "sentinelhub"
+    "job_type": str,                  # JobType enum value
+    "start": str | None,              # ISO date or null
+    "end": str | None,                # ISO date or null
+    "step_days": int | None,          # Raster size or step days
+    "max_cloud": int | None,          # Cloud cover threshold
+    "lookback_days": int | None,      # Lookback window
+    "colormap_normalization": str,    # "histogram" or "fixed" (added Apr 2026)
+    "enqueue_timestamp": float,       # When published to stream
+}
+```
 
 ### File targets
 
@@ -152,6 +190,46 @@ Consume stream entries safely and enqueue normal Celery tasks.
 - NDVI ingestion becomes durable and observable before execution reaches Celery.
 - Recovery logic is explicit rather than hidden inside broker internals.
 
+### Error Handling Strategy (Added April 2026)
+
+#### Celery Enqueue Failures (e.g., Sentinel Failover)
+When consumer fails to enqueue to Celery (e.g., during 55s Sentinel failover):
+1. Retry up to 3 times with exponential backoff (1s, 2s, 4s)
+2. If all retries fail: DO NOT XACK the entry
+3. Entry remains pending in stream
+4. XPENDING/XCLAIM will reclaim it later
+5. Consumer will retry on next read
+
+#### Stream Entry Processing Errors
+- **Transient errors** (network, timeout): Retry 3x, then leave pending
+- **Permanent errors** (invalid data, missing assets): XACK and send to DLQ
+- **Structural errors** (schema violations): XACK, log, and alert
+
+#### Error Classification
+Consumer must distinguish error types for proper retry/DLQ routing:
+- `no_items`: STAC search returned nothing → Retry
+- `no_best_item`: No items within date window → Retry
+- `missing_assets`: Items lack required bands → DLQ
+- `processing_failed`: Raster processing error → Retry
+- `empty_stats`: NDVI computation returned empty → DLQ
+
+### Idempotency Strategy (Added April 2026)
+
+#### Primary: request_hash (Existing)
+- NdviJob model has UniqueConstraint on (owner, farm, engine, request_hash)
+- Duplicate jobs with same request_hash are rejected at DB level
+- Consumer can safely retry - DB enforces idempotency
+
+#### Secondary: Stream entry ID (New)
+- Each stream entry gets unique ID from Redis (XADD returns it)
+- Consumer tracks processed entry IDs in local cache (LRU, 10k entries)
+- If entry ID seen before, skip processing (already handled)
+
+#### Tertiary: XPENDING deduplication
+- Consumer checks XPENDING before processing
+- If entry already pending to this consumer, skip (another instance handling it)
+- If entry pending to dead consumer, XCLAIM and process
+
 ## Stage 5 - Add settings and feature flags
 
 ### Goal
@@ -162,7 +240,7 @@ Keep rollout reversible and configurable.
 
 Add settings in `config/settings.py`, for example:
 
-- `NDVI_QUEUE_BACKEND`
+- `NDVI_QUEUE_BACKEND` (✅ already added)
 - `NDVI_STREAM_NAME`
 - `NDVI_STREAM_GROUP`
 - `NDVI_STREAM_CONSUMER`
@@ -170,6 +248,20 @@ Add settings in `config/settings.py`, for example:
 - `NDVI_STREAM_CLAIM_IDLE_MS`
 - `NDVI_STREAM_MAXLEN`
 - `NDVI_STREAM_DLQ_NAME`
+
+### Settings Reference Table (Updated April 2026)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `NDVI_QUEUE_BACKEND` | `"celery"` | Dispatch backend: "celery" or "stream" |
+| `NDVI_STREAM_NAME` | `"ndvi_jobs"` | Redis stream name for NDVI jobs |
+| `NDVI_STREAM_GROUP` | `"ndvi_workers"` | Consumer group name |
+| `NDVI_STREAM_CONSUMER` | `"consumer_1"` | This consumer's identifier |
+| `NDVI_STREAM_BLOCK_MS` | `5000` | XREADGROUP block timeout (ms) |
+| `NDVI_STREAM_CLAIM_IDLE_MS` | `30000` | Time before entry considered stale (ms) |
+| `NDVI_STREAM_MAXLEN` | `10000` | Max stream length before trimming |
+| `NDVI_STREAM_DLQ_NAME` | `"ndvi_jobs_dlq"` | Dead-letter stream name |
+| `NDVI_STREAM_DLQ_MAXLEN` | `1000` | Max DLQ length before trimming |
 
 ### Defaults
 
@@ -264,6 +356,25 @@ at once. Good candidates:
 - `enqueue_weekly_gap_fill()` in `ndvi/tasks.py`
 
 These are safer than immediately moving every user-triggered NDVI path.
+
+### Rollback Strategy (Added April 2026)
+
+#### Fast Rollback (Settings Change Only)
+Stream mode is controlled entirely by `NDVI_QUEUE_BACKEND` setting.
+Rollback requires no code deployment:
+
+1. Set `NDVI_QUEUE_BACKEND=celery` in environment
+2. Restart Django processes
+3. All dispatch reverts to direct Celery calls
+4. Stream consumer can be stopped independently
+
+#### Rollback Triggers
+Rollback immediately if any of these occur:
+- Error rate increases > 5% after enabling stream mode
+- Stream lag grows continuously (backlog not draining)
+- Consumer crash loops (>3 restarts in 10 minutes)
+- Celery task failures increase after stream enqueue
+- DLQ volume grows faster than 10 entries/minute
 
 ## Recommended first patch set
 

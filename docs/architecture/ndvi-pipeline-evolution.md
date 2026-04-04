@@ -23,6 +23,13 @@
 - **Failover validation:** stop the master, confirm Sentinel election, observe Celery reconnect logs, and run farm-state tasks during failover to ensure success.
 - **Checkpoint:** Sentinel metrics (`redis_sentinel_master_status`, `redis_sentinel_master_ok_sentinels`) are in Prometheus before moving on.
 
+#### Known Limitations (Added April 2026)
+- **Celery failover recovery time:** ~55 seconds
+  - Acceptable for background jobs (NDVI, farm state coverage)
+  - Not suitable for latency-sensitive task dispatch (<10-15s target)
+  - If real-time dispatch is required, tune Celery reconnect behavior in future work
+- **URL conversion complexity:** `config/settings.py` converts `redis-sentinel://` to `sentinel://` for Celery compatibility; monitor for breakage on Celery upgrades
+
 ### Phase 2 – Redis Streams for NDVI (Next phase)
 **Objective:** Give NDVI coverage jobs durable, observable queue semantics without touching the rest of Celery.
 
@@ -37,18 +44,17 @@
   - Monitor `XPENDING` thresholds; throttle producers/backoff when backlog grows.
   - Trim main stream (e.g., `MAXLEN ~10000` or 12h) and dead-letter stream (e.g., 100 entries/7 days).
 
-### Phase 3 – Observability
-**Objective:** Tie Grafana to real queue health, eliminating false latency.
+### Phase 3 – Observability (MERGED into Phase 2)
 
-- Export Prometheus metrics:
-  - `redis_stream_pending_entries{group="ndvi_stream"}`
-  - `redis_stream_pending_age_max`
-  - `ndvi_stream_consumer_heartbeat`
-  - `ndvi_stream_consumer_failures_total`
-  - Celery histograms for NDVI task runtime.
-- Update Grafana:
-  - Replace stale `/farm-state/GET` latency lines with stream lag + Celery runtime panels.
-  - Add alerting that fires only when stream lag **and** Celery failures rise together.
+**Status:** Observability is not a separate phase. It must be implemented alongside
+the stream producer/consumer to ensure stream adoption is measurable from day one.
+
+All Phase 3 requirements are now tracked in Phase 2 Stage 6 of the implementation plan.
+
+**Original requirements (now in Phase 2):**
+- Export Prometheus metrics for stream health
+- Update Grafana dashboards with stream lag panels
+- Add alerting for stream lag + Celery failures
 
 ### Phase 4 – Kafka (Future / Conditional)
 **Objective:** Transition to Kafka only if scale demands it.
@@ -58,6 +64,15 @@
   2. Need for durable replay across multiple services (NDVI, Nextcloud, analytics).
   3. Demand for partitioned/fan-out consumption beyond Redis Streams' capabilities.
 - Once triggered, Kafka topics (`ndvi-requests`, `ndvi-results`) would replace the stream queue.
+
+#### Re-evaluation Schedule (Added April 2026)
+Re-assess Kafka need when:
+1. Redis stream lag consistently > 1000 entries for 7+ days
+2. Pending age > 5× job runtime for 7+ days
+3. Multiple services require NDVI data fan-out
+4. Replay requirements exceed Redis Streams capabilities
+
+**Earliest re-evaluation date:** Q3 2026 (6 months after stream rollout)
 
 ## 4. Operational considerations
 - **Failure modes:**

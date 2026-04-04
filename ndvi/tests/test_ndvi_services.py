@@ -4,7 +4,7 @@ from __future__ import annotations
 import secrets
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Protocol
+from typing import Any, Protocol
 from unittest.mock import patch
 
 import pytest
@@ -86,6 +86,15 @@ def test_dispatch_ndvi_job_uses_celery_delay() -> None:
     mock_delay.assert_called_once_with(123)
 
 
+def test_dispatch_ndvi_job_raises_when_backend_is_stream(
+    settings: Any,
+) -> None:
+    settings.NDVI_QUEUE_BACKEND = "stream"
+
+    with pytest.raises(NotImplementedError, match="Redis Streams backend"):
+        dispatch_ndvi_job(123)
+
+
 def test_dispatch_farm_state_coverage_uses_celery_delay() -> None:
     target_date = date(2025, 1, 3)
 
@@ -103,6 +112,21 @@ def test_dispatch_farm_state_coverage_uses_celery_delay() -> None:
         target_date="2025-01-03",
         threshold=0.4,
     )
+
+
+def test_dispatch_farm_state_coverage_raises_when_backend_is_stream(
+    settings: Any,
+) -> None:
+    settings.NDVI_QUEUE_BACKEND = "stream"
+    target_date = date(2025, 1, 3)
+
+    with pytest.raises(NotImplementedError, match="Redis Streams backend"):
+        dispatch_farm_state_coverage(
+            farm_id=7,
+            engine="stac",
+            target_date=target_date,
+            threshold=0.4,
+        )
 
 
 def test_normalize_timeseries_params_validation() -> None:

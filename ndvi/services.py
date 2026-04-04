@@ -471,8 +471,24 @@ def enqueue_job(
 
 
 def dispatch_ndvi_job(job: NdviJob | int) -> None:
-    # Stage 1 keeps the existing Celery dispatch path intact. Later queue
-    # backends should branch here instead of at every call site.
+    """Dispatch an NDVI job to the configured queue backend.
+
+    Args:
+        job: NdviJob instance or job ID to dispatch.
+
+    Raises:
+        NotImplementedError: If NDVI_QUEUE_BACKEND is set to "stream"
+            (not yet implemented).
+    """
+    backend = get_ndvi_queue_backend()
+
+    if backend == "stream":
+        raise NotImplementedError(
+            "Redis Streams backend not yet implemented. "
+            "Set NDVI_QUEUE_BACKEND=celery"
+        )
+
+    # Celery backend (default)
     from .tasks import run_ndvi_job
 
     job_id = job.id if isinstance(job, NdviJob) else int(job)
@@ -486,8 +502,27 @@ def dispatch_farm_state_coverage(
     target_date: date,
     threshold: float,
 ) -> None:
-    # Coverage jobs still use Celery directly in Stage 1; this helper creates
-    # a single routing boundary for the later Redis Streams work.
+    """Dispatch a farm state coverage job to the configured queue backend.
+
+    Args:
+        farm_id: ID of the farm to compute coverage for.
+        engine: NDVI engine to use (default from settings).
+        target_date: Target date for coverage computation.
+        threshold: Coverage threshold for state classification.
+
+    Raises:
+        NotImplementedError: If NDVI_QUEUE_BACKEND is set to "stream"
+            (not yet implemented).
+    """
+    backend = get_ndvi_queue_backend()
+
+    if backend == "stream":
+        raise NotImplementedError(
+            "Redis Streams backend not yet implemented. "
+            "Set NDVI_QUEUE_BACKEND=celery"
+        )
+
+    # Celery backend (default)
     from .tasks import compute_farm_state_coverage
 
     compute_farm_state_coverage.delay(
