@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 import logging
 import math
+import random
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -480,6 +482,55 @@ class StacClient:
         self.max_items = max_items or DEFAULT_MAX_ITEMS
         self._http = httpx.Client(timeout=self.timeout_seconds)
 
+        # Rate limiting configuration
+        self._request_interval = float(
+            getattr(settings, "NDVI_STAC_REQUEST_INTERVAL_SECS", 10.0)
+        )
+        self._jitter_min = float(
+            getattr(settings, "NDVI_STAC_JITTER_MIN_SECS", 1.0)
+        )
+        self._jitter_max = float(
+            getattr(settings, "NDVI_STAC_JITTER_MAX_SECS", 5.0)
+        )
+        self._last_request_time = 0.0
+
+    def _apply_throttle(self) -> None:
+        """Apply rate limiting with jitter to avoid WAF blocks.
+
+        Waits if the time since the last request is less than the configured
+        interval, then adds random jitter to prevent pattern detection.
+
+        Configuration (via Django settings):
+            NDVI_STAC_REQUEST_INTERVAL_SECS: Min secs between requests
+                (default: 10)
+            NDVI_STAC_JITTER_MIN_SECS: Min jitter in seconds (default: 1)
+            NDVI_STAC_JITTER_MAX_SECS: Max jitter in seconds (default: 5)
+        """
+        now = time.monotonic()
+        elapsed = now - self._last_request_time
+
+        # Wait if we're requesting too fast
+        if elapsed < self._request_interval:
+            wait_time = self._request_interval - elapsed
+            logger.debug(
+                "STAC throttling: waiting %.2fs before next request",
+                wait_time,
+            )
+            time.sleep(wait_time)
+
+        # Add jitter to prevent pattern detection
+        # Not for cryptographic use, just to avoid WAF pattern detection
+        jitter = random.uniform(self._jitter_min, self._jitter_max)  # noqa: S311
+        logger.debug(
+            "STAC request: adding %.2fs jitter (range: %.1f-%.1fs)",
+            jitter,
+            self._jitter_min,
+            self._jitter_max,
+        )
+        time.sleep(jitter)
+
+        self._last_request_time = time.monotonic()
+
     def search(
         self,
         *,
@@ -511,12 +562,15 @@ class StacClient:
         next_payload: dict[str, Any] | None = payload
 
         while next_url and len(items) < self.max_items:
+            # Apply rate limiting with jitter before each request
+            self._apply_throttle()
+
             response = self._request(
                 next_method,
                 next_url,
                 json=next_payload,
             )
-            data = response.json()
+            data = self._parse_json_response(response)
             parsed = self._parse_items(data)
             items.extend(filter_items_by_cloud(parsed, max_cloud))
             next_url, next_method, next_payload = self._next_link(data)
@@ -565,6 +619,39 @@ class StacClient:
         if len(normalized) > MAX_ERROR_SNIPPET_CHARS:
             normalized = f"{normalized[:MAX_ERROR_SNIPPET_CHARS]}..."
         return normalized
+
+    def _parse_json_response(
+        self,
+        response: httpx.Response,
+    ) -> dict[str, Any]:
+        """Parse JSON response with graceful handling for empty bodies.
+
+        Args:
+            response: HTTP response from STAC API.
+
+        Returns:
+            Parsed JSON as dict.
+
+        Raises:
+            StacUpstreamError: If response is empty or invalid JSON.
+        """
+        content = response.content
+        if not content or len(content.strip()) == 0:
+            raise StacUpstreamError(
+                f"STAC API returned empty response body "
+                f"(status={response.status_code})",
+                retryable=True,
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            snippet = self._response_snippet(response)
+            body = snippet or "<empty>"
+            raise StacUpstreamError(
+                f"STAC API returned invalid JSON "
+                f"(status={response.status_code}, body={body})",
+                retryable=True,
+            ) from exc
 
     def _parse_items(self, data: dict[str, Any]) -> list[StacItem]:
         items: list[StacItem] = []

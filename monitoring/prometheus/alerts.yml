@@ -217,3 +217,90 @@ groups:
         annotations:
           summary: "Celery backlog high"
           description: "More than 10 Celery tasks are in-progress."
+
+  - name: system
+    rules:
+      - alert: MemoryUsageHigh
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory usage high"
+          description: "System memory usage > 85% for 10m."
+
+      - alert: MemoryUsageCritical
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Memory usage critical"
+          description: "System memory usage > 95% for 5m. OOM killer may activate."
+
+      - alert: DiskSpaceLowRoot
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Root disk space low"
+          description: "Root filesystem < 15% free on {{ $labels.instance }}."
+
+      - alert: SwapUsageHigh
+        expr: |
+          (node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes) / node_memory_SwapTotal_bytes > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Swap usage high"
+          description: "Swap usage > 50% on {{ $labels.instance }}."
+
+  - name: nextcloud
+    rules:
+      - alert: NextcloudLogFileLarge
+        expr: |
+          (node_filesystem_size_bytes{mountpoint="/var/www/html/nextcloud/data"} -
+           node_filesystem_avail_bytes{mountpoint="/var/www/html/nextcloud/data"}) > 500 * 1024 * 1024
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nextcloud data partition large"
+          description: "Nextcloud data partition > 500MB used. Check log rotation."
+
+      - alert: NextcloudHighRequestRate
+        expr: |
+          rate(http_request_duration_seconds_count{job="nextcloud"}[5m]) > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nextcloud request rate high"
+          description: "Nextcloud receiving > 50 req/s for 10m."
+
+  - name: redis
+    rules:
+      - alert: RedisMemoryNearLimit
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory near limit"
+          description: "Redis using > 85% of maxmemory limit."
+
+      - alert: RedisEvictionStarted
+        expr: |
+          rate(redis_evicted_keys_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis evicting keys"
+          description: "Redis is evicting keys due to maxmemory limit."

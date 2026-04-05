@@ -222,18 +222,21 @@ Behavior highlights:
 Settings read from `config/settings.py` (non-exhaustive; see that file for full
 list):
 
-- `NDVI_ENGINE`
+- `NDVI_ENGINE` (default: `sentinelhub`; set to `stac` for STAC backend)
+- `NDVI_QUEUE_BACKEND` (default: `celery`; future: `stream` for Redis Streams)
 - `NDVI_MAX_AREA_KM2`, `NDVI_MAX_DATERANGE_DAYS`
 - `NDVI_DEFAULT_STEP_DAYS`, `NDVI_DEFAULT_MAX_CLOUD`, `NDVI_DEFAULT_LOOKBACK_DAYS`
 - `NDVI_CACHE_TTL_TIMESERIES_SECONDS`, `NDVI_CACHE_TTL_LATEST_SECONDS`
 - `NDVI_LOCK_TIMEOUT_SECONDS`
 - `NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS`
+- `NDVI_REQUEST_TIMEOUT_SECONDS` (HTTP request timeout for NDVI service calls)
 - Raster settings:
   - `NDVI_RASTER_ENGINE_PATH`, `NDVI_RASTER_ENGINE_NAME`
-  - `NDVI_RASTER_ENGINE_PATH_STAC`
   - `NDVI_RASTER_DEFAULT_SIZE`, `NDVI_RASTER_MAX_SIZE`
   - `NDVI_RASTER_MANUAL_QUEUE_COOLDOWN_SECONDS`
   - `NDVI_RASTER_CACHE_TTL_SECONDS`
+- Colormap normalization (added Apr 2026):
+  - `NDVI_COLORMAP_NORMALIZATION` (default: `histogram`; or `fixed`)
 
 STAC settings (used when `NDVI_ENGINE=stac` or `engine=stac`):
 - `NDVI_STAC_API_URL` (default: `https://stac.dataspace.copernicus.eu/v1/`)
@@ -243,6 +246,15 @@ STAC settings (used when `NDVI_ENGINE=stac` or `engine=stac`):
 - `NDVI_STAC_ASSET_RED` (default: `B04_10m`)
 - `NDVI_STAC_ASSET_NIR` (default: `B08_10m`)
 - `NDVI_STAC_TIMEOUT_SECS` (default: 30)
+
+STAC request throttling (prevent WAF rate-limit blocks):
+- `NDVI_STAC_REQUEST_INTERVAL_SECS` (default: `10.0`; min seconds between requests)
+- `NDVI_STAC_JITTER_MIN_SECS` (default: `1.0`; min random jitter in seconds)
+- `NDVI_STAC_JITTER_MAX_SECS` (default: `5.0`; max random jitter in seconds)
+
+Note: Throttling applies to every STAC API request with randomized jitter
+to avoid pattern detection by upstream WAFs. Adjust these values if you
+continue seeing `Request Rejected` errors from Copernicus.
 Note: STAC raster rendering requires `rasterio`. Install rasterio or install
 the stac extra in your environment.
 

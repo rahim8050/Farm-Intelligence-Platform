@@ -728,6 +728,21 @@ NDVI_STAC_TIMEOUT_SECS = env.float(
     "NDVI_STAC_TIMEOUT_SECS",
     default=30,
 )
+
+# STAC API request throttling (prevent WAF blocks)
+NDVI_STAC_REQUEST_INTERVAL_SECS = env.float(
+    "NDVI_STAC_REQUEST_INTERVAL_SECS",
+    default=10.0,  # Min seconds between requests
+)
+NDVI_STAC_JITTER_MIN_SECS = env.float(
+    "NDVI_STAC_JITTER_MIN_SECS",
+    default=1.0,  # Min jitter in seconds
+)
+NDVI_STAC_JITTER_MAX_SECS = env.float(
+    "NDVI_STAC_JITTER_MAX_SECS",
+    default=5.0,  # Max jitter in seconds
+)
+
 NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS = env.int(
     "NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS",
     default=900,

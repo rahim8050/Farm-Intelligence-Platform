@@ -1,0 +1,91 @@
+# MySQL/MariaDB Performance Tuning Configuration
+# Install to: /etc/mysql/mariadb.conf.d/99-weather-apis.cnf
+# Or: /etc/mysql/my.cnf (append to existing config)
+
+[mysqld]
+# ============================
+# Memory & Buffer Settings
+# ============================
+
+# InnoDB Buffer Pool (keep at 50-60% of available RAM for dedicated DB server)
+# For shared server (Nextcloud + Django + DB): use 25-40%
+innodb_buffer_pool_size = 1G
+innodb_buffer_pool_instances = 2
+innodb_buffer_pool_load_at_startup = 1
+innodb_buffer_pool_dump_at_shutdown = 1
+
+# InnoDB Log Files
+innodb_log_file_size = 256M
+innodb_log_buffer_size = 16M
+innodb_flush_log_at_trx_commit = 2  ; 1=safest, 2=faster (crash-safe), 0=fastest
+
+# Connections
+max_connections = 100  ; Limit max connections (Nextcloud + Django don't need 151 default)
+max_connect_errors = 100000
+wait_timeout = 60
+interactive_timeout = 60
+
+# ============================
+# Query Cache (MariaDB only, disabled in MySQL 8+)
+# ============================
+query_cache_type = 1
+query_cache_size = 64M
+query_cache_limit = 2M
+query_cache_min_res_unit = 2K
+
+# ============================
+# Temp Tables & Sorting
+# ============================
+tmp_table_size = 64M
+max_heap_table_size = 64M
+sort_buffer_size = 2M
+read_buffer_size = 2M
+read_rnd_buffer_size = 4M
+join_buffer_size = 2M
+
+# ============================
+# InnoDB Performance
+# ============================
+innodb_flush_method = O_DIRECT
+innodb_file_per_table = 1
+innodb_strict_mode = 1
+innodb_large_prefix = 1
+innodb_file_format = Barracuda
+
+# Thread cache
+thread_cache_size = 16
+thread_stack = 256K
+
+# Table cache
+table_open_cache = 2000
+table_definition_cache = 1400
+
+# ============================
+# Slow Query Logging
+# ============================
+slow_query_log = 1
+slow_query_log_file = /var/log/mysql/slow.log
+long_query_time = 2  ; Log queries taking > 2 seconds
+log_queries_not_using_indexes = 0  ; Don't log queries without indexes (noisy)
+
+# ============================
+# Binary Logging (for replication/backup)
+# ============================
+# Enable only if you need replication or point-in-time recovery
+# server-id = 1
+# log_bin = /var/log/mysql/mysql-bin
+# binlog_format = ROW
+# expire_logs_days = 7
+# max_binlog_size = 100M
+
+# ============================
+# Character Set
+# ============================
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+
+[client]
+default-character-set = utf8mb4
+
+[mysql]
+default-character-set = utf8mb4

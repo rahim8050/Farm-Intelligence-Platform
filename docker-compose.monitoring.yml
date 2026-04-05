@@ -5,6 +5,9 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--web.external-url=https://desktop-scbdcpm.tail4a3842.ts.net/prometheus"
       - "--web.route-prefix=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--storage.tsdb.retention.size=2GB"
+      - "--storage.tsdb.wal-compression"
     volumes:
       - prometheus_data:/prometheus
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -105,6 +108,10 @@ services:
     image: redis:8
     command:
       - redis-server
+      - "--maxmemory"
+      - "512mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
       - "--save"
       - ""
       - "--appendonly"
