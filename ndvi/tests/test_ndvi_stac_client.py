@@ -68,6 +68,8 @@ def test_stac_client_search_filters_and_selects(
     }
 
     class FakeResponse:
+        content = b'{"features": [], "links": []}'
+
         def json(self) -> dict[str, object]:
             return response_data
 
@@ -148,6 +150,8 @@ def test_stac_client_search_payload_uses_lon_lat_order(
     captured: dict[str, object] = {}
 
     class FakeResponse:
+        content = b'{"features": [], "links": []}'
+
         def json(self) -> dict[str, object]:
             return {"features": [], "links": []}
 
