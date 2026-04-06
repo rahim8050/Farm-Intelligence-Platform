@@ -19,7 +19,11 @@ from ndvi.farm_state import (
     get_cached_coverage_for_farm,
     get_coverage_threshold,
 )
-from ndvi.stac_client import StacProcessingError, StacUpstreamError
+from ndvi.stac_client import (
+    StacProcessingError,
+    StacUpstreamError,
+    StacWafBlockedError,
+)
 
 from .metrics import ndvi_jobs_total
 from .models import NdviJob, NdviRasterArtifact
@@ -169,6 +173,20 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
         return "ok"
     except SentinelHubAuthError as exc:
         logger.warning("ndvi.job.auth_failed job_id=%s err=%s", job.id, exc)
+        job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
+        ndvi_jobs_total.labels(
+            status=NdviJob.JobStatus.FAILED,
+            type=job.job_type,
+            engine=job.engine,
+        ).inc()
+        return "invalid"
+    except StacWafBlockedError as exc:
+        logger.error(
+            "ndvi.job.waf_blocked job_id=%s support_id=%s err=%s",
+            job.id,
+            exc.support_id,
+            exc,
+        )
         job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
         ndvi_jobs_total.labels(
             status=NdviJob.JobStatus.FAILED,

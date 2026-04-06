@@ -138,6 +138,103 @@ class StacUpstreamError(StacError):
         super().__init__(message)
 
 
+class StacWafBlockedError(StacUpstreamError):
+    """Raised when a WAF (Web Application Firewall) blocks the request.
+
+    This error is non-retryable and indicates the IP has been blocked
+    by an upstream firewall (e.g., F5 BIG-IP, Cloudflare).
+    Retrying will only produce the same result until the ban expires.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        support_id: str | None = None,
+    ) -> None:
+        super().__init__(message, retryable=False)
+        self.support_id = support_id
+
+
+class _CircuitBreaker:
+    """Simple circuit breaker to stop retrying when the upstream is blocked.
+
+    States:
+      - CLOSED: Normal operation, requests pass through.
+      - OPEN: Circuit is tripped, all requests fail immediately.
+      - HALF_OPEN: Testing if the upstream has recovered.
+
+    The circuit opens after `failure_threshold` consecutive failures
+    and closes again after one successful request in HALF_OPEN state.
+    """
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+    def __init__(
+        self,
+        *,
+        failure_threshold: int = 3,
+        reset_timeout_secs: float = 300.0,
+    ) -> None:
+        self._failure_threshold = failure_threshold
+        self._reset_timeout_secs = reset_timeout_secs
+        self._state = self.CLOSED
+        self._failure_count = 0
+        self._last_failure_time = 0.0
+
+    @property
+    def state(self) -> str:
+        """Return current state, auto-transitioning OPEN→HALF_OPEN on
+        timeout."""
+        if self._state == self.OPEN:
+            elapsed = time.monotonic() - self._last_failure_time
+            if elapsed >= self._reset_timeout_secs:
+                self._state = self.HALF_OPEN
+                logger.info(
+                    "STAC circuit breaker: OPEN→HALF_OPEN after %.0fs",
+                    elapsed,
+                )
+        return self._state
+
+    def record_success(self) -> None:
+        """Record a successful request."""
+        self._failure_count = 0
+        if self._state == self.HALF_OPEN:
+            self._state = self.CLOSED
+            logger.info("STAC circuit breaker: HALF_OPEN→CLOSED (recovered)")
+
+    def record_failure(self) -> None:
+        """Record a failed request."""
+        self._failure_count += 1
+        self._last_failure_time = time.monotonic()
+
+        if self._state == self.HALF_OPEN:
+            self._state = self.OPEN
+            logger.warning(
+                "STAC circuit breaker: HALF_OPEN→OPEN (upstream still down)"
+            )
+        elif self._failure_count >= self._failure_threshold:
+            self._state = self.OPEN
+            logger.warning(
+                "STAC circuit breaker: CLOSED→OPEN after %d failures",
+                self._failure_count,
+            )
+
+    def is_open(self) -> bool:
+        """Check if the circuit is open (should block requests)."""
+        return self.state == self.OPEN
+
+    def check_state(self) -> None:
+        """Raise CircuitOpenError if the circuit is open.
+
+        This method is intentionally a no-op here; the caller checks
+        `is_open()` and raises `StacUpstreamError` with a clear message
+        to avoid introducing a new exception type into task handlers.
+        """
+
+
 class StacProcessingError(StacError):
     """Raised when raster processing fails."""
 
@@ -299,6 +396,50 @@ def _parse_datetime(value: object) -> datetime | None:
 def _is_remote_href(href: str) -> bool:
     """Check if href is a remote HTTP(S) URL."""
     return href.startswith(("http://", "https://"))
+
+
+_WAF_INDICATORS: Final[tuple[str, ...]] = (
+    "request rejected",
+    "web application firewall",
+    "access denied",
+    "forbidden",
+    "your support id",
+    "the requested url was rejected",
+)
+
+
+def _looks_like_waf_response(text: str) -> bool:
+    """Detect if response text looks like a WAF rejection page.
+
+    Checks for common WAF indicators in the response body using
+    case-insensitive substring matching.
+
+    Args:
+        text: Raw response body text to inspect.
+
+    Returns:
+        True if the response appears to be a WAF block page.
+    """
+    text_lower = text.lower()
+    return any(indicator in text_lower for indicator in _WAF_INDICATORS)
+
+
+def _extract_waf_support_id(text: str) -> str | None:
+    """Extract a support ID from a WAF response if present.
+
+    Looks for patterns like "Your support ID is: 12345" or
+    "Support ID: 12345".
+
+    Args:
+        text: Raw WAF response body text.
+
+    Returns:
+        The extracted support ID, or None if not found.
+    """
+    import re
+
+    match = re.search(r"[Ss]upport\s*[Ii][Dd]\s*(?:is:\s*)?(\d+)", text)
+    return match.group(1) if match else None
 
 
 @contextmanager
@@ -542,12 +683,22 @@ class StacClient:
             getattr(settings, "NDVI_STAC_TIMEOUT_SECS", 30)
         )
         self.max_items = max_items or DEFAULT_MAX_ITEMS
+
+        # Proxy configuration (optional, useful to bypass IP bans)
+        proxy_url: str | None = getattr(settings, "NDVI_STAC_PROXY_URL", None)
+
         self._http = httpx.Client(
             timeout=self.timeout_seconds,
             headers={
-                "User-Agent": "weather-apis-ndvi/1.0 (+https://github.com)",
+                "User-Agent": (
+                    "Mozilla/5.0 (Weather-NDVI-Analyzer/1.0; "
+                    "+https://github.com) httpx/" + httpx.__version__
+                ),
                 "Accept": "application/json, application/geo+json",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
             },
+            proxy=proxy_url,
         )
 
         # Rate limiting configuration
@@ -561,6 +712,18 @@ class StacClient:
             getattr(settings, "NDVI_STAC_JITTER_MAX_SECS", 5.0)
         )
         self._last_request_time = 0.0
+
+        # Circuit breaker configuration
+        cb_threshold = int(
+            getattr(settings, "NDVI_STAC_CIRCUIT_BREAKER_THRESHOLD", 3)
+        )
+        cb_timeout = float(
+            getattr(settings, "NDVI_STAC_CIRCUIT_BREAKER_TIMEOUT_SECS", 300.0)
+        )
+        self._circuit_breaker = _CircuitBreaker(
+            failure_threshold=cb_threshold,
+            reset_timeout_secs=cb_timeout,
+        )
 
     def _apply_throttle(self) -> None:
         """Apply rate limiting with jitter to avoid WAF blocks.
@@ -630,6 +793,15 @@ class StacClient:
         next_payload: dict[str, Any] | None = payload
 
         while next_url and len(items) < self.max_items:
+            # Check circuit breaker before each request
+            if self._circuit_breaker.is_open():
+                raise StacUpstreamError(
+                    "STAC API request blocked: circuit breaker is open. "
+                    "The upstream service appears to be unreachable. "
+                    "Will retry after the circuit breaker timeout expires.",
+                    retryable=False,
+                )
+
             # Apply rate limiting with jitter before each request
             self._apply_throttle()
 
@@ -639,6 +811,7 @@ class StacClient:
                 json=next_payload,
             )
             data = self._parse_json_response(response)
+            self._circuit_breaker.record_success()
             parsed = self._parse_items(data)
             items.extend(filter_items_by_cloud(parsed, max_cloud))
             next_url, next_method, next_payload = self._next_link(data)
@@ -657,6 +830,7 @@ class StacClient:
             response.raise_for_status()
             return response
         except httpx.HTTPStatusError as exc:
+            self._circuit_breaker.record_failure()
             status_code = exc.response.status_code if exc.response else None
             snippet = self._response_snippet(exc.response)
             retryable = bool(status_code and status_code >= 500)
@@ -669,6 +843,7 @@ class StacClient:
                 retryable=retryable,
             ) from exc
         except httpx.RequestError as exc:
+            self._circuit_breaker.record_failure()
             raise StacUpstreamError(
                 f"STAC request failed: {exc}",
                 retryable=True,
@@ -701,6 +876,8 @@ class StacClient:
             Parsed JSON as dict.
 
         Raises:
+            StacWafBlockedError: If response is a WAF block page
+                (non-retryable).
             StacUpstreamError: If response is empty or invalid JSON.
         """
         content = response.content
@@ -710,9 +887,30 @@ class StacClient:
                 f"(status={response.status_code})",
                 retryable=True,
             )
+
+        # Detect WAF block early before attempting JSON parse
+        headers = getattr(response, "headers", {})
+        content_type = headers.get("content-type", "").lower()
+        response_text = getattr(response, "text", "")
+        if "html" in content_type or "<html" in response_text[:100].lower():
+            if _looks_like_waf_response(response_text):
+                self._circuit_breaker.record_failure()
+                support_id = _extract_waf_support_id(response_text)
+                message = (
+                    f"STAC API blocked by WAF (status={response.status_code}"
+                )
+                if support_id:
+                    message = f"{message}, support_id={support_id}"
+                message = f"{message})"
+                raise StacWafBlockedError(
+                    message,
+                    support_id=support_id,
+                )
+
         try:
             return response.json()
         except ValueError as exc:
+            self._circuit_breaker.record_failure()
             snippet = self._response_snippet(response)
             body = snippet or "<empty>"
             raise StacUpstreamError(

@@ -252,6 +252,13 @@ STAC request throttling (prevent WAF rate-limit blocks):
 - `NDVI_STAC_JITTER_MIN_SECS` (default: `1.0`; min random jitter in seconds)
 - `NDVI_STAC_JITTER_MAX_SECS` (default: `5.0`; max random jitter in seconds)
 
+STAC circuit breaker (stop retrying when upstream is unreachable):
+- `NDVI_STAC_CIRCUIT_BREAKER_THRESHOLD` (default: `3`; failures before opening circuit)
+- `NDVI_STAC_CIRCUIT_BREAKER_TIMEOUT_SECS` (default: `300.0`; seconds before retrying)
+
+STAC proxy (bypass IP bans):
+- `NDVI_STAC_PROXY_URL` (default: unset; e.g. `http://proxy.example.com:8080`)
+
 Note: Throttling applies to every STAC API request with randomized jitter
 to avoid pattern detection by upstream WAFs. Adjust these values if you
 continue seeing `Request Rejected` errors from Copernicus.
