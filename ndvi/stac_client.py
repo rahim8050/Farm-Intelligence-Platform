@@ -5,9 +5,12 @@ from __future__ import annotations
 import importlib
 import logging
 import math
+import os
 import random
+import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
 from functools import lru_cache
@@ -293,6 +296,55 @@ def _parse_datetime(value: object) -> datetime | None:
         return None
 
 
+def _is_remote_href(href: str) -> bool:
+    """Check if href is a remote HTTP(S) URL."""
+    return href.startswith(("http://", "https://"))
+
+
+@contextmanager
+def _local_asset_context(
+    red_href: str, nir_href: str, http_client: httpx.Client | None = None
+) -> Iterator[tuple[str, str]]:
+    """Context manager that yields local file paths for remote assets.
+
+    Downloads remote JPEG2000/COG assets to temp files to avoid
+    OpenJPEG streaming decode errors (opj_get_decoded_tile failed).
+    Local file paths are returned unchanged.
+    """
+    if not _is_remote_href(red_href) and not _is_remote_href(nir_href):
+        # Both are local files
+        yield red_href, nir_href
+        return
+
+    # Create a temporary directory for this request
+    with tempfile.TemporaryDirectory(prefix="ndvi_stac_") as tmpdir:
+        local_paths = []
+        try:
+            client = http_client or httpx.Client(
+                timeout=60.0,
+                follow_redirects=True,
+                limits=httpx.Limits(max_connections=10),
+            )
+            should_close_client = http_client is None
+
+            for href in (red_href, nir_href):
+                if _is_remote_href(href):
+                    filename = os.path.basename(href.split("?")[0])
+                    local_path = os.path.join(tmpdir, filename)
+                    resp = client.get(href)
+                    resp.raise_for_status()
+                    with open(local_path, "wb") as f:
+                        f.write(resp.content)
+                    local_paths.append(local_path)
+                else:
+                    local_paths.append(href)
+
+            yield local_paths[0], local_paths[1]
+        finally:
+            if should_close_client and http_client:
+                http_client.close()
+
+
 def load_ndvi_array(
     *,
     red_href: str,
@@ -303,6 +355,8 @@ def load_ndvi_array(
 ) -> np.ndarray:
     """Load NDVI values for the given bbox.
 
+    Downloads remote assets to temp files first to avoid
+    OpenJPEG streaming decode errors, then processes locally.
     Returns NaN for invalid pixels.
     """
 
@@ -315,51 +369,59 @@ def load_ndvi_array(
     ) = _require_rasterio()
     gdal_env = {
         "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
-        "GDAL_HTTP_TIMEOUT": str(int(timeout_seconds)),
-        "GDAL_HTTP_CONNECTTIMEOUT": str(int(timeout_seconds)),
-        "GDAL_HTTP_MAX_RETRY": "0",
+        "GDAL_HTTP_TIMEOUT": int(timeout_seconds),
+        "GDAL_HTTP_CONNECTTIMEOUT": int(timeout_seconds),
+        "GDAL_HTTP_MAX_RETRY": 5,
+        "GDAL_HTTP_RETRY_DELAY": 2,
+        "CPL_CURL_VERBOSE": False,
+        "GDAL_NUM_THREADS": "ALL_CPUS",
+        "GDAL_CACHEMAX": 256,
     }
     try:
-        with rasterio.Env(**gdal_env):
-            with (
-                rasterio.open(red_href) as red_ds,
-                rasterio.open(nir_href) as nir_ds,
-            ):
-                if red_ds.crs is None or nir_ds.crs is None:
-                    raise StacProcessingError(
-                        "Raster assets missing CRS metadata."
+        with _local_asset_context(red_href, nir_href) as (
+            local_red,
+            local_nir,
+        ):
+            with rasterio.Env(**gdal_env):
+                with (
+                    rasterio.open(local_red) as red_ds,
+                    rasterio.open(local_nir) as nir_ds,
+                ):
+                    if red_ds.crs is None or nir_ds.crs is None:
+                        raise StacProcessingError(
+                            "Raster assets missing CRS metadata."
+                        )
+                    bounds = transform_bounds(
+                        "EPSG:4326",
+                        red_ds.crs,
+                        float(bbox.west),
+                        float(bbox.south),
+                        float(bbox.east),
+                        float(bbox.north),
+                        densify_pts=21,
                     )
-                bounds = transform_bounds(
-                    "EPSG:4326",
-                    red_ds.crs,
-                    float(bbox.west),
-                    float(bbox.south),
-                    float(bbox.east),
-                    float(bbox.north),
-                    densify_pts=21,
-                )
-                window = from_bounds(
-                    *bounds,
-                    transform=red_ds.transform,
-                )
-                out_shape: tuple[int, int] | None = None
-                if size:
-                    out_shape = (size, size)
-                resampling = resampling_enum.bilinear
-                red = red_ds.read(
-                    1,
-                    window=window,
-                    out_shape=out_shape,
-                    resampling=resampling,
-                    masked=True,
-                )
-                nir = nir_ds.read(
-                    1,
-                    window=window,
-                    out_shape=out_shape,
-                    resampling=resampling,
-                    masked=True,
-                )
+                    window = from_bounds(
+                        *bounds,
+                        transform=red_ds.transform,
+                    )
+                    out_shape: tuple[int, int] | None = None
+                    if size:
+                        out_shape = (size, size)
+                    resampling = resampling_enum.bilinear
+                    red = red_ds.read(
+                        1,
+                        window=window,
+                        out_shape=out_shape,
+                        resampling=resampling,
+                        masked=True,
+                    )
+                    nir = nir_ds.read(
+                        1,
+                        window=window,
+                        out_shape=out_shape,
+                        resampling=resampling,
+                        masked=True,
+                    )
     except rasterio_error as exc:
         raise StacProcessingError(f"Raster processing failed: {exc}") from exc
     except Exception as exc:  # noqa: BLE001
@@ -480,7 +542,13 @@ class StacClient:
             getattr(settings, "NDVI_STAC_TIMEOUT_SECS", 30)
         )
         self.max_items = max_items or DEFAULT_MAX_ITEMS
-        self._http = httpx.Client(timeout=self.timeout_seconds)
+        self._http = httpx.Client(
+            timeout=self.timeout_seconds,
+            headers={
+                "User-Agent": "weather-apis-ndvi/1.0 (+https://github.com)",
+                "Accept": "application/json, application/geo+json",
+            },
+        )
 
         # Rate limiting configuration
         self._request_interval = float(
