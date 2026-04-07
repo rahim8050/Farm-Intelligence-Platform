@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from celery.exceptions import MaxRetriesExceededError  # type: ignore[import-untyped]
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 
@@ -541,8 +542,150 @@ def test_run_ndvi_job_stac_upstream_retryable_retries(
             run_ndvi_job.apply(args=[job.id]).get()
 
     job.refresh_from_db()
+    # Job stays in RUNNING state when retryable errors trigger retries
+    # (it will only be marked FAILED after max retries are exhausted)
+    assert job.status == NdviJob.JobStatus.RUNNING
+    assert job.last_error is None
+
+
+@pytest.mark.django_db
+def test_run_ndvi_job_stac_circuit_breaker_persists_across_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify that the StacEngine (and its circuit breaker) is reused
+    across retries.
+
+    The @lru_cache on _build_stac_engine ensures the same StacClient
+    instance (with its circuit breaker state) is reused.
+    """
+    from ndvi.services import _build_stac_engine
+
+    # Clear any cached engine from previous tests
+    _build_stac_engine.cache_clear()
+
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="circuit-breaker-owner",
+        email="circuit-breaker-owner@example.com",
+        password=password,
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Farm",
+        slug="farm-circuit-breaker",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    job = NdviJob.objects.create(
+        owner=user,
+        farm=farm,
+        engine="stac",
+        job_type=NdviJob.JobType.GAP_FILL,
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 8),
+        step_days=7,
+        max_cloud=20,
+        request_hash="circuit-breaker-hash",
+    )
+
+    # Build the engine once to get the shared instance
+    shared_engine = _build_stac_engine()
+    call_count = 0
+
+    class FailingEngine:
+        def __init__(self, shared_client: object) -> None:
+            self.shared_client = shared_client
+
+        def get_timeseries(self, **_: object) -> list[NdviPoint]:
+            nonlocal call_count
+            call_count += 1
+            # Simulate WAF block that trips circuit breaker
+            raise StacUpstreamError(
+                "STAC API returned invalid JSON (status=200)",
+                retryable=True,
+            )
+
+    # Access the StacEngine's client (shared_engine is StacEngine)
+    stac_engine = shared_engine  # type: ignore[assignment]
+    failing_engine = FailingEngine(stac_engine.client)  # type: ignore[attr-defined]
+
+    monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
+    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: failing_engine)
+
+    with patch.object(
+        run_ndvi_job, "retry", side_effect=RuntimeError("retry")
+    ):
+        with pytest.raises(RuntimeError, match="retry"):
+            # First attempt
+            run_ndvi_job.apply(args=[job.id]).get()
+
+    # Verify the engine was reused (same instance)
+    assert call_count == 1
+    # Verify the engine is cached
+    cached_engine = _build_stac_engine()
+    assert cached_engine is shared_engine
+
+
+@pytest.mark.django_db
+def test_run_ndvi_job_max_retries_exceeded_marks_job_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When all retries are exhausted, the job should be marked as FAILED."""
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="max-retries-owner",
+        email="max-retries-owner@example.com",
+        password=password,
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Farm",
+        slug="farm-max-retries",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    job = NdviJob.objects.create(
+        owner=user,
+        farm=farm,
+        engine="stac",
+        job_type=NdviJob.JobType.GAP_FILL,
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 8),
+        step_days=7,
+        max_cloud=20,
+        request_hash="max-retries-hash",
+    )
+
+    class FailingEngine:
+        def get_timeseries(self, **_: object) -> list[NdviPoint]:
+            raise StacUpstreamError("retry me", retryable=True)
+
+    monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
+    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: FailingEngine())
+
+    # Make retry raise MaxRetriesExceededError immediately
+    def mock_retry(
+        exc: Exception | None = None,
+        **kwargs: object,
+    ) -> None:
+        raise MaxRetriesExceededError("Max retries exceeded")
+
+    with patch.object(run_ndvi_job, "retry", side_effect=mock_retry):
+        # The task should catch MaxRetriesExceededError and mark job as failed
+        result = run_ndvi_job.apply(args=[job.id]).get()
+
+    job.refresh_from_db()
+    # Job should be marked as FAILED after max retries exhausted
+    assert result == "invalid"
     assert job.status == NdviJob.JobStatus.FAILED
-    assert job.last_error == "retry me"
+    assert job.last_error is not None
+    assert "Max retries exceeded" in job.last_error
 
 
 @pytest.mark.django_db

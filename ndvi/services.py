@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
+from functools import lru_cache
 from typing import Any
 
 from django.conf import settings
@@ -129,6 +130,7 @@ def _build_sentinelhub_engine() -> NDVIEngine:
     return SentinelHubEngine()
 
 
+@lru_cache(maxsize=1)
 def _build_stac_engine() -> NDVIEngine:
     from .engines.stac import StacEngine
 

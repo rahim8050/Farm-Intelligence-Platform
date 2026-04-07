@@ -5,6 +5,9 @@ from datetime import date, timedelta
 from typing import Any
 
 from celery import shared_task
+from celery.exceptions import (
+    MaxRetriesExceededError,  # type: ignore[import-untyped]
+)
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import transaction
@@ -195,15 +198,41 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
         ).inc()
         return "invalid"
     except StacUpstreamError as exc:
-        logger.warning("ndvi.job.stac_failed job_id=%s err=%s", job.id, exc)
+        if exc.retryable:
+            logger.warning(
+                "ndvi.job.stac_failed_retryable job_id=%s err=%s",
+                job.id,
+                exc,
+            )
+            try:
+                raise self.retry(exc=exc) from exc
+            except MaxRetriesExceededError as retry_exc:
+                logger.error(
+                    "ndvi.job.max_retries_exceeded job_id=%s err=%s",
+                    job.id,
+                    retry_exc,
+                )
+                job.mark_finished(
+                    NdviJob.JobStatus.FAILED,
+                    error=f"Max retries exceeded: {retry_exc}",
+                )
+                ndvi_jobs_total.labels(
+                    status=NdviJob.JobStatus.FAILED,
+                    type=job.job_type,
+                    engine=job.engine,
+                ).inc()
+                return "invalid"
+        logger.warning(
+            "ndvi.job.stac_failed_non_retryable job_id=%s err=%s",
+            job.id,
+            exc,
+        )
         job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
         ndvi_jobs_total.labels(
             status=NdviJob.JobStatus.FAILED,
             type=job.job_type,
             engine=job.engine,
         ).inc()
-        if exc.retryable:
-            raise self.retry(exc=exc) from exc
         return "invalid"
     except StacProcessingError as exc:
         logger.warning(
