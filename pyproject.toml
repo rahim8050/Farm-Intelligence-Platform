@@ -81,7 +81,7 @@ module = ["environ"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["celery", "celery.schedules"]
+module = ["celery", "celery.exceptions", "celery.schedules"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

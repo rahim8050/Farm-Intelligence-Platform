@@ -7,7 +7,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from celery.exceptions import MaxRetriesExceededError  # type: ignore[import-untyped]
+from celery.exceptions import (
+    MaxRetriesExceededError,  # type: ignore[import-untyped]
+)
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 
