@@ -5,8 +5,8 @@ from datetime import date, timedelta
 from typing import Any
 
 from celery import shared_task
-from celery.exceptions import (
-    MaxRetriesExceededError,  # type: ignore[import-untyped]
+from celery.exceptions import (  # type: ignore[import-untyped]
+    MaxRetriesExceededError,
 )
 from django.conf import settings
 from django.core.files.base import ContentFile
