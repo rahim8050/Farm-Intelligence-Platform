@@ -187,6 +187,36 @@ class BaseFarmWeatherView(APIView):
             fallback_on_error=True,
         )
 
+    def _proxy_weather_hourly(
+        self, request: Request, farm: Farm, hours: int
+    ) -> Response | None:
+        if not settings.WEATHER_PROXY_ENABLED:
+            return None
+        lat, lon, tz = self._resolve_farm_coords(farm)
+        return proxy_json_request(
+            request,
+            settings.WEATHER_SERVICE_URL,
+            "/api/v1/weather/hourly/",
+            params={
+                "lat": str(lat),
+                "lon": str(lon),
+                "tz": tz,
+                "hours": str(hours),
+            },
+            cache_key=_farm_proxy_cache_key(
+                "hourly",
+                farm.id,
+                lat,
+                lon,
+                tz,
+                str(hours),
+            ),
+            cache_ttl_s=int(
+                getattr(settings, "WEATHER_CACHE_TTL_HOURLY_S", 600)
+            ),
+            fallback_on_error=True,
+        )
+
 
 @extend_schema(auth=cast(list[str], [{"BearerAuth": []}]))
 class FarmWeatherCurrentView(BaseFarmWeatherView):
@@ -260,6 +290,9 @@ class FarmWeatherHourlyView(BaseFarmWeatherView):
         serializer = FarmHourlyParamsSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         hours = int(serializer.validated_data.get("hours", 48))
+        proxy = self._proxy_weather_hourly(request, farm, hours)
+        if proxy is not None:
+            return proxy
         forecasts = async_to_sync(get_farm_hourly_forecast)(
             farm=farm, hours=hours
         )

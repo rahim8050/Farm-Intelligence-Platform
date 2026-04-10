@@ -51,7 +51,7 @@ Authentication: Integration JWT (Bearer token minted by
 | Method | Path | Auth | Purpose | Key params |
 | --- | --- | --- | --- | --- |
 | GET | `/api/v1/farms/<farm_id>/weather/current/` | Bearer (integration JWT) | Current conditions for the farm centroid or bbox center | none |
-| GET | `/api/v1/farms/<farm_id>/weather/hourly/` | Bearer (integration JWT) | Hourly forecasts | query: `hours` (default 48, max 168) |
+| GET | `/api/v1/farms/<farm_id>/weather/hourly/` | Bearer (integration JWT) | Hourly forecasts; proxies to `WEATHER_SERVICE_URL` when `WEATHER_PROXY_ENABLED=True` | query: `hours` (default 48, max 168) |
 | GET | `/api/v1/farms/<farm_id>/weather/daily/` | Bearer (integration JWT) | Daily summaries | query: `days` (default 7, max 14) |
 
 ### Examples
@@ -129,6 +129,9 @@ Response:
 ```
 
 #### Farm hourly
+
+When `WEATHER_PROXY_ENABLED=True`, this endpoint is forwarded to the weather
+microservice at `WEATHER_SERVICE_URL` using `GET /api/v1/weather/hourly/`.
 
 ```bash
 curl -sS 'http://localhost:8000/api/v1/farms/1/weather/hourly/?hours=48' \

@@ -132,6 +132,8 @@ NDVI_MAX_DATERANGE_DAYS=370
 NDVI_SERVICE_URL=http://127.0.0.1:8081
 NDVI_PROXY_ENABLED=True
 WEATHER_SERVICE_URL=http://127.0.0.1:8090
+# When enabled, Django forwards weather current/daily/weekly and farm hourly
+# requests to the Rust weather service.
 WEATHER_PROXY_ENABLED=True
 PROXY_TIMEOUT_SECONDS=10
 

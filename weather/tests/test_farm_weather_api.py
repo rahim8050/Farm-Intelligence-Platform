@@ -194,6 +194,70 @@ def test_farm_weather_hourly_upstream_failure(
 
 
 @pytest.mark.django_db
+def test_farm_weather_hourly_proxy(
+    monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    farm = _create_farm()
+    client = _auth_client()
+
+    settings.WEATHER_PROXY_ENABLED = True
+    settings.WEATHER_SERVICE_URL = "http://weather-service:8090"
+    settings.PROXY_TIMEOUT_SECONDS = 5.0
+    settings.WEATHER_CACHE_TTL_HOURLY_S = 600
+    caches["default"].clear()
+    calls = 0
+
+    def fake_request(
+        method: str,
+        url: str,
+        params: dict[str, str] | None = None,
+        json: object | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> object:
+        nonlocal calls
+        calls += 1
+        assert method == "GET"
+        assert url == "http://weather-service:8090/api/v1/weather/hourly/"
+        assert params is not None
+        assert params["hours"] == "48"
+        assert float(params["lat"]) == 1.25
+        assert float(params["lon"]) == 36.75
+        return httpx.Response(
+            status_code=200,
+            json={
+                "status": 0,
+                "message": "OK",
+                "data": {
+                    "hours": [
+                        {
+                            "timestamp": "2026-02-26T21:00:00+03:00",
+                            "temperature_c": 26.1,
+                            "precipitation_mm": 0.0,
+                            "wind_speed_mps": 4.2,
+                            "cloud_cover_pct": 20.0,
+                            "source": "open_meteo",
+                        }
+                    ]
+                },
+                "errors": None,
+            },
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr("config.api.proxy.httpx.request", fake_request)
+
+    first = client.get(f"/api/v1/farms/{farm.id}/weather/hourly/")
+    second = client.get(f"/api/v1/farms/{farm.id}/weather/hourly/")
+
+    assert first.status_code == status.HTTP_200_OK
+    assert first.json()["data"]["hours"][0]["temperature_c"] == 26.1
+    assert second.status_code == status.HTTP_200_OK
+    assert second.json()["data"]["hours"][0]["temperature_c"] == 26.1
+    assert calls == 1
+
+
+@pytest.mark.django_db
 def test_farm_weather_daily_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
