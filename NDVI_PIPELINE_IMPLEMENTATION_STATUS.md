@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add durable queue semantics, and improve observability. **Phase 1 is complete**, **Phase 2 Stage 1 is partially complete**, and **Phases 2-4 remain largely unimplemented**.
+The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add durable queue semantics, and improve observability. **Phase 1 is complete**, **Phase 2 Stage 1 is complete**, and **Phases 2-4 remain largely unimplemented**.
 
 ---
 
@@ -65,9 +65,9 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 
 ## Phase 2 - Redis Streams for NDVI
 
-**Status:** 🟡 **PARTIALLY IMPLEMENTED** (Stage 1 only, ~10% complete)
+**Status:** 🟡 **PARTIALLY IMPLEMENTED** (Stage 1 complete, stream producer/consumer not started)
 
-### Stage 1 - Centralize NDVI Dispatch (50% Complete)
+### Stage 1 - Centralize NDVI Dispatch (100% Complete)
 
 **What's Implemented:**
 
@@ -79,20 +79,20 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
   - `NDVI_QUEUE_BACKEND = "celery"` in `config/settings.py`
   - Default value keeps existing behavior
   - Future value: `"stream"` for Redis Streams
-  
-- ✅ **Code comments document intent**
-  - Dispatch helpers have comments noting they're routing boundaries for future Streams work
-  - Stage 1 explicitly preserves existing Celery path
+
+- ✅ **Routing switch implemented**
+  - `NDVI_QUEUE_BACKEND` now controls dispatch branching
+  - Celery remains the default backend
+  - `stream` currently raises `NotImplementedError` until Stage 3 producer code exists
+
+- ✅ **Tests exist for helper and routing behavior**
+  - Celery routing covered
+  - `stream` fallback behavior covered
 
 **What's Left Out:**
 
-- ❌ **Not all `.delay()` calls replaced**
-  - Some views/tasks still call `.delay(...)` directly
-  - Need to replace all direct Celery calls with dispatch helpers
-  
-- ❌ **No routing switch implemented**
-  - `NDVI_QUEUE_BACKEND` setting exists but not used for branching logic
-  - Currently always uses Celery regardless of setting value
+- ✅ **All `.delay()` calls replaced**
+  - Direct NDVI enqueue call sites route through dispatch helpers
 
 ---
 
@@ -255,7 +255,7 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 | Phase | Status | Completion | Notes |
 |-------|--------|------------|-------|
 | **Phase 1: Redis Sentinel** | ✅ Complete | **100%** | Sentinel HA for broker/cache/result backend |
-| **Phase 2 Stage 1: Centralize Dispatch** | 🟡 Partial | **50%** | Helpers exist but not fully adopted |
+| **Phase 2 Stage 1: Centralize Dispatch** | ✅ Complete | **100%** | Helpers, routing switch, and tests are in place |
 | **Phase 2 Stage 2: Transport Model** | 🟡 Decided | **10%** | Architecture chosen, not implemented |
 | **Phase 2 Stage 3: Stream Producer** | 🔴 Not Started | **0%** | No producer code exists |
 | **Phase 2 Stage 4: Stream Consumer** | 🔴 Not Started | **0%** | No consumer code exists |
@@ -280,10 +280,8 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 
 ### Immediate (This Week)
 
-1. **Complete Stage 1** (1-2 days)
-   - Replace all remaining `.delay()` calls with `dispatch_ndvi_job()`
-   - Implement routing switch based on `NDVI_QUEUE_BACKEND`
-   - Add tests proving no behavior change with `celery` backend
+1. **Stage 1 is complete**
+   - Proceed to stream producer and consumer implementation
 
 2. **Implement Stage 3-4** (3-5 days)
    - Create `ndvi/streams.py` with producer logic
@@ -336,10 +334,10 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
    - 54.7s recovery time may be unacceptable for latency-sensitive tasks
    - **Mitigation:** Tune Celery reconnect or accept delay for background jobs
 
-2. **Partial dispatch centralization** (Phase 2 Stage 1)
-   - Some code paths still use direct `.delay()` calls
-   - **Risk:** Inconsistent behavior when stream mode is enabled
-   - **Mitigation:** Complete Stage 1 before enabling stream mode
+2. **Dispatch centralization is in place** (Phase 2 Stage 1)
+   - Dispatch helpers and routing switch are implemented
+   - **Risk:** Stream mode remains unimplemented until producer/consumer work lands
+   - **Mitigation:** Keep `NDVI_QUEUE_BACKEND=celery` until Stage 3+
 
 3. **Open architectural question** (Phase 2)
    - Celery/Kombu Redis Streams support unverified in production
@@ -382,6 +380,6 @@ ndvi/tasks.py                            # Use dispatch helpers
 
 **Phase 1 (Redis Sentinel)** is fully implemented and validated in production-like conditions.
 
-**Phase 2 (Redis Streams)** has only Stage 1 partially complete (~10% overall). The foundational work (dispatch helpers, settings) exists but is not fully adopted. The core stream producer/consumer logic, observability, and tests are entirely missing.
+**Phase 2 (Redis Streams)** has Stage 1 complete. The dispatch boundary is in place and the stream backend remains intentionally unimplemented. The core stream producer/consumer logic, observability, and stream-specific tests are still missing.
 
-**Priority:** Complete Phase 2 Stage 1 fully, then implement Stages 3-4 (producer/consumer) before adding observability and tests. The architecture documentation is excellent—now implementation needs to catch up.
+**Priority:** Implement Stages 3-4 (producer/consumer) before adding observability and tests. The architecture documentation is now aligned with the codebase at Stage 1.

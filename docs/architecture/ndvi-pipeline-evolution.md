@@ -33,8 +33,9 @@
 ### Phase 2 – Redis Streams for NDVI (Next phase)
 **Objective:** Give NDVI coverage jobs durable, observable queue semantics without touching the rest of Celery.
 
-- ⚠️ **Phase 2 is blocked until the Celery/Kombu Redis Streams compatibility is confirmed in a production-safe manner.**
-- Enable one Celery queue (`ndvi_stream`) with `transport_options={"stream": True}` while other queues stay list-backed.
+- ✅ **Stage 1 dispatch centralization is already complete in code.**
+- ⚠️ **The stream transport choice is still open.** The current code keeps `NDVI_QUEUE_BACKEND=celery` as the default and raises `NotImplementedError` if `stream` is selected before the producer exists.
+- The recommended architecture remains a separate Redis Streams producer/consumer path rather than relying on Celery/Kombu stream transport.
 - Stream entries contain deterministic job keys (`farm_id|engine|lookback`) mirroring `NdviJob` idempotency guards.
 - Consumers:
   - `XREADGROUP` → process task → `XACK`.

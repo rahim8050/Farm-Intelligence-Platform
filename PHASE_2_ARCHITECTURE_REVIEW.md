@@ -7,6 +7,8 @@
 
 **Purpose:** Identify missing items, regressions, architectural issues, and document updates needed before commencing Phase 2 implementation.
 
+**Status note:** Stage 1 routing centralization has since been completed in code. The Stage 1 section below is updated to reflect the current state; later sections remain useful for the still-unimplemented stream work.
+
 ---
 
 ## Executive Summary
@@ -14,7 +16,7 @@
 The architecture documents are well-structured but have several **critical gaps**, **outdated assumptions**, and **missing context** that must be addressed before Phase 2 implementation begins. Key findings:
 
 1. ✅ **Phase 1 is complete** and validated
-2. ⚠️ **Stage 1 is 70% complete** - missing routing switch (~1 hour work)
+2. ✅ **Stage 1 is complete** - routing switch and tests are in place
 3. ❌ **Stages 2-8 not started** - but architecture has evolved since docs written
 4. 🔴 **Critical: Colormap normalization fix changes raster pipeline** - docs don't reflect this
 5. 🔴 **Critical: STAC raster fallback improvements** - docs assume old behavior
@@ -60,9 +62,9 @@ The architecture documents are well-structured but have several **critical gaps*
 
 ---
 
-### Phase 2 Stage 1 – Centralize NDVI Dispatch 🟡 70% COMPLETE
+### Phase 2 Stage 1 – Centralize NDVI Dispatch ✅ COMPLETE (100%)
 
-**Status:** Helpers exist and call sites migrated, but routing switch missing
+**Status:** Helpers exist, call sites migrated, routing switch implemented, and tests cover the behavior
 
 **What's Done:**
 - ✅ `dispatch_ndvi_job()` helper created
@@ -70,24 +72,17 @@ The architecture documents are well-structured but have several **critical gaps*
 - ✅ All 9 call sites migrated from `.delay()` to dispatch helpers
 - ✅ `NDVI_QUEUE_BACKEND` setting added
 - ✅ `get_ndvi_queue_backend()` helper created and tested
+- ✅ Routing switch implemented in both dispatch helpers
+- ✅ Tests cover Celery routing and `stream` fallback behavior
 
 **What's Missing:**
-1. ❌ **Routing switch in `dispatch_ndvi_job()`**
-   - Currently ignores `NDVI_QUEUE_BACKEND` setting
-   - Always uses Celery regardless of value
-   - **Fix needed:** Add branching logic (see STAGE_1_GAP_ANALYSIS.md)
-
-2. ❌ **Routing switch in `dispatch_farm_state_coverage()`**
-   - Same issue as above
-   - **Fix needed:** Same pattern
-
-3. ❌ **Tests for routing behavior**
-   - No tests verify routing switch works
-   - **Need:** 4 tests covering celery/stream routing
+1. ❌ **Stream producer implementation**
+   - `NDVI_QUEUE_BACKEND=stream` still raises `NotImplementedError`
+   - **Fix needed:** Add producer/consumer stack in Stage 3+
 
 **Issues/Regressions:**
-- ⚠️ **No regression risk** - current behavior is correct, just incomplete
-- ⚠️ **Incomplete abstraction** - dispatch functions claim to be routing boundaries but aren't yet
+- ⚠️ **No regression risk** - current behavior is correct, and the routing boundary is explicit
+- ⚠️ **Stream mode remains intentionally unavailable** until the producer exists
 
 **Document Updates Needed:**
 ```markdown
@@ -97,14 +92,12 @@ The architecture documents are well-structured but have several **critical gaps*
 - ✅ Dispatch helpers implemented
 - ✅ All call sites migrated (9 total)
 - ✅ NDVI_QUEUE_BACKEND setting added
-- ❌ Routing switch not implemented (blocks Stage 3+)
-- ❌ Routing tests missing
+- ✅ Routing switch implemented
+- ✅ Routing tests exist
+- ✅ Stage 1 complete
 
 ### Remaining Work
-- Add routing switch to dispatch_ndvi_job() (~8 lines)
-- Add routing switch to dispatch_farm_state_coverage() (~8 lines)
-- Add 4 routing tests (~30 lines)
-- Estimated effort: ~1 hour
+- Stage 1 is done; continue with Stage 3+ producer/consumer work.
 ```
 
 ---
@@ -864,9 +857,9 @@ Earliest re-evaluation date: Q3 2026 (6 months after stream rollout)
 
 ### Priority 1: Critical (Must Update Before Implementation)
 
-1. **Add routing switch to Stage 1** (ndvi-phase-2-implementation-plan.md)
-   - Document missing routing switch
-   - Show implementation pattern
+1. **Update Stage 1 references** (ndvi-phase-2-implementation-plan.md)
+   - Mark the routing switch as complete
+   - Show the current NotImplementedError fallback for `stream`
    - Update Stage 1 completion status
 
 2. **Add error handling matrix** (both docs)
@@ -931,10 +924,10 @@ Earliest re-evaluation date: Q3 2026 (6 months after stream rollout)
 
 ### What's Ready to Implement ✅
 
-1. **Stage 1 completion** (1 hour work)
+1. **Stage 1** (already complete)
    - Routing switch implementation
    - Routing tests
-   - Can start immediately
+   - Ready for Stage 3 work
 
 2. **Stage 2 decision** (already made)
    - Architecture chosen (separate consumer)
@@ -968,15 +961,15 @@ Earliest re-evaluation date: Q3 2026 (6 months after stream rollout)
 |------|--------|----------|
 | Update documents (Priority 1 items) | 4 hours | Critical |
 | Update documents (Priority 2 items) | 3 hours | Important |
-| Complete Stage 1 (routing switch) | 1 hour | Critical |
+| Stage 1 follow-up verification | 0.5 hour | Low |
 | Add remaining settings | 30 minutes | Important |
-| **Total** | **~8.5 hours** | **Before starting Stages 3-4** |
+| **Total** | **~7.5 hours** | **Before starting Stages 3-4** |
 
 ---
 
 ## Recommended Next Steps
 
-### Week 1: Documentation & Stage 1 Completion
+### Week 1: Documentation & Stage 1 Verification
 
 **Day 1-2:** Update architecture documents
 1. Add error handling matrix
@@ -986,10 +979,10 @@ Earliest re-evaluation date: Q3 2026 (6 months after stream rollout)
 5. Add rollback procedure
 6. Merge Phase 3 into Phase 2 Stage 6
 
-**Day 3:** Complete Stage 1
-1. Add routing switch to `dispatch_ndvi_job()`
-2. Add routing switch to `dispatch_farm_state_coverage()`
-3. Add 4 routing tests
+**Day 3:** Verify Stage 1 and start Stage 3 planning
+1. Confirm routing switch behavior remains correct
+2. Confirm routing tests still pass
+3. Confirm `stream` still raises `NotImplementedError`
 4. Run full test suite
 
 **Day 4-5:** Add remaining settings
@@ -1040,8 +1033,8 @@ The architecture documents provide a solid foundation but require **~8.5 hours o
 1. **Error handling strategy** (completely missing)
 2. **Idempotency guarantees** (underspecified)
 3. **Stream payload schema** (outdated - missing colormap_normalization)
-4. **Stage 1 routing switch** (not implemented)
+4. **Stage 1 routing switch** (already implemented; verify references are current)
 
-**Recommendation:** Spend 1-2 days updating documents and completing Stage 1 before starting Stage 3 (producer) implementation. This prevents costly rework and ensures the implementation is based on complete, accurate specifications.
+**Recommendation:** Spend 1-2 days updating documents, then start Stage 3 (producer) implementation. This prevents costly rework and keeps the implementation aligned with the codebase.
 
 The phased approach is sound, the Sentinel foundation is solid, and the Redis Streams architecture is appropriate for the workload. With these document updates and Stage 1 completion, Phase 2 implementation will be well-guided and low-risk.

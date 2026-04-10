@@ -18,8 +18,11 @@ worker execution model unchanged.
 - Redis Sentinel for cache/broker/result backend is already implemented.
 - NDVI job creation already has deterministic idempotency via `request_hash`
   in `ndvi/services.py`.
-- NDVI dispatch is still scattered across views and periodic tasks via direct
-  `.delay(...)` calls.
+- NDVI dispatch is centralized through `dispatch_ndvi_job()` and
+  `dispatch_farm_state_coverage()`.
+- All NDVI enqueue call sites route through those helpers.
+- `NDVI_QUEUE_BACKEND` now controls the dispatch boundary; `stream` still
+  raises `NotImplementedError` until the stream producer exists.
 - No Redis Streams code exists yet:
   - no `XREADGROUP`
   - no `XPENDING`
@@ -39,20 +42,16 @@ Redis Streams behavior.
 - ✅ Dispatch helpers implemented (`dispatch_ndvi_job`, `dispatch_farm_state_coverage`)
 - ✅ All 9 call sites migrated from direct `.delay()` to dispatch helpers
 - ✅ `NDVI_QUEUE_BACKEND` setting added with `get_ndvi_queue_backend()` helper
-- ✅ Tests exist for helper functions
-- ❌ **Routing switch not implemented** (dispatch functions ignore setting value)
-- ❌ Routing tests missing
+- ✅ Routing switch implemented in both dispatch helpers
+- ✅ Tests cover Celery routing and `stream` fallback behavior
+- ✅ Stage 1 is complete
 
 ### Work
 
-- Add one NDVI dispatch helper in `ndvi/services.py`.
-- Replace every direct `run_ndvi_job.delay(...)` call with that helper.
-- Replace every direct `compute_farm_state_coverage.delay(...)` call with that
-  helper.
-- Introduce a routing switch in settings, for example:
-  - `NDVI_QUEUE_BACKEND=celery`
-  - future value: `NDVI_QUEUE_BACKEND=stream`
-- **Routing switch must check `get_ndvi_queue_backend()` and branch accordingly**
+- No Stage 1 code work remains.
+- The dispatch boundary already exists and routes to Celery by default.
+- `NDVI_QUEUE_BACKEND=stream` remains intentionally unimplemented until the
+  Stage 3 producer is added.
 
 ### File targets
 
@@ -66,13 +65,7 @@ Redis Streams behavior.
 - No runtime behavior change yet.
 - All NDVI enqueue behavior flows through one place.
 - Future Redis Streams logic can be added without editing every call site.
-
-### Remaining Work to Complete Stage 1
-
-1. Add routing switch to `dispatch_ndvi_job()` (~8 lines)
-2. Add routing switch to `dispatch_farm_state_coverage()` (~8 lines)
-3. Add 4 routing tests (~30 lines)
-4. **Estimated effort:** ~1 hour
+- Stage 1 is complete; remaining work starts at Stage 3.
 
 ## Stage 2 - Choose the transport model
 
@@ -341,7 +334,7 @@ Reduce risk while introducing stream-backed NDVI dispatch.
 
 ### Rollout order
 
-1. Merge Stage 1 with no behavior change.
+1. Stage 1 is already merged with no behavior change.
 2. Merge producer/consumer code behind a disabled flag.
 3. Enable stream mode for one NDVI workflow only.
 4. Observe lag, claims, DLQ volume, and Celery runtime metrics.
@@ -380,13 +373,13 @@ Rollback immediately if any of these occur:
 
 This is the best first implementation unit:
 
-1. Add `NDVI_QUEUE_BACKEND` setting.
-2. Add a single NDVI dispatch helper in `ndvi/services.py`.
-3. Replace all direct `.delay(...)` NDVI dispatch calls with that helper.
-4. Add tests proving no runtime behavior change while backend is still
-   `celery`.
+1. Add producer code and payload schema.
+2. Add stream consumer command and reclaim/DLQ handling.
+3. Add stream-specific settings and feature flags.
+4. Add producer/consumer tests and rollback coverage.
 
-This first patch should be merged before any Redis Streams code is added.
+Stage 1 is already merged, so the next patch set should start at stream
+producer and consumer work.
 
 ## Definition of done for Phase 2
 
