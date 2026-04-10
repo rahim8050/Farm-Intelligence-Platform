@@ -9,7 +9,10 @@ import httpx
 import pytest
 
 from ndvi.engines.base import BBox, NdviPoint
-from ndvi.engines.sentinelhub import SentinelHubEngine
+from ndvi.engines.sentinelhub import (
+    SentinelHubEngine,
+    SentinelHubUpstreamError,
+)
 
 CLIENT_SECRET = secrets.token_urlsafe(12)
 
@@ -135,7 +138,7 @@ def test_sentinelhub_request_with_retry_network_error(
 
     monkeypatch.setattr(engine._http, "request", fake_request)
     monkeypatch.setattr("ndvi.engines.sentinelhub.time.sleep", lambda *_: None)
-    with pytest.raises(httpx.RequestError):
+    with pytest.raises(SentinelHubUpstreamError, match="network"):
         engine._request_with_retry(
             "GET", "https://example.com", max_attempts=2
         )

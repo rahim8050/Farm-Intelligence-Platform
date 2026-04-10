@@ -569,7 +569,7 @@ def test_sentinelhub_raster_request_raises_request_error(
     monkeypatch.setattr(
         "ndvi.raster.sentinelhub_engine.time.sleep", lambda *_: None
     )
-    with pytest.raises(httpx.RequestError):
+    with pytest.raises(SentinelHubRasterError, match="network"):
         engine._request_with_retry(
             "POST", "https://example.com", json={"ok": True}, max_attempts=2
         )

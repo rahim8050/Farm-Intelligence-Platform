@@ -249,13 +249,10 @@ def test_run_ndvi_job_raster_size_and_error_recorded(
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
     monkeypatch.setattr("ndvi.tasks.render_ndvi_png", fake_render_png)
 
-    with patch.object(
-        run_ndvi_job, "retry", side_effect=RuntimeError("retry")
-    ):
-        with pytest.raises(RuntimeError, match="retry"):
-            run_ndvi_job.apply(args=[job.id]).get()
+    result = run_ndvi_job.apply(args=[job.id]).get()
 
     job.refresh_from_db()
+    assert result == "invalid"
     assert job.status == NdviJob.JobStatus.FAILED
     assert captured["size"] == 256
     assert job.last_error is not None
@@ -691,7 +688,7 @@ def test_run_ndvi_job_max_retries_exceeded_marks_job_failed(
 
 
 @pytest.mark.django_db
-def test_run_ndvi_job_exception_triggers_retry(
+def test_run_ndvi_job_exception_fails_fast(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     password = secrets.token_urlsafe(12)
@@ -732,12 +729,11 @@ def test_run_ndvi_job_exception_triggers_retry(
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
     monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: DummyEngine())
 
-    with patch.object(
-        run_ndvi_job, "retry", side_effect=RuntimeError("retry")
-    ):
-        with pytest.raises(RuntimeError, match="retry"):
-            run_ndvi_job.apply(args=[job.id]).get()
+    with pytest.raises(RuntimeError, match="boom"):
+        run_ndvi_job.apply(args=[job.id]).get()
     job.refresh_from_db()
+    assert job.status == NdviJob.JobStatus.FAILED
+    assert job.last_error == "boom"
     assert job.status == NdviJob.JobStatus.FAILED
 
 

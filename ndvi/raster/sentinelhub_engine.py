@@ -15,6 +15,7 @@ from ndvi.engines.sentinelhub import (
     get_default_max_cloud,
     get_default_timeout_seconds,
 )
+from ndvi.retry_policy import UpstreamFailureError, classify_status_code
 
 from .base import NdviRasterEngine, RasterRequest
 
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 MAX_ERROR_SNIPPET_CHARS = 1600
 
 
-class SentinelHubRasterError(RuntimeError):
+class SentinelHubRasterError(UpstreamFailureError):
     """Signals a non-2xx raster request from Sentinel Hub."""
 
     def __init__(self, status_code: int | None, snippet: str | None) -> None:
@@ -32,7 +33,14 @@ class SentinelHubRasterError(RuntimeError):
         message = f"Sentinel Hub raster error status={status_code}"
         if snippet:
             message = f"{message} body={snippet}"
-        super().__init__(message)
+        # Delegate classification to the single source of truth.
+        retryable, category = classify_status_code(status_code)
+        super().__init__(
+            message,
+            retryable=retryable,
+            category=category,
+            status_code=status_code,
+        )
 
 
 RASTER_EVALSCRIPT: Final[str] = """
@@ -212,7 +220,9 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                 if attempt < max_attempts:
                     time.sleep(0.5 * attempt)
                     continue
-                raise
+                # Wrap in UpstreamFailureError so should_retry() at the
+                # Celery level returns retry=True for transient network errors.
+                raise SentinelHubRasterError(None, str(exc)) from exc
         if last_error:
             raise last_error
         raise RuntimeError("Unknown raster upstream error")

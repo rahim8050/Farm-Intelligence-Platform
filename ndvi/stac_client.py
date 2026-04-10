@@ -22,6 +22,11 @@ import numpy as np
 from django.conf import settings
 
 from ndvi.engines.base import BBox
+from ndvi.retry_policy import (
+    RetryCategory,
+    UpstreamFailureError,
+    classify_status_code,
+)
 
 MAX_ERROR_SNIPPET_CHARS = 1600
 DEFAULT_MAX_ITEMS = 500
@@ -123,7 +128,7 @@ class StacError(RuntimeError):
     """Base error for STAC failures."""
 
 
-class StacUpstreamError(StacError):
+class StacUpstreamError(UpstreamFailureError, StacError):
     """Raised when the STAC API cannot be reached or returns errors."""
 
     def __init__(
@@ -132,10 +137,19 @@ class StacUpstreamError(StacError):
         *,
         status_code: int | None = None,
         retryable: bool = False,
+        category: RetryCategory = RetryCategory.UNKNOWN,
     ) -> None:
-        self.status_code = status_code
-        self.retryable = retryable
-        super().__init__(message)
+        # Delegate classification to the single source of truth.
+        if category == RetryCategory.UNKNOWN and status_code is not None:
+            derived_retryable, category = classify_status_code(status_code)
+            retryable = retryable or derived_retryable
+        UpstreamFailureError.__init__(
+            self,
+            message,
+            retryable=retryable,
+            category=category,
+            status_code=status_code,
+        )
 
 
 class StacWafBlockedError(StacUpstreamError):
@@ -152,7 +166,11 @@ class StacWafBlockedError(StacUpstreamError):
         *,
         support_id: str | None = None,
     ) -> None:
-        super().__init__(message, retryable=False)
+        super().__init__(
+            message,
+            retryable=False,
+            category=RetryCategory.WAF,
+        )
         self.support_id = support_id
 
 
@@ -833,20 +851,19 @@ class StacClient:
             self._circuit_breaker.record_failure()
             status_code = exc.response.status_code if exc.response else None
             snippet = self._response_snippet(exc.response)
-            retryable = bool(status_code and status_code >= 500)
             message = f"STAC request failed status={status_code}"
             if snippet:
                 message = f"{message} body={snippet}"
             raise StacUpstreamError(
                 message,
                 status_code=status_code,
-                retryable=retryable,
             ) from exc
         except httpx.RequestError as exc:
             self._circuit_breaker.record_failure()
             raise StacUpstreamError(
                 f"STAC request failed: {exc}",
                 retryable=True,
+                category=RetryCategory.TRANSIENT_UPSTREAM,
             ) from exc
 
     def _response_snippet(self, response: httpx.Response | None) -> str | None:
@@ -885,7 +902,7 @@ class StacClient:
             raise StacUpstreamError(
                 f"STAC API returned empty response body "
                 f"(status={response.status_code})",
-                retryable=True,
+                status_code=response.status_code,
             )
 
         # Detect WAF block early before attempting JSON parse
@@ -916,7 +933,7 @@ class StacClient:
             raise StacUpstreamError(
                 f"STAC API returned invalid JSON "
                 f"(status={response.status_code}, body={body})",
-                retryable=True,
+                status_code=response.status_code,
             ) from exc
 
     def _parse_items(self, data: dict[str, Any]) -> list[StacItem]:

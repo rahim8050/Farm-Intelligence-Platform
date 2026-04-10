@@ -18,6 +18,11 @@ from ndvi.metrics import (
     ndvi_upstream_latency_seconds,
     ndvi_upstream_requests_total,
 )
+from ndvi.retry_policy import (
+    RetryCategory,
+    UpstreamFailureError,
+    classify_status_code,
+)
 
 from .base import BBox, NDVIEngine, NdviPoint
 
@@ -80,7 +85,7 @@ function evaluatePixel(sample) {
 """
 
 
-class SentinelHubAuthError(RuntimeError):
+class SentinelHubAuthError(UpstreamFailureError):
     """Signals Sentinel Hub authentication/authorization failures."""
 
     def __init__(self, status_code: int | None) -> None:
@@ -91,7 +96,26 @@ class SentinelHubAuthError(RuntimeError):
             f"{message}. Switch NDVI_ENGINE=stac or update Sentinel Hub "
             "credentials."
         )
-        super().__init__(message)
+        super().__init__(
+            message,
+            retryable=False,
+            category=RetryCategory.AUTH,
+            status_code=status_code,
+        )
+
+
+class SentinelHubUpstreamError(UpstreamFailureError):
+    """Signals non-auth Sentinel Hub upstream failures."""
+
+    def __init__(self, status_code: int | None, message: str) -> None:
+        # Delegate classification to the single source of truth.
+        retryable, category = classify_status_code(status_code)
+        super().__init__(
+            message,
+            retryable=retryable,
+            category=category,
+            status_code=status_code,
+        )
 
 
 class SentinelHubEngine(NDVIEngine):
@@ -239,7 +263,12 @@ class SentinelHubEngine(NDVIEngine):
                 if attempt < max_attempts:
                     time.sleep(0.5 * attempt)
                     continue
-                raise
+                # Wrap in UpstreamFailureError so should_retry() at the
+                # Celery level returns retry=True for transient network errors.
+                raise SentinelHubUpstreamError(
+                    None,
+                    f"Sentinel Hub network error: {exc}",
+                ) from exc
         if last_error:
             raise last_error
         raise RuntimeError("Unknown upstream error")

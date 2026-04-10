@@ -22,6 +22,8 @@ from ndvi.farm_state import (
     get_cached_coverage_for_farm,
     get_coverage_threshold,
 )
+from ndvi.raster.sentinelhub_engine import SentinelHubRasterError
+from ndvi.retry_policy import RetryDecision, should_retry
 from ndvi.stac_client import (
     StacProcessingError,
     StacUpstreamError,
@@ -60,6 +62,60 @@ def _parse_date(raw: str | None) -> date | None:
         return date.fromisoformat(str(raw))
     except ValueError:
         return None
+
+
+def _mark_job_failed(job: NdviJob, status_error: Exception | str) -> None:
+    """Persist a failed job state with the provided error message."""
+
+    job.mark_finished(NdviJob.JobStatus.FAILED, error=str(status_error))
+
+
+def _handle_retryable_task_failure(
+    *,
+    self: Any,
+    job: NdviJob,
+    exc: Exception,
+    log_prefix: str,
+) -> str:
+    """Apply the shared retry policy for a task failure."""
+
+    decision: RetryDecision = should_retry(exc)
+    logger.info(
+        "%s retry_decision retry=%s delay=%s reason=%s job_id=%s err=%s",
+        log_prefix,
+        decision.retry,
+        decision.delay,
+        decision.reason,
+        job.id,
+        exc,
+    )
+    if decision.retry:
+        retry_kwargs: dict[str, Any] = {}
+        if decision.delay is not None:
+            retry_kwargs["countdown"] = decision.delay
+        try:
+            raise self.retry(exc=exc, **retry_kwargs) from exc
+        except MaxRetriesExceededError as retry_exc:
+            logger.error(
+                "%s max_retries_exceeded job_id=%s err=%s",
+                log_prefix,
+                job.id,
+                retry_exc,
+            )
+            _mark_job_failed(job, f"Max retries exceeded: {retry_exc}")
+            ndvi_jobs_total.labels(
+                status=NdviJob.JobStatus.FAILED,
+                type=job.job_type,
+                engine=job.engine,
+            ).inc()
+            return "invalid"
+    _mark_job_failed(job, exc)
+    ndvi_jobs_total.labels(
+        status=NdviJob.JobStatus.FAILED,
+        type=job.job_type,
+        engine=job.engine,
+    ).inc()
+    return "invalid"
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
@@ -190,50 +246,19 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             exc.support_id,
             exc,
         )
-        job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
-        ndvi_jobs_total.labels(
-            status=NdviJob.JobStatus.FAILED,
-            type=job.job_type,
-            engine=job.engine,
-        ).inc()
-        return "invalid"
-    except StacUpstreamError as exc:
-        if exc.retryable:
-            logger.warning(
-                "ndvi.job.stac_failed_retryable job_id=%s err=%s",
-                job.id,
-                exc,
-            )
-            try:
-                raise self.retry(exc=exc) from exc
-            except MaxRetriesExceededError as retry_exc:
-                logger.error(
-                    "ndvi.job.max_retries_exceeded job_id=%s err=%s",
-                    job.id,
-                    retry_exc,
-                )
-                job.mark_finished(
-                    NdviJob.JobStatus.FAILED,
-                    error=f"Max retries exceeded: {retry_exc}",
-                )
-                ndvi_jobs_total.labels(
-                    status=NdviJob.JobStatus.FAILED,
-                    type=job.job_type,
-                    engine=job.engine,
-                ).inc()
-                return "invalid"
-        logger.warning(
-            "ndvi.job.stac_failed_non_retryable job_id=%s err=%s",
-            job.id,
-            exc,
+        return _handle_retryable_task_failure(
+            self=self,
+            job=job,
+            exc=exc,
+            log_prefix="ndvi.job",
         )
-        job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
-        ndvi_jobs_total.labels(
-            status=NdviJob.JobStatus.FAILED,
-            type=job.job_type,
-            engine=job.engine,
-        ).inc()
-        return "invalid"
+    except StacUpstreamError as exc:
+        return _handle_retryable_task_failure(
+            self=self,
+            job=job,
+            exc=exc,
+            log_prefix="ndvi.job",
+        )
     except StacProcessingError as exc:
         logger.warning(
             "ndvi.job.stac_processing_failed job_id=%s err=%s",
@@ -244,39 +269,49 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             "NDVI raster job failed for farm_id=%s",
             job.farm_id,
         )
-        job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
-        ndvi_jobs_total.labels(
-            status=NdviJob.JobStatus.FAILED,
-            type=job.job_type,
-            engine=job.engine,
-        ).inc()
-        return "invalid"
+        return _handle_retryable_task_failure(
+            self=self,
+            job=job,
+            exc=exc,
+            log_prefix="ndvi.job",
+        )
+    except SentinelHubRasterError as exc:
+        logger.warning("ndvi.job.raster_failed job_id=%s err=%s", job.id, exc)
+        logger.exception(
+            "NDVI raster job failed for farm_id=%s",
+            job.farm_id,
+        )
+        return _handle_retryable_task_failure(
+            self=self,
+            job=job,
+            exc=exc,
+            log_prefix="ndvi.job",
+        )
     except ValidationError as exc:
         logger.warning("ndvi.job.invalid job_id=%s err=%s", job.id, exc)
         logger.exception(
             "NDVI raster job failed for farm_id=%s",
             job.farm_id,
         )
-        job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
-        ndvi_jobs_total.labels(
-            status=NdviJob.JobStatus.FAILED,
-            type=job.job_type,
-            engine=job.engine,
-        ).inc()
-        return "invalid"
+        return _handle_retryable_task_failure(
+            self=self,
+            job=job,
+            exc=exc,
+            log_prefix="ndvi.job",
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception("ndvi.job.failed job_id=%s err=%s", job.id, exc)
         logger.exception(
             "NDVI raster job failed for farm_id=%s",
             job.farm_id,
         )
-        job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
+        _mark_job_failed(job, exc)
         ndvi_jobs_total.labels(
             status=NdviJob.JobStatus.FAILED,
             type=job.job_type,
             engine=job.engine,
         ).inc()
-        raise self.retry(exc=exc) from exc
+        raise
 
 
 @shared_task
@@ -349,8 +384,21 @@ def compute_farm_state_coverage(
             threshold=resolved_threshold,
         )
     except StacUpstreamError as exc:
-        if exc.retryable:
-            raise self.retry(exc=exc) from exc
+        decision = should_retry(exc)
+        logger.info(
+            "ndvi.coverage retry_decision retry=%s delay=%s reason=%s "
+            "farm_id=%s err=%s",
+            decision.retry,
+            decision.delay,
+            decision.reason,
+            farm.id,
+            exc,
+        )
+        if decision.retry:
+            retry_kwargs: dict[str, Any] = {}
+            if decision.delay is not None:
+                retry_kwargs["countdown"] = decision.delay
+            raise self.retry(exc=exc, **retry_kwargs) from exc
         value = None
     cache_coverage_for_farm(
         farm_id=farm.id,
