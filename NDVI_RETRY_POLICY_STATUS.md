@@ -132,31 +132,58 @@ expansion) and Phase 3 (observability) remain.
 
 ## Phase 3 — Observability & Admin Controls
 
-**Status:** 🔴 **NOT STARTED**
+**Status:** 🔶 **IN PROGRESS** (Steps 1-3 complete; Step 4 remaining)
 
-### What's Planned:
+### Step 1: Prometheus Metrics ✅ **COMPLETE**
 
-- 🔲 **Prometheus metrics for circuit breaker state**
-  - Gauge: `ndvi_circuit_breaker_state{engine, upstream}`.
-  - Values: 0 (CLOSED), 1 (OPEN), 2 (HALF_OPEN).
-  - Counter: `ndvi_circuit_breaker_transitions_total{engine, from_state,
-    to_state}`.
+- ✅ **`ndvi_circuit_breaker_state{engine}`** gauge exported
+  - Values: 0 (CLOSED), 1 (OPEN), 2 (HALF_OPEN)
+  - Auto-initialized on CircuitBreaker creation
+  - Updated on every state transition
 
-- 🔲 **Admin endpoint to reset circuit breaker**
-  - `POST /api/v1/ndvi/circuit-breaker/reset` with body
-    `{"engine": "stac"|"sentinelhub"}`.
-  - Auth: `IsAdminUser` or superuser.
-  - Returns envelope with previous state and new state.
+- ✅ **`ndvi_circuit_breaker_transitions_total{engine, from_state, to_state}`** counter
+  - Increments on CLOSED→OPEN, OPEN→HALF_OPEN, HALF_OPEN→CLOSED, HALF_OPEN→OPEN, manual resets
 
-- 🔲 **Health check endpoint**
-  - `GET /api/v1/ndvi/health/upstream` returns status of all upstream
-    services and their circuit breaker states.
-  - Useful for dashboards and alerting.
+- ✅ **Grafana dashboard updated** (`weather-apis-observability.json`)
+  - Panel 23-25: Stat panels for STAC, SentinelHub, SH Raster circuit breaker state
+    - Color-coded: green (CLOSED), red (OPEN), yellow (HALF_OPEN)
+  - Panel 26: Time series for state transition rate (5m rate)
+  - Panel 27: Time series for upstream request failure rate (5m rate)
 
-- 🔲 **Retry-After header parsing**
-  - Parse `Retry-After` from 429 responses.
-  - Pass as `delay` to exception constructors.
-  - Celery task handler uses `decision.delay` as countdown when available.
+### Step 2: Retry-After Header Parsing ✅ **COMPLETE**
+
+- ✅ **`parse_retry_after()`** helper in `retry_policy.py`
+  - Supports numeric delay (e.g., `Retry-After: 120`)
+  - Supports HTTP-date format (e.g., `Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`)
+  - Case-insensitive header lookup
+  - Returns `0.0` for past dates, `None` for absent/invalid
+
+- ✅ **`should_retry()`** accepts optional `response_headers`
+  - Extracts `Retry-After` delay for 429 responses only
+  - Non-429 responses ignore the header
+  - Backward compatible: existing callers work without changes
+
+### Step 3: Admin Endpoint ✅ **COMPLETE**
+
+- ✅ **Circuit breaker registry** in `circuit_breaker.py`
+  - `register_circuit_breaker(cb)` — registers by engine name
+  - `get_circuit_breaker(engine)` — lookup by name
+  - `list_circuit_breakers()` — returns full registry
+
+- ✅ **All engines register on init**
+  - `StacClient` → `"stac"`
+  - `SentinelHubEngine` → `"sentinelhub"`
+  - `SentinelHubRasterEngine` → `"sentinelhub_raster"`
+
+- ✅ **`POST /api/v1/ndvi/circuit-breaker/reset/`**
+  - Auth: `IsAdminUser` only
+  - Request: `{"engine": "stac"|"sentinelhub"|"sentinelhub_raster"}`
+  - Response: envelope with `previous_state` and `new_state`
+  - OpenAPI fully documented
+
+### Step 4: Health Check Endpoint 🔴 **NOT STARTED**
+
+- 🔲 **`GET /api/v1/ndvi/health/upstream/`** — returns status of all upstream services
 
 ---
 
@@ -347,3 +374,8 @@ having metrics already in place.
 - `2c1c12d` refactor(ndvi): harden retry policy into single source of truth
 - `da63e83` docs: add daily report for 2026-04-10 retry policy hardening
 - `d739685` docs: add NDVI retry policy implementation status
+- `3effcb8` docs: update NDVI status docs with implementation roadmap
+- `3d8e104` feat(ndvi): add circuit breakers to SentinelHub engines
+- `a0a7d76` feat(ndvi): add Prometheus metrics for circuit breaker state
+- `760279e` feat(ndvi): add Retry-After header parsing for 429 responses
+- `32b81d7` feat(ndvi): add admin endpoint to reset circuit breakers
