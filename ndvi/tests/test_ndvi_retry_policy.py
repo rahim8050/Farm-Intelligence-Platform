@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from ndvi.engines.sentinelhub import (
@@ -13,6 +15,7 @@ from ndvi.retry_policy import (
     RetryCategory,
     UpstreamFailureError,
     classify_status_code,
+    parse_retry_after,
     should_retry,
 )
 from ndvi.stac_client import (
@@ -167,3 +170,77 @@ def test_should_retry_sentinelhub_raster_503() -> None:
     decision = should_retry(SentinelHubRasterError(503, "unavailable"))
     assert decision.retry is True
     assert decision.reason.startswith(f"{RetryCategory.TRANSIENT_UPSTREAM}:")
+
+
+# ---------------------------------------------------------------------------
+# Retry-After header parsing tests
+# ---------------------------------------------------------------------------
+
+
+def test_parse_retry_after_none_returns_none() -> None:
+    assert parse_retry_after(None) is None
+
+
+def test_parse_retry_after_empty_returns_none() -> None:
+    assert parse_retry_after({}) is None
+
+
+def test_parse_retry_after_numeric_delay() -> None:
+    headers = {"Retry-After": "120"}
+    assert parse_retry_after(headers) == 120.0
+
+
+def test_parse_retry_after_case_insensitive() -> None:
+    headers = {"retry-after": "60"}
+    assert parse_retry_after(headers) == 60.0
+
+
+def test_parse_retry_after_http_date() -> None:
+    # 5 minutes from now
+    future = datetime.now(UTC) + timedelta(minutes=5)
+    http_date = future.strftime("%a, %d %b %Y %H:%M:%S GMT")
+    headers = {"Retry-After": http_date}
+    delay = parse_retry_after(headers)
+    assert delay is not None
+    assert 290 <= delay <= 310  # Allow 10s tolerance
+
+
+def test_parse_retry_after_past_date_returns_zero() -> None:
+    past = datetime.now(UTC) - timedelta(minutes=5)
+    http_date = past.strftime("%a, %d %b %Y %H:%M:%S GMT")
+    headers = {"Retry-After": http_date}
+    delay = parse_retry_after(headers)
+    assert delay is not None
+    assert delay == 0.0
+
+
+def test_parse_retry_after_invalid_returns_none() -> None:
+    headers = {"Retry-After": "invalid"}
+    assert parse_retry_after(headers) is None
+
+
+def test_should_retry_429_with_retry_after_header() -> None:
+    """429 with Retry-After uses server-suggested delay."""
+    exc = StacUpstreamError("rate limited", status_code=429)
+    headers = {"Retry-After": "90"}
+    decision = should_retry(exc, response_headers=headers)
+    assert decision.retry is True
+    assert decision.delay == 90.0
+    assert decision.reason.startswith(f"{RetryCategory.RATE_LIMIT}:")
+
+
+def test_should_retry_429_without_retry_after_uses_default() -> None:
+    """429 response without Retry-After should have None delay."""
+    exc = StacUpstreamError("rate limited", status_code=429)
+    decision = should_retry(exc, response_headers=None)
+    assert decision.retry is True
+    assert decision.delay is None
+
+
+def test_should_retry_non_429_ignores_retry_after() -> None:
+    """Non-429 responses should not use Retry-After header."""
+    exc = StacUpstreamError("server error", status_code=503)
+    headers = {"Retry-After": "90"}
+    decision = should_retry(exc, response_headers=headers)
+    assert decision.retry is True
+    assert decision.delay is None  # Only 429 uses Retry-After
