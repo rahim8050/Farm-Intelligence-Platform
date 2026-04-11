@@ -13,6 +13,7 @@ import httpx
 from django.conf import settings
 from django.core.cache import caches
 
+from ndvi.circuit_breaker import CircuitBreaker
 from ndvi.metrics import (
     ndvi_cache_hit_total,
     ndvi_upstream_latency_seconds,
@@ -148,6 +149,23 @@ class SentinelHubEngine(NDVIEngine):
         self.timeout_seconds = timeout_seconds or get_default_timeout_seconds()
         self._http = httpx.Client(timeout=self.timeout_seconds)
 
+        # Circuit breaker configuration
+        cb_threshold = int(
+            getattr(settings, "NDVI_SENTINELHUB_CIRCUIT_BREAKER_THRESHOLD", 3)
+        )
+        cb_timeout = float(
+            getattr(
+                settings,
+                "NDVI_SENTINELHUB_CIRCUIT_BREAKER_TIMEOUT_SECS",
+                300.0,
+            )
+        )
+        self._circuit_breaker = CircuitBreaker(
+            engine="sentinelhub",
+            failure_threshold=cb_threshold,
+            reset_timeout_secs=cb_timeout,
+        )
+
     def get_timeseries(
         self,
         *,
@@ -215,6 +233,14 @@ class SentinelHubEngine(NDVIEngine):
         headers: dict[str, str] | None = None,
         max_attempts: int = 3,
     ) -> httpx.Response:
+        # Check circuit breaker before each request
+        if self._circuit_breaker.is_open():
+            raise SentinelHubUpstreamError(
+                None,
+                "Sentinel Hub request blocked: circuit breaker is open. "
+                "The upstream service appears to be unreachable.",
+            )
+
         attempt = 0
         last_error: Exception | None = None
         while attempt < max_attempts:
@@ -236,6 +262,7 @@ class SentinelHubEngine(NDVIEngine):
                 ndvi_upstream_requests_total.labels(
                     engine=self.engine_name, outcome="success"
                 ).inc()
+                self._circuit_breaker.record_success()
                 return response
             except httpx.HTTPStatusError as exc:
                 last_error = exc
@@ -254,6 +281,7 @@ class SentinelHubEngine(NDVIEngine):
                 ):
                     time.sleep(0.5 * attempt)
                     continue
+                self._circuit_breaker.record_failure()
                 raise
             except httpx.RequestError as exc:
                 last_error = exc
@@ -265,6 +293,7 @@ class SentinelHubEngine(NDVIEngine):
                     continue
                 # Wrap in UpstreamFailureError so should_retry() at the
                 # Celery level returns retry=True for transient network errors.
+                self._circuit_breaker.record_failure()
                 raise SentinelHubUpstreamError(
                     None,
                     f"Sentinel Hub network error: {exc}",

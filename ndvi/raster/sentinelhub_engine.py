@@ -7,8 +7,10 @@ from datetime import datetime
 from typing import Any, Final
 
 import httpx
+from django.conf import settings
 from django.core.cache import caches
 
+from ndvi.circuit_breaker import CircuitBreaker
 from ndvi.engines.sentinelhub import (
     SentinelHubAuthError,
     SentinelHubEngine,
@@ -99,6 +101,23 @@ class SentinelHubRasterEngine(NdviRasterEngine):
         self.cache = caches[cache_alias]
         self._http = httpx.Client(timeout=self._timeout)
 
+        # Circuit breaker configuration
+        cb_threshold = int(
+            getattr(settings, "NDVI_SENTINELHUB_CIRCUIT_BREAKER_THRESHOLD", 3)
+        )
+        cb_timeout = float(
+            getattr(
+                settings,
+                "NDVI_SENTINELHUB_CIRCUIT_BREAKER_TIMEOUT_SECS",
+                300.0,
+            )
+        )
+        self._circuit_breaker = CircuitBreaker(
+            engine="sentinelhub_raster",
+            failure_threshold=cb_threshold,
+            reset_timeout_secs=cb_timeout,
+        )
+
     def render_png(self, request: RasterRequest) -> bytes:
         payload = self._build_payload(request)
         logger.debug(
@@ -183,6 +202,14 @@ class SentinelHubRasterEngine(NdviRasterEngine):
         headers: dict[str, str] | None = None,
         max_attempts: int = 3,
     ) -> httpx.Response:
+        # Check circuit breaker before each request
+        if self._circuit_breaker.is_open():
+            raise SentinelHubRasterError(
+                None,
+                "Sentinel Hub raster request blocked:"
+                " circuit breaker is open.",
+            )
+
         attempt = 0
         last_error: Exception | None = None
         while attempt < max_attempts:
@@ -196,6 +223,7 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                     timeout=self._timeout,
                 )
                 response.raise_for_status()
+                self._circuit_breaker.record_success()
                 return response
             except httpx.HTTPStatusError as exc:
                 last_error = exc
@@ -214,6 +242,7 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                     if attempt < max_attempts:
                         time.sleep(0.5 * attempt)
                         continue
+                self._circuit_breaker.record_failure()
                 raise SentinelHubRasterError(status_code, snippet) from exc
             except httpx.RequestError as exc:
                 last_error = exc
@@ -222,6 +251,7 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                     continue
                 # Wrap in UpstreamFailureError so should_retry() at the
                 # Celery level returns retry=True for transient network errors.
+                self._circuit_breaker.record_failure()
                 raise SentinelHubRasterError(None, str(exc)) from exc
         if last_error:
             raise last_error

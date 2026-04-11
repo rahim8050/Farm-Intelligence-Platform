@@ -21,6 +21,7 @@ import httpx
 import numpy as np
 from django.conf import settings
 
+from ndvi.circuit_breaker import CircuitBreaker
 from ndvi.engines.base import BBox
 from ndvi.retry_policy import (
     RetryCategory,
@@ -172,85 +173,6 @@ class StacWafBlockedError(StacUpstreamError):
             category=RetryCategory.WAF,
         )
         self.support_id = support_id
-
-
-class _CircuitBreaker:
-    """Simple circuit breaker to stop retrying when the upstream is blocked.
-
-    States:
-      - CLOSED: Normal operation, requests pass through.
-      - OPEN: Circuit is tripped, all requests fail immediately.
-      - HALF_OPEN: Testing if the upstream has recovered.
-
-    The circuit opens after `failure_threshold` consecutive failures
-    and closes again after one successful request in HALF_OPEN state.
-    """
-
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
-
-    def __init__(
-        self,
-        *,
-        failure_threshold: int = 3,
-        reset_timeout_secs: float = 300.0,
-    ) -> None:
-        self._failure_threshold = failure_threshold
-        self._reset_timeout_secs = reset_timeout_secs
-        self._state = self.CLOSED
-        self._failure_count = 0
-        self._last_failure_time = 0.0
-
-    @property
-    def state(self) -> str:
-        """Return current state, auto-transitioning OPEN→HALF_OPEN on
-        timeout."""
-        if self._state == self.OPEN:
-            elapsed = time.monotonic() - self._last_failure_time
-            if elapsed >= self._reset_timeout_secs:
-                self._state = self.HALF_OPEN
-                logger.info(
-                    "STAC circuit breaker: OPEN→HALF_OPEN after %.0fs",
-                    elapsed,
-                )
-        return self._state
-
-    def record_success(self) -> None:
-        """Record a successful request."""
-        self._failure_count = 0
-        if self._state == self.HALF_OPEN:
-            self._state = self.CLOSED
-            logger.info("STAC circuit breaker: HALF_OPEN→CLOSED (recovered)")
-
-    def record_failure(self) -> None:
-        """Record a failed request."""
-        self._failure_count += 1
-        self._last_failure_time = time.monotonic()
-
-        if self._state == self.HALF_OPEN:
-            self._state = self.OPEN
-            logger.warning(
-                "STAC circuit breaker: HALF_OPEN→OPEN (upstream still down)"
-            )
-        elif self._failure_count >= self._failure_threshold:
-            self._state = self.OPEN
-            logger.warning(
-                "STAC circuit breaker: CLOSED→OPEN after %d failures",
-                self._failure_count,
-            )
-
-    def is_open(self) -> bool:
-        """Check if the circuit is open (should block requests)."""
-        return self.state == self.OPEN
-
-    def check_state(self) -> None:
-        """Raise CircuitOpenError if the circuit is open.
-
-        This method is intentionally a no-op here; the caller checks
-        `is_open()` and raises `StacUpstreamError` with a clear message
-        to avoid introducing a new exception type into task handlers.
-        """
 
 
 class StacProcessingError(StacError):
@@ -738,7 +660,8 @@ class StacClient:
         cb_timeout = float(
             getattr(settings, "NDVI_STAC_CIRCUIT_BREAKER_TIMEOUT_SECS", 300.0)
         )
-        self._circuit_breaker = _CircuitBreaker(
+        self._circuit_breaker = CircuitBreaker(
+            engine="stac",
             failure_threshold=cb_threshold,
             reset_timeout_secs=cb_timeout,
         )
