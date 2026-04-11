@@ -10,7 +10,10 @@ import httpx
 from django.conf import settings
 from django.core.cache import caches
 
-from ndvi.circuit_breaker import CircuitBreaker
+from ndvi.circuit_breaker import (
+    CircuitBreaker,
+    register_circuit_breaker,
+)
 from ndvi.engines.sentinelhub import (
     SentinelHubAuthError,
     SentinelHubEngine,
@@ -117,6 +120,7 @@ class SentinelHubRasterEngine(NdviRasterEngine):
             failure_threshold=cb_threshold,
             reset_timeout_secs=cb_timeout,
         )
+        register_circuit_breaker(self._circuit_breaker)
 
     def render_png(self, request: RasterRequest) -> bytes:
         payload = self._build_payload(request)

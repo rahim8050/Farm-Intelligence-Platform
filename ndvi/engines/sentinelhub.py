@@ -13,7 +13,10 @@ import httpx
 from django.conf import settings
 from django.core.cache import caches
 
-from ndvi.circuit_breaker import CircuitBreaker
+from ndvi.circuit_breaker import (
+    CircuitBreaker,
+    register_circuit_breaker,
+)
 from ndvi.metrics import (
     ndvi_cache_hit_total,
     ndvi_upstream_latency_seconds,
@@ -165,6 +168,7 @@ class SentinelHubEngine(NDVIEngine):
             failure_threshold=cb_threshold,
             reset_timeout_secs=cb_timeout,
         )
+        register_circuit_breaker(self._circuit_breaker)
 
     def get_timeseries(
         self,

@@ -194,3 +194,25 @@ class CircuitBreaker:
             "reset_timeout_secs": self._reset_timeout_secs,
             "seconds_since_last_failure": elapsed,
         }
+
+
+# ---------------------------------------------------------------------------
+# Registry for tracking circuit breaker instances by engine name
+# ---------------------------------------------------------------------------
+
+_ENGINE_REGISTRY: dict[str, CircuitBreaker] = {}
+
+
+def register_circuit_breaker(cb: CircuitBreaker) -> None:
+    """Register a circuit breaker instance in the global registry."""
+    _ENGINE_REGISTRY[cb.engine] = cb
+
+
+def get_circuit_breaker(engine: str) -> CircuitBreaker | None:
+    """Look up a circuit breaker by engine name."""
+    return _ENGINE_REGISTRY.get(engine)
+
+
+def list_circuit_breakers() -> dict[str, CircuitBreaker]:
+    """Return a copy of the full registry (for health checks)."""
+    return dict(_ENGINE_REGISTRY)

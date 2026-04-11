@@ -34,7 +34,7 @@ from rest_framework.exceptions import (
     ValidationError,
 )
 from rest_framework.negotiation import BaseContentNegotiation
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -1008,4 +1008,78 @@ class NdviJobStatusView(APIView):
         )
         return success_response(
             NdviJobSerializer(job).data, message="Job status"
+        )
+
+
+class CircuitBreakerResetView(APIView):
+    """Manually reset a circuit breaker to CLOSED state.
+
+    Auth: IsAdminUser
+    Request: {"engine": "stac"|"sentinelhub"|"sentinelhub_raster"}
+    Response: envelope with previous/new state
+    """
+
+    permission_classes = [IsAdminUser]
+
+    _VALID_ENGINES = ("stac", "sentinelhub", "sentinelhub_raster")
+
+    @extend_schema(
+        request=inline_serializer(
+            name="CircuitBreakerResetRequest",
+            fields={
+                "engine": serializers.ChoiceField(
+                    choices=["stac", "sentinelhub", "sentinelhub_raster"]
+                ),
+            },
+        ),
+        responses={
+            200: inline_serializer(
+                name="CircuitBreakerResetResponse",
+                fields={
+                    "success": serializers.IntegerField(),
+                    "message": serializers.CharField(),
+                    "data": inline_serializer(
+                        name="CircuitBreakerResetData",
+                        fields={
+                            "engine": serializers.CharField(),
+                            "previous_state": serializers.CharField(),
+                            "new_state": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            400: error_envelope_serializer("CircuitBreakerResetBadRequest"),
+            403: error_envelope_serializer("CircuitBreakerResetForbidden"),
+        },
+    )
+    def post(self, request: Request) -> Response:
+        """Reset a circuit breaker to CLOSED state."""
+
+        from ndvi.circuit_breaker import get_circuit_breaker
+
+        engine = request.data.get("engine")
+        if engine not in self._VALID_ENGINES:
+            return error_response(
+                f"Invalid engine. Must be: {', '.join(self._VALID_ENGINES)}",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cb = get_circuit_breaker(engine)
+        if cb is None:
+            return error_response(
+                f"Circuit breaker for '{engine}' not found. "
+                "The engine may not be initialized.",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        previous_state = cb.state
+        cb.reset()
+
+        return success_response(
+            {
+                "engine": engine,
+                "previous_state": previous_state,
+                "new_state": "closed",
+            },
+            message=f"Circuit breaker for '{engine}' reset to CLOSED",
         )

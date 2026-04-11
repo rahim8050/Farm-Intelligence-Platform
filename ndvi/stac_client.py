@@ -21,7 +21,10 @@ import httpx
 import numpy as np
 from django.conf import settings
 
-from ndvi.circuit_breaker import CircuitBreaker
+from ndvi.circuit_breaker import (
+    CircuitBreaker,
+    register_circuit_breaker,
+)
 from ndvi.engines.base import BBox
 from ndvi.retry_policy import (
     RetryCategory,
@@ -665,6 +668,7 @@ class StacClient:
             failure_threshold=cb_threshold,
             reset_timeout_secs=cb_timeout,
         )
+        register_circuit_breaker(self._circuit_breaker)
 
     def _apply_throttle(self) -> None:
         """Apply rate limiting with jitter to avoid WAF blocks.

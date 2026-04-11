@@ -4,6 +4,7 @@ from django.urls import path
 
 from .proxy_views import NdviIngestProxyView
 from .views import (
+    CircuitBreakerResetView,
     FarmStateView,
     NdviJobStatusView,
     NdviLatestView,
@@ -53,5 +54,10 @@ urlpatterns = [
         "ndvi",
         NdviIngestProxyView.as_view(),
         name="ndvi-ingest",
+    ),
+    path(
+        "ndvi/circuit-breaker/reset/",
+        CircuitBreakerResetView.as_view(),
+        name="ndvi-circuit-breaker-reset",
     ),
 ]
