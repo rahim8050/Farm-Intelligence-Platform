@@ -1,14 +1,17 @@
 # NDVI Pipeline Evolution - Implementation Status Report
 
-**Date:** April 4, 2026  
-**Architecture Document:** `docs/architecture/ndvi-pipeline-evolution.md`  
+**Date:** April 10, 2026
+**Architecture Document:** `docs/architecture/ndvi-pipeline-evolution.md`
 **Implementation Plan:** `docs/architecture/ndvi-phase-2-implementation-plan.md`
+**Related:** `NDVI_RETRY_POLICY_STATUS.md`
 
 ---
 
 ## Executive Summary
 
-The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add durable queue semantics, and improve observability. **Phase 1 is complete**, **Phase 2 Stage 1 is complete**, and **Phases 2-4 remain largely unimplemented**.
+The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add durable queue semantics, and improve observability. **Phase 1 is complete**, **Phase 2 Stage 1 is complete**, **retry policy hardening (Phase 1) is complete**, and **Phases 2-4 remain largely unimplemented**.
+
+**New dependency:** The Redis Streams implementation (Phase 2) should integrate with the hardened retry policy (`ndvi/retry_policy.py`) to ensure stream consumers make correct retry decisions.
 
 ---
 
@@ -60,6 +63,50 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
   - 54.7s delay during failover is acceptable for background jobs only
   - Not acceptable for real-time task dispatch (<10-15s target)
   - **Recommended:** Tune Celery reconnect behavior if needed
+
+---
+
+## Phase 1.5 - NDVI Retry Policy Hardening
+
+**Status:** ✅ **COMPLETE** (April 10, 2026)
+
+### What's Implemented:
+
+- ✅ **`classify_status_code()` — single source of truth**
+  - Located in `ndvi/retry_policy.py`.
+  - Canonical truth table for HTTP status → retry category mapping.
+  - 13 branches covered (400, 401, 403, 422, 429, 500-504, 200, 201, 204, None).
+
+- ✅ **Unified exception hierarchy**
+  - All NDVI errors inherit from `UpstreamFailureError`.
+  - Consistent `retryable`, `category`, `status_code` attributes.
+
+- ✅ **`should_retry()` — central retry decision function**
+  - Returns `RetryDecision(retry, delay, reason)`.
+  - Used by Celery task handlers for consistent retry behavior.
+
+- ✅ **Circuit breaker for STAC engine**
+  - `_CircuitBreaker` in `ndvi/stac_client.py`.
+  - CLOSED/OPEN/HALF_OPEN state machine.
+  - Configurable threshold and timeout.
+
+- ✅ **Network error handling fixed**
+  - `httpx.RequestError` wrapped after inline retry exhaustion.
+  - Celery-level retry now correctly handles transient network errors.
+
+- ✅ **Test coverage: 28 tests**
+  - Comprehensive truth table tests.
+  - Edge cases for all exception types.
+
+### What's Left Out:
+
+- ⏳ **Circuit breaker for SentinelHub engines** (metrics + raster).
+- ⏳ **Extract shared `_CircuitBreaker` to `ndvi/circuit_breaker.py`**.
+- ⏳ **Retry-After header parsing for 429 responses**.
+- ⏳ **Prometheus metrics for circuit breaker state**.
+- ⏳ **Admin endpoint to reset circuit breaker**.
+
+**Full details:** See `NDVI_RETRY_POLICY_STATUS.md`.
 
 ---
 
@@ -255,6 +302,7 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 | Phase | Status | Completion | Notes |
 |-------|--------|------------|-------|
 | **Phase 1: Redis Sentinel** | ✅ Complete | **100%** | Sentinel HA for broker/cache/result backend |
+| **Phase 1.5: Retry Policy Hardening** | ✅ Complete | **80%** | Policy consolidated, STAC circuit breaker done |
 | **Phase 2 Stage 1: Centralize Dispatch** | ✅ Complete | **100%** | Helpers, routing switch, and tests are in place |
 | **Phase 2 Stage 2: Transport Model** | 🟡 Decided | **10%** | Architecture chosen, not implemented |
 | **Phase 2 Stage 3: Stream Producer** | 🔴 Not Started | **0%** | No producer code exists |
@@ -263,16 +311,21 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 | **Phase 2 Stage 6: Observability** | 🔴 Not Started | **0%** | No stream metrics exported |
 | **Phase 2 Stage 7: Tests** | 🔴 Not Started | **0%** | No stream tests exist |
 | **Phase 2 Stage 8: Rollout** | 🔴 Not Started | **0%** | No production pilot |
-| **Phase 3: Observability** | 🔴 Not Started | **0%** | Blocked on Phase 2 |
+| **Phase 3: Observability** | 🔴 Not Started | **0%** | Merged into Phase 2 Stage 6 |
 | **Phase 4: Kafka** | 🔴 Deferred | **0%** | Intentionally deferred until thresholds met |
 
 ---
 
-## What's Going to Production Today (Apr 4, 2026)
+## What's Going to Production Today (Apr 10, 2026)
 
-**Recent commit:** `722eb27` - NDVI colormap normalization fix
+**Recent commits:**
+- `d739685` docs: add NDVI retry policy implementation status
+- `da63e83` docs: add daily report for 2026-04-10 retry policy hardening
+- `2c1c12d` refactor(ndvi): harden retry policy into single source of truth
 
-**Note:** This commit is **unrelated to the NDVI pipeline evolution phases**. It fixes the green PNG visualization issue but doesn't advance Phase 2 implementation.
+**Note:** The retry policy hardening is production-ready and improves error
+handling consistency across all NDVI engines. Stream producer/consumer work
+has not started.
 
 ---
 
@@ -280,14 +333,18 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 
 ### Immediate (This Week)
 
-1. **Stage 1 is complete**
-   - Proceed to stream producer and consumer implementation
+1. **Complete Retry Policy Phase 2** (1-2 days)
+   - Extract `_CircuitBreaker` to `ndvi/circuit_breaker.py`
+   - Add circuit breaker to SentinelHub engines
+   - See `NDVI_RETRY_POLICY_STATUS.md` for detailed roadmap
 
-2. **Implement Stage 3-4** (3-5 days)
+2. **Implement Stream Producer/Consumer** (Stage 3-4, 3-5 days)
    - Create `ndvi/streams.py` with producer logic
    - Create management command for consumer
    - Implement basic `XREADGROUP` + `XACK` loop
    - Add DLQ and `XTRIM` handling
+   - **Important:** Stream consumer should use `should_retry()` from
+     `ndvi/retry_policy.py` for consistent retry decisions
 
 ### Short-term (2-3 Weeks)
 
@@ -380,6 +437,15 @@ ndvi/tasks.py                            # Use dispatch helpers
 
 **Phase 1 (Redis Sentinel)** is fully implemented and validated in production-like conditions.
 
+**Phase 1.5 (Retry Policy Hardening)** is complete with 80% of planned work done.
+The retry policy is now a single source of truth with consistent error handling
+across all NDVI engines. Circuit breaker exists for STAC only; SentinelHub
+engines remain to be updated.
+
 **Phase 2 (Redis Streams)** has Stage 1 complete. The dispatch boundary is in place and the stream backend remains intentionally unimplemented. The core stream producer/consumer logic, observability, and stream-specific tests are still missing.
 
-**Priority:** Implement Stages 3-4 (producer/consumer) before adding observability and tests. The architecture documentation is now aligned with the codebase at Stage 1.
+**Recommended implementation order:**
+1. Complete retry policy Phase 2 (circuit breaker expansion) — 1-2 days
+2. Implement stream producer/consumer (Stages 3-4) — 3-5 days
+3. Add observability and tests (Stages 6-7) — 2-3 days
+4. Incremental rollout (Stage 8) — 1-2 weeks observation

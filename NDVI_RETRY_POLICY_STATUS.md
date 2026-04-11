@@ -2,7 +2,7 @@
 
 **Date:** April 10, 2026
 **Policy Module:** `ndvi/retry_policy.py`
-**Related:** `docs/contributing_weather_engines.md`
+**Related:** `docs/contributing_weather_engines.md`, `NDVI_PIPELINE_IMPLEMENTATION_STATUS.md`
 
 ---
 
@@ -160,6 +160,146 @@ expansion) and Phase 3 (observability) remain.
 
 ---
 
+## Implementation Roadmap: How to Complete All Phases
+
+### Recommended Order of Execution
+
+The phases should be implemented in this order to maximize value while
+minimizing risk:
+
+#### Step 1: Extract Shared Circuit Breaker (1-2 days)
+
+**Why first:** This is the foundation for Phase 2 and unblocks all downstream
+work. Extracting now prevents duplication when adding SentinelHub support.
+
+**What to do:**
+1. Create `ndvi/circuit_breaker.py` with generic `_CircuitBreaker` class
+2. Add comprehensive unit tests for all state transitions
+3. Update `stac_client.py` to import from shared module
+4. Verify existing tests still pass
+
+**Files to create/modify:**
+- `ndvi/circuit_breaker.py` (NEW, ~80 lines)
+- `ndvi/tests/test_circuit_breaker.py` (NEW, ~60 lines)
+- `ndvi/stac_client.py` (update import)
+
+**Definition of done:**
+- `_CircuitBreaker` is STAC-agnostic and well-tested
+- `StacClient` uses shared implementation
+- All existing tests pass
+
+---
+
+#### Step 2: Add Circuit Breakers to SentinelHub Engines (1-2 days)
+
+**Why second:** Now that the shared class exists, adding it to both engines is
+straightforward and symmetrical.
+
+**What to do:**
+1. Add circuit breaker to `SentinelHubEngine._request_with_retry()`
+2. Add circuit breaker to `SentinelHubRasterEngine._request_with_retry()`
+3. Add Django settings for both engines
+4. Update `.env.example` with new settings
+5. Add integration tests
+
+**Files to modify:**
+- `ndvi/engines/sentinelhub.py` (+15 lines)
+- `ndvi/raster/sentinelhub_engine.py` (+15 lines)
+- `config/settings.py` (+8 lines)
+- `.env.example` (+4 lines)
+- `ndvi/tests/test_ndvi_sentinelhub_engine.py` (+30 lines)
+- `ndvi/tests/test_ndvi_raster_engines.py` (+20 lines)
+
+**Definition of done:**
+- Both engines have circuit breakers with configurable thresholds
+- Tests verify state transitions
+- Settings documented in `.env.example`
+
+---
+
+#### Step 3: Add Retry-After Parsing (0.5 days)
+
+**Why third:** Small, isolated change that improves 429 handling accuracy.
+
+**What to do:**
+1. Add helper `_parse_retry_after(response)` in `retry_policy.py`
+2. Update `should_retry()` to extract and return delay from header
+3. Update Celery task handler to use `decision.delay` when available
+
+**Files to modify:**
+- `ndvi/retry_policy.py` (+20 lines)
+- `ndvi/tasks.py` (+5 lines)
+- `ndvi/tests/test_ndvi_retry_policy.py` (+30 lines)
+
+**Definition of done:**
+- 429 responses with `Retry-After` header use server-suggested delay
+- Fallback to default delay when header absent
+- Tests cover both cases
+
+---
+
+#### Step 4: Add Prometheus Metrics (1-2 days)
+
+**Why fourth:** Observability should land before admin endpoints so you can
+measure the impact of any changes.
+
+**What to do:**
+1. Add circuit breaker gauges to `ndvi/metrics.py`
+2. Instrument state transitions in `_CircuitBreaker`
+3. Add stream consumer metrics (when Phase 2 streams are implemented)
+4. Update Grafana dashboards
+
+**Files to modify:**
+- `ndvi/metrics.py` (+40 lines)
+- `ndvi/circuit_breaker.py` (+10 lines for metrics export)
+- Grafana dashboard JSON (update panels)
+
+**Definition of done:**
+- `ndvi_circuit_breaker_state{engine, upstream}` visible in Prometheus
+- State transition counter exported
+- Grafana panels show circuit breaker status per engine
+
+---
+
+#### Step 5: Add Admin & Health Endpoints (1-2 days)
+
+**Why fifth:** Admin controls are operational tooling that benefit from
+having metrics already in place.
+
+**What to do:**
+1. Create `ndvi/views.py` admin view for circuit breaker reset
+2. Create health check endpoint for upstream status
+3. Add URL routes under `/api/v1/ndvi/`
+4. Add OpenAPI documentation
+5. Add tests
+
+**Files to create/modify:**
+- `ndvi/views.py` (+60 lines for admin + health views)
+- `ndvi/urls.py` (+4 lines for routes)
+- `ndvi/tests/test_ndvi_admin_views.py` (NEW, ~50 lines)
+
+**Definition of done:**
+- `POST /api/v1/ndvi/circuit-breaker/reset` works with proper auth
+- `GET /api/v1/ndvi/health/upstream` returns all engine statuses
+- OpenAPI documents both endpoints
+- Tests cover success and failure paths
+
+---
+
+### Total Effort Estimate
+
+| Step | Description | Effort | Cumulative |
+|------|-------------|--------|------------|
+| 1 | Extract shared circuit breaker | 1-2 days | 1-2 days |
+| 2 | Add to SentinelHub engines | 1-2 days | 2-4 days |
+| 3 | Retry-After parsing | 0.5 days | 2.5-4.5 days |
+| 4 | Prometheus metrics | 1-2 days | 3.5-6.5 days |
+| 5 | Admin & health endpoints | 1-2 days | 4.5-8.5 days |
+
+**Total:** ~5-9 days of focused work
+
+---
+
 ## Files Modified (Phase 1)
 
 | File | Lines Changed | Description |
@@ -188,16 +328,22 @@ expansion) and Phase 3 (observability) remain.
 
 ## Recommended Next Steps
 
-1. **Extract `_CircuitBreaker`** to `ndvi/circuit_breaker.py` and add unit
-   tests for all state transitions.
-2. **Add circuit breaker** to SentinelHub metrics and raster engines.
-3. **Add Prometheus gauge** for circuit breaker state per engine.
-4. **Implement Retry-After parsing** for 429 rate-limit responses.
-5. **Add admin endpoint** `POST /api/v1/ndvi/circuit-breaker/reset`.
-6. **Add health check** `GET /api/v1/ndvi/health/upstream`.
+**Immediate (this week):**
+1. Extract `_CircuitBreaker` to `ndvi/circuit_breaker.py` (Step 1)
+2. Add circuit breaker to SentinelHub engines (Step 2)
+
+**Short-term (2-3 weeks):**
+3. Implement Retry-After parsing (Step 3)
+4. Add Prometheus metrics (Step 4)
+
+**Medium-term (1-2 months):**
+5. Add admin & health endpoints (Step 5)
+6. Integration with NDVI Pipeline Phase 2 (Redis Streams) observability
 
 ---
 
-## Commit
+## Commits
 
 - `2c1c12d` refactor(ndvi): harden retry policy into single source of truth
+- `da63e83` docs: add daily report for 2026-04-10 retry policy hardening
+- `d739685` docs: add NDVI retry policy implementation status
