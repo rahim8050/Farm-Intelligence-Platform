@@ -6,7 +6,20 @@ import logging
 import time
 from typing import Any
 
+from ndvi.metrics import (
+    ndvi_circuit_breaker_state,
+    ndvi_circuit_breaker_transitions_total,
+)
+
 logger = logging.getLogger(__name__)
+
+
+# State to numeric value mapping for Prometheus gauge
+_STATE_VALUES: dict[str, int] = {
+    "closed": 0,
+    "open": 1,
+    "half_open": 2,
+}
 
 
 class CircuitOpenError(RuntimeError):
@@ -77,6 +90,22 @@ class CircuitBreaker:
         self._failure_count = 0
         self._last_failure_time = 0.0
 
+        # Initialize Prometheus gauge to 0 (CLOSED)
+        ndvi_circuit_breaker_state.labels(engine=engine).set(
+            _STATE_VALUES[self.CLOSED]
+        )
+
+    def _record_transition(self, from_state: str, to_state: str) -> None:
+        """Record a state transition in Prometheus metrics."""
+        ndvi_circuit_breaker_state.labels(engine=self.engine).set(
+            _STATE_VALUES[to_state]
+        )
+        ndvi_circuit_breaker_transitions_total.labels(
+            engine=self.engine,
+            from_state=from_state,
+            to_state=to_state,
+        ).inc()
+
     @property
     def state(self) -> str:
         """Return current state, auto-transitioning OPEN→HALF_OPEN on
@@ -84,7 +113,9 @@ class CircuitBreaker:
         if self._state == self.OPEN:
             elapsed = time.monotonic() - self._last_failure_time
             if elapsed >= self._reset_timeout_secs:
+                old_state = self._state
                 self._state = self.HALF_OPEN
+                self._record_transition(old_state, self.HALF_OPEN)
                 logger.info(
                     "ndvi.circuit_breaker engine=%s"
                     " OPEN→HALF_OPEN after %.0fs",
@@ -99,6 +130,7 @@ class CircuitBreaker:
         if self._state == self.HALF_OPEN:
             old_state = self._state
             self._state = self.CLOSED
+            self._record_transition(old_state, self.CLOSED)
             logger.info(
                 "ndvi.circuit_breaker engine=%s %s→CLOSED (recovered)",
                 self.engine,
@@ -113,6 +145,7 @@ class CircuitBreaker:
         if self._state == self.HALF_OPEN:
             old_state = self._state
             self._state = self.OPEN
+            self._record_transition(old_state, self.OPEN)
             logger.warning(
                 "ndvi.circuit_breaker engine=%s %s→OPEN (upstream still down)",
                 self.engine,
@@ -121,6 +154,7 @@ class CircuitBreaker:
         elif self._failure_count >= self._failure_threshold:
             old_state = self._state
             self._state = self.OPEN
+            self._record_transition(old_state, self.OPEN)
             logger.warning(
                 "ndvi.circuit_breaker engine=%s %s→OPEN after %d failures",
                 self.engine,
@@ -138,6 +172,8 @@ class CircuitBreaker:
         self._state = self.CLOSED
         self._failure_count = 0
         self._last_failure_time = 0.0
+        if old_state != self.CLOSED:
+            self._record_transition(old_state, self.CLOSED)
         logger.info(
             "ndvi.circuit_breaker engine=%s %s→CLOSED (manual reset)",
             self.engine,

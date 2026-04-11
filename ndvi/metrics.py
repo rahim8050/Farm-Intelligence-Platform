@@ -32,3 +32,18 @@ ndvi_farms_stale_total = Gauge(
     "Gauge of farms missing fresh NDVI observations",
     labelnames=["engine"],
 )
+
+# Circuit breaker state gauge (one time series per engine)
+# Values: 0=CLOSED, 1=OPEN, 2=HALF_OPEN
+ndvi_circuit_breaker_state = Gauge(
+    "ndvi_circuit_breaker_state",
+    "Current state of NDVI circuit breaker",
+    labelnames=["engine"],
+)
+
+# Circuit breaker transition counter
+ndvi_circuit_breaker_transitions_total = Counter(
+    "ndvi_circuit_breaker_transitions_total",
+    "Total number of circuit breaker state transitions",
+    labelnames=["engine", "from_state", "to_state"],
+)
