@@ -1214,7 +1214,7 @@
       },
       "targets": [
         {
-          "expr": "rate(ndvi_circuit_breaker_transitions_total[5m])",
+          "expr": "rate(ndvi_circuit_breaker_transitions_total[5m]) or vector(0)",
           "legendFormat": "{{engine}} {{from_state}}→{{to_state}}",
           "refId": "A"
         }
@@ -1252,7 +1252,7 @@
       },
       "targets": [
         {
-          "expr": "rate(ndvi_upstream_requests_total{outcome=\"error\"}[5m])",
+          "expr": "rate(ndvi_upstream_requests_total{outcome=\"error\"}[5m]) or vector(0)",
           "legendFormat": "{{engine}}",
           "refId": "A"
         }
