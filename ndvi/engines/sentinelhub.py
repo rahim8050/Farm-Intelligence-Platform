@@ -15,6 +15,7 @@ from django.core.cache import caches
 
 from ndvi.circuit_breaker import (
     CircuitBreaker,
+    get_circuit_breaker,
     register_circuit_breaker,
 )
 from ndvi.metrics import (
@@ -152,7 +153,13 @@ class SentinelHubEngine(NDVIEngine):
         self.timeout_seconds = timeout_seconds or get_default_timeout_seconds()
         self._http = httpx.Client(timeout=self.timeout_seconds)
 
-        # Circuit breaker configuration
+        # Circuit breaker: reuse existing instance from AppConfig if available
+        self._circuit_breaker: CircuitBreaker = (
+            get_circuit_breaker("sentinelhub") or self._init_circuit_breaker()
+        )
+
+    def _init_circuit_breaker(self) -> CircuitBreaker:
+        """Create and register a new circuit breaker for SentinelHub engine."""
         cb_threshold = int(
             getattr(settings, "NDVI_SENTINELHUB_CIRCUIT_BREAKER_THRESHOLD", 3)
         )
@@ -163,12 +170,13 @@ class SentinelHubEngine(NDVIEngine):
                 300.0,
             )
         )
-        self._circuit_breaker = CircuitBreaker(
+        cb = CircuitBreaker(
             engine="sentinelhub",
             failure_threshold=cb_threshold,
             reset_timeout_secs=cb_timeout,
         )
-        register_circuit_breaker(self._circuit_breaker)
+        register_circuit_breaker(cb)
+        return cb
 
     def get_timeseries(
         self,

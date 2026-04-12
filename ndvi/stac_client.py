@@ -23,6 +23,7 @@ from django.conf import settings
 
 from ndvi.circuit_breaker import (
     CircuitBreaker,
+    get_circuit_breaker,
     register_circuit_breaker,
 )
 from ndvi.engines.base import BBox
@@ -656,19 +657,26 @@ class StacClient:
         )
         self._last_request_time = 0.0
 
-        # Circuit breaker configuration
+        # Circuit breaker: reuse existing instance from AppConfig if available
+        self._circuit_breaker: CircuitBreaker = (
+            get_circuit_breaker("stac") or self._init_circuit_breaker()
+        )
+
+    def _init_circuit_breaker(self) -> CircuitBreaker:
+        """Create and register a new circuit breaker for STAC engine."""
         cb_threshold = int(
             getattr(settings, "NDVI_STAC_CIRCUIT_BREAKER_THRESHOLD", 3)
         )
         cb_timeout = float(
             getattr(settings, "NDVI_STAC_CIRCUIT_BREAKER_TIMEOUT_SECS", 300.0)
         )
-        self._circuit_breaker = CircuitBreaker(
+        cb = CircuitBreaker(
             engine="stac",
             failure_threshold=cb_threshold,
             reset_timeout_secs=cb_timeout,
         )
-        register_circuit_breaker(self._circuit_breaker)
+        register_circuit_breaker(cb)
+        return cb
 
     def _apply_throttle(self) -> None:
         """Apply rate limiting with jitter to avoid WAF blocks.
