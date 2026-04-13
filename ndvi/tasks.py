@@ -21,6 +21,7 @@ from ndvi.farm_state import (
     compute_coverage_for_farm,
     get_cached_coverage_for_farm,
     get_coverage_threshold,
+    invalidate_farm_state_cache,
 )
 from ndvi.raster.sentinelhub_engine import SentinelHubRasterError
 from ndvi.retry_policy import RetryDecision, should_retry
@@ -407,6 +408,7 @@ def compute_farm_state_coverage(
         threshold=resolved_threshold,
         value=value,
     )
+    invalidate_farm_state_cache(farm_id=farm.id, engine=resolved_engine)
     return "ok"
 
 

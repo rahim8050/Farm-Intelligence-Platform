@@ -53,7 +53,8 @@ MIN_TREND_WINDOW_DAYS = 30
 MAX_TREND_WINDOW_DAYS = 60
 
 DEFAULT_COVERAGE_TTL_SECONDS = 21600
-DEFAULT_COVERAGE_LOCK_SECONDS = 300
+DEFAULT_COVERAGE_LOCK_SECONDS = 600
+DEFAULT_FARM_STATE_TTL_SECONDS = 3600
 
 DEFAULT_ESTABLISHMENT_MEAN_THRESHOLD = 0.25
 DEFAULT_ESTABLISHMENT_MAX_THRESHOLD = 0.4
@@ -145,6 +146,16 @@ def get_coverage_lock_seconds() -> int:
     )
 
 
+def get_farm_state_cache_ttl_seconds() -> int:
+    return int(
+        getattr(
+            settings,
+            "FARM_STATE_CACHE_TTL_SECONDS",
+            DEFAULT_FARM_STATE_TTL_SECONDS,
+        )
+    )
+
+
 def get_establishment_mean_threshold() -> float:
     return float(
         getattr(
@@ -209,6 +220,10 @@ def _coverage_lock_key(
         "farm_state:coverage:lock:"
         f"{farm_id}:{engine}:{target_date}:{threshold_key}"
     )
+
+
+def _farm_state_cache_key(*, farm_id: int, engine: str) -> str:
+    return f"farm_state:{farm_id}:{engine}"
 
 
 def _get_cached_coverage(
@@ -418,6 +433,16 @@ def _compute_coverage_pct(
     engine: str,
     observations: list[NdviObservation],
 ) -> float | None:
+    """Compute coverage percentage for a farm.
+
+    Coverage is cached for FARM_STATE_COVERAGE_TTL_SECONDS (default: 6h).
+    When the cache misses, this function returns ``None`` rather than
+    dispatching a Celery task. Coverage is pre-computed daily by Celery
+    Beat (``farm-state-daily-coverage`` at 03:45) which populates the
+    cache before users poll the endpoint.
+
+    This ensures the GET endpoint is strictly read-only with no side effects.
+    """
     if engine != "stac":
         return None
     if not observations:
@@ -432,18 +457,6 @@ def _compute_coverage_pct(
     )
     if cached:
         return value
-    if _acquire_coverage_lock(
-        farm_id=farm.id,
-        engine=engine,
-        target_date=target_date,
-        threshold=threshold,
-    ):
-        _enqueue_coverage_compute(
-            farm_id=farm.id,
-            engine=engine,
-            target_date=target_date,
-            threshold=threshold,
-        )
     return None
 
 
@@ -511,9 +524,24 @@ def build_farm_state(
     farm: Farm,
     engine: str | None = None,
 ) -> FarmStateResult:
+    """Build and cache the derived farm state.
+
+    On cache hit, returns the cached result without any database queries.
+    On cache miss, computes the state from observations, caches it for
+    ``FARM_STATE_CACHE_TTL_SECONDS`` (default: 1h), then returns it.
+
+    The farm state changes at most once per day (when new STAC data
+    arrives), so a 1-hour TTL is conservative and eliminates redundant
+    DB queries from Nextcloud polling.
+    """
     resolved_engine = (
         engine if engine is not None else get_default_ndvi_engine_name()
     )
+    cache_key = _farm_state_cache_key(farm_id=farm.id, engine=resolved_engine)
+    cached = caches["default"].get(cache_key)
+    if isinstance(cached, dict) and "farm_id" in cached:
+        return FarmStateResult(**cached)
+
     window_days = get_trend_window_days()
     end = date.today()
     start = end - timedelta(days=window_days)
@@ -540,7 +568,7 @@ def build_farm_state(
         trend=trend,
     )
 
-    return FarmStateResult(
+    result = FarmStateResult(
         farm_id=farm.id,
         mean_ndvi=mean_ndvi,
         max_ndvi=max_ndvi,
@@ -549,4 +577,21 @@ def build_farm_state(
         state=state,
         interpretation=interpretation,
         action=action,
+    )
+    caches["default"].set(
+        cache_key,
+        result.as_payload(),
+        timeout=get_farm_state_cache_ttl_seconds(),
+    )
+    return result
+
+
+def invalidate_farm_state_cache(*, farm_id: int, engine: str) -> None:
+    """Delete the cached farm state result.
+
+    Called after the coverage Celery task completes so the next GET
+    returns fresh data with the updated coverage_pct.
+    """
+    caches["default"].delete(
+        _farm_state_cache_key(farm_id=farm_id, engine=engine)
     )
