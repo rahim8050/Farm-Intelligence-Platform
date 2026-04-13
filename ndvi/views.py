@@ -1083,3 +1083,47 @@ class CircuitBreakerResetView(APIView):
             },
             message=f"Circuit breaker for '{engine}' reset to CLOSED",
         )
+
+
+class UpstreamHealthView(APIView):
+    """Return health status of all NDVI upstream services.
+
+    Auth: IsAuthenticated
+    Response: envelope with per-engine circuit breaker status
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name="UpstreamHealthResponse",
+                fields={
+                    "success": serializers.IntegerField(),
+                    "message": serializers.CharField(),
+                    "data": inline_serializer(
+                        name="UpstreamHealthData",
+                        fields={
+                            "engines": serializers.DictField(
+                                child=serializers.DictField(),
+                            ),
+                        },
+                    ),
+                },
+            ),
+            401: error_envelope_serializer("UpstreamHealthUnauthorized"),
+        },
+    )
+    def get(self, request: Request) -> Response:
+        """Return circuit breaker status for all NDVI engines."""
+
+        from ndvi.circuit_breaker import list_circuit_breakers
+
+        engines: dict[str, dict[str, object]] = {}
+        for name, cb in sorted(list_circuit_breakers().items()):
+            engines[name] = cb.get_status()
+
+        return success_response(
+            cast("dict[str, JSONValue]", {"engines": engines}),
+            message="Upstream health status",
+        )

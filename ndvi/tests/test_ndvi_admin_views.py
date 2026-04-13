@@ -100,3 +100,72 @@ class CircuitBreakerResetTests(APITestCase):
             from ndvi.circuit_breaker import _ENGINE_REGISTRY
 
             _ENGINE_REGISTRY.pop("sentinelhub", None)
+
+
+class UpstreamHealthTests(APITestCase):
+    """Verify the upstream health endpoint."""
+
+    def setUp(self) -> None:
+        password = secrets.token_urlsafe(12)
+        self.user = get_user_model().objects.create_user(
+            username="health-user",
+            email="health@example.com",
+            password=password,
+        )
+        self.url = reverse("ndvi-health-upstream")
+
+    def test_requires_authentication(self) -> None:
+        """Unauthenticated requests should get 401."""
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_returns_all_engines(self) -> None:
+        """Health endpoint should return all registered circuit breakers."""
+        self.client.force_authenticate(self.user)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.json()
+        self.assertEqual(data["status"], 0)
+        self.assertIn("engines", data["data"])
+        engines = data["data"]["engines"]
+        self.assertIsInstance(engines, dict)
+
+    def test_engine_status_has_expected_fields(self) -> None:
+        """Each engine status should have standard fields."""
+        self.client.force_authenticate(self.user)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        engines = resp.json()["data"]["engines"]
+        self.assertGreater(len(engines), 0)
+        # Check first available engine
+        first_name = next(iter(engines))
+        first_status = engines[first_name]
+        self.assertIn("engine", first_status)
+        self.assertIn("state", first_status)
+        self.assertIn("failure_count", first_status)
+        self.assertIn("failure_threshold", first_status)
+        self.assertIn("reset_timeout_secs", first_status)
+
+    def test_reflects_circuit_breaker_state(self) -> None:
+        """Health endpoint should reflect circuit breaker state changes."""
+        # Create a test circuit breaker and trip it
+        cb = CircuitBreaker(
+            engine="health_test_engine",
+            failure_threshold=3,
+            reset_timeout_secs=1.0,
+        )
+        for _ in range(3):
+            cb.record_failure()
+        self.assertEqual(cb.state, "open")
+        register_circuit_breaker(cb)
+
+        try:
+            self.client.force_authenticate(self.user)
+            resp = self.client.get(self.url)
+            self.assertEqual(resp.status_code, status.HTTP_200_OK)
+            engines = resp.json()["data"]["engines"]
+            self.assertEqual(engines["health_test_engine"]["state"], "open")
+        finally:
+            from ndvi.circuit_breaker import _ENGINE_REGISTRY
+
+            _ENGINE_REGISTRY.pop("health_test_engine", None)

@@ -181,9 +181,14 @@ expansion) and Phase 3 (observability) remain.
   - Response: envelope with `previous_state` and `new_state`
   - OpenAPI fully documented
 
-### Step 4: Health Check Endpoint 🔴 **NOT STARTED**
+### Step 4: Health Check Endpoint ✅ **COMPLETE**
 
-- 🔲 **`GET /api/v1/ndvi/health/upstream/`** — returns status of all upstream services
+- ✅ **`GET /api/v1/ndvi/health/upstream/`** — returns status of all upstream services
+  - Auth: `IsAuthenticated`
+  - Response: envelope with per-engine circuit breaker status
+  - Returns all registered engines with: state, failure_count, threshold, timeout
+  - OpenAPI fully documented
+  - Tests: 4 tests (auth, returns all engines, field validation, state reflection)
 
 ---
 
@@ -355,17 +360,12 @@ having metrics already in place.
 
 ## Recommended Next Steps
 
-**Immediate (this week):**
-1. Extract `_CircuitBreaker` to `ndvi/circuit_breaker.py` (Step 1)
-2. Add circuit breaker to SentinelHub engines (Step 2)
+**Phase 1-3 are fully complete.** No further retry policy work is required unless new requirements emerge.
 
-**Short-term (2-3 weeks):**
-3. Implement Retry-After parsing (Step 3)
-4. Add Prometheus metrics (Step 4)
-
-**Medium-term (1-2 months):**
-5. Add admin & health endpoints (Step 5)
-6. Integration with NDVI Pipeline Phase 2 (Redis Streams) observability
+**Potential future enhancements:**
+- Add alerting rules for circuit breaker OPEN state
+- Integrate with NDVI Pipeline Phase 2 (Redis Streams) observability
+- Consider adding circuit breaker metrics to existing Grafana alerts
 
 ---
 
@@ -379,3 +379,6 @@ having metrics already in place.
 - `a0a7d76` feat(ndvi): add Prometheus metrics for circuit breaker state
 - `760279e` feat(ndvi): add Retry-After header parsing for 429 responses
 - `32b81d7` feat(ndvi): add admin endpoint to reset circuit breakers
+- `e8bbb95` fix(ndvi): initialize circuit breakers at Django startup for metrics
+- `ec663c4` fix(grafana): show 0 instead of no-data for circuit breaker time series panels
+- `<pending>` feat(ndvi): add upstream health check endpoint (Phase 3 Step 4)

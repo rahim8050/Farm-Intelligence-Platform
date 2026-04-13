@@ -12,6 +12,7 @@ from .views import (
     NdviRasterQueueView,
     NdviRefreshView,
     NdviTimeseriesView,
+    UpstreamHealthView,
 )
 
 urlpatterns = [
@@ -59,5 +60,10 @@ urlpatterns = [
         "ndvi/circuit-breaker/reset/",
         CircuitBreakerResetView.as_view(),
         name="ndvi-circuit-breaker-reset",
+    ),
+    path(
+        "ndvi/health/upstream/",
+        UpstreamHealthView.as_view(),
+        name="ndvi-health-upstream",
     ),
 ]
