@@ -117,7 +117,7 @@ def _select_provider(name: str | None) -> ProviderName:
     try:
         return validate_provider(name, PROVIDER_REGISTRY)
     except ValueError as exc:
-        raise ValidationError(str(exc)) from exc
+        raise ValidationError("Invalid weather provider.") from exc
 
 
 def _resolve_farm_location(farm: Farm) -> Location:
