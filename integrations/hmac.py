@@ -127,17 +127,15 @@ def _log_hmac_debug(
         return
 
     canonical_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
-    secret_fingerprint = hashlib.sha256(secret).hexdigest()[:16]
     logger.debug(
         "nextcloud_hmac.debug client_id=%s method=%s path=%s "
-        "body_sha256=%s canonical_sha256=%s secret_sha256=%s "
+        "body_sha256=%s canonical_sha256=%s "
         "signature=%s expected_signature=%s",
         client_id,
         method.upper(),
         path,
         body_sha256,
         canonical_hash,
-        secret_fingerprint,
         signature,
         expected_signature,
     )
