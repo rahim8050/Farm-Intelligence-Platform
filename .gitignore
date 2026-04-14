@@ -33,3 +33,6 @@ celerybeat-schedule
 cert.pem
 key.pem
 .codex
+
+# AI prompts (local workspace only)
+prompts/

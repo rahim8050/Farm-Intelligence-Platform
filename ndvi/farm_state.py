@@ -54,7 +54,8 @@ MAX_TREND_WINDOW_DAYS = 60
 
 DEFAULT_COVERAGE_TTL_SECONDS = 21600
 DEFAULT_COVERAGE_LOCK_SECONDS = 600
-DEFAULT_FARM_STATE_TTL_SECONDS = 3600
+DEFAULT_FARM_STATE_TTL_SECONDS = 21600
+DEFAULT_FARM_STATE_LOCK_SECONDS = 30
 
 DEFAULT_ESTABLISHMENT_MEAN_THRESHOLD = 0.25
 DEFAULT_ESTABLISHMENT_MAX_THRESHOLD = 0.4
@@ -152,6 +153,16 @@ def get_farm_state_cache_ttl_seconds() -> int:
             settings,
             "FARM_STATE_CACHE_TTL_SECONDS",
             DEFAULT_FARM_STATE_TTL_SECONDS,
+        )
+    )
+
+
+def get_farm_state_lock_seconds() -> int:
+    return int(
+        getattr(
+            settings,
+            "FARM_STATE_LOCK_SECONDS",
+            DEFAULT_FARM_STATE_LOCK_SECONDS,
         )
     )
 
@@ -527,12 +538,12 @@ def build_farm_state(
     """Build and cache the derived farm state.
 
     On cache hit, returns the cached result without any database queries.
-    On cache miss, computes the state from observations, caches it for
-    ``FARM_STATE_CACHE_TTL_SECONDS`` (default: 1h), then returns it.
+    On cache miss, uses a lightweight distributed lock to prevent
+    cache stampede (only one caller recomputes; others fall through
+    to compute without caching on lock contention).
 
-    The farm state changes at most once per day (when new STAC data
-    arrives), so a 1-hour TTL is conservative and eliminates redundant
-    DB queries from Nextcloud polling.
+    TTL: ``FARM_STATE_CACHE_TTL_SECONDS`` (default: 6h).
+    Lock: ``cache.add`` with 30s auto-expiry (prevents deadlocks).
     """
     resolved_engine = (
         engine if engine is not None else get_default_ndvi_engine_name()
@@ -542,6 +553,37 @@ def build_farm_state(
     if isinstance(cached, dict) and "farm_id" in cached:
         return FarmStateResult(**cached)
 
+    # Cache miss — try to acquire a short-lived compute lock
+    lock_key = f"{cache_key}:lock"
+    acquired = caches["default"].add(
+        lock_key, "1", timeout=get_farm_state_lock_seconds()
+    )
+    if acquired:
+        # We won the lock — compute and cache
+        result = _compute_farm_state(farm=farm, engine=resolved_engine)
+        caches["default"].set(
+            cache_key,
+            result.as_payload(),
+            timeout=get_farm_state_cache_ttl_seconds(),
+        )
+        caches["default"].delete(lock_key)
+        return result
+
+    # Lock held by another request — try cache again briefly
+    cached = caches["default"].get(cache_key)
+    if isinstance(cached, dict) and "farm_id" in cached:
+        return FarmStateResult(**cached)
+
+    # Still no cache value — compute without caching to avoid stale data
+    return _compute_farm_state(farm=farm, engine=resolved_engine)
+
+
+def _compute_farm_state(
+    *,
+    farm: Farm,
+    engine: str,
+) -> FarmStateResult:
+    """Compute farm state from observations (no cache logic)."""
     window_days = get_trend_window_days()
     end = date.today()
     start = end - timedelta(days=window_days)
@@ -549,7 +591,7 @@ def build_farm_state(
     observations = list(
         NdviObservation.objects.filter(
             farm=farm,
-            engine=resolved_engine,
+            engine=engine,
             bucket_date__gte=start,
             bucket_date__lte=end,
         ).order_by("bucket_date")
@@ -559,7 +601,7 @@ def build_farm_state(
     max_ndvi = _compute_max_ndvi(observations)
     trend = _compute_trend_slope(observations)
     coverage_pct = _compute_coverage_pct(
-        farm=farm, engine=resolved_engine, observations=observations
+        farm=farm, engine=engine, observations=observations
     )
 
     state, interpretation, action = classify_farm_state(
@@ -568,7 +610,7 @@ def build_farm_state(
         trend=trend,
     )
 
-    result = FarmStateResult(
+    return FarmStateResult(
         farm_id=farm.id,
         mean_ndvi=mean_ndvi,
         max_ndvi=max_ndvi,
@@ -578,12 +620,6 @@ def build_farm_state(
         interpretation=interpretation,
         action=action,
     )
-    caches["default"].set(
-        cache_key,
-        result.as_payload(),
-        timeout=get_farm_state_cache_ttl_seconds(),
-    )
-    return result
 
 
 def invalidate_farm_state_cache(*, farm_id: int, engine: str) -> None:
