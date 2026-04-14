@@ -18,7 +18,6 @@ from ndvi.engines.base import NdviPoint
 from ndvi.engines.sentinelhub import SentinelHubAuthError
 from ndvi.models import NdviJob, NdviObservation, NdviRasterArtifact
 from ndvi.raster.sentinelhub_engine import (
-    MAX_ERROR_SNIPPET_CHARS,
     SentinelHubRasterError,
 )
 from ndvi.stac_client import StacProcessingError, StacUpstreamError
@@ -255,12 +254,8 @@ def test_run_ndvi_job_raster_size_and_error_recorded(
     assert result == "invalid"
     assert job.status == NdviJob.JobStatus.FAILED
     assert captured["size"] == 256
-    assert job.last_error is not None
-    assert "status=400" in job.last_error
-    body = job.last_error.split("body=", 1)[1]
-    assert body == snippet_text
-    assert body.endswith("...")
-    assert len(body) <= MAX_ERROR_SNIPPET_CHARS + 3
+    # SentinelHubRasterError is mapped to "raster_error" by _safe_error_message
+    assert job.last_error == "raster_error"
 
 
 @pytest.mark.django_db
@@ -306,7 +301,8 @@ def test_run_ndvi_job_raster_stac_error_records_last_error(
     job.refresh_from_db()
     assert job.status == NdviJob.JobStatus.FAILED
     assert job.last_error is not None
-    assert "stac raster failed" in job.last_error
+    # StacProcessingError → "processing_error" via _safe_error_message
+    assert job.last_error == "processing_error"
 
 
 @pytest.mark.django_db
@@ -445,7 +441,8 @@ def test_run_ndvi_job_refresh_latest_auth_error_returns_invalid(
     job.refresh_from_db()
     assert job.status == NdviJob.JobStatus.FAILED
     assert job.last_error is not None
-    assert "authentication failed" in job.last_error
+    # SentinelHubAuthError is mapped to "auth_failed" by _safe_error_message
+    assert job.last_error == "auth_failed"
 
 
 @pytest.mark.django_db
@@ -492,7 +489,8 @@ def test_run_ndvi_job_stac_upstream_non_retryable_returns_invalid(
     assert result == "invalid"
     job.refresh_from_db()
     assert job.status == NdviJob.JobStatus.FAILED
-    assert job.last_error == "upstream failed"
+    # StacUpstreamError is mapped to "upstream_error" by _safe_error_message
+    assert job.last_error == "upstream_error"
 
 
 @pytest.mark.django_db
@@ -684,7 +682,7 @@ def test_run_ndvi_job_max_retries_exceeded_marks_job_failed(
     assert result == "invalid"
     assert job.status == NdviJob.JobStatus.FAILED
     assert job.last_error is not None
-    assert "Max retries exceeded" in job.last_error
+    assert "max_retries_exceeded" in job.last_error
 
 
 @pytest.mark.django_db
@@ -733,8 +731,9 @@ def test_run_ndvi_job_exception_fails_fast(
         run_ndvi_job.apply(args=[job.id]).get()
     job.refresh_from_db()
     assert job.status == NdviJob.JobStatus.FAILED
-    assert job.last_error == "boom"
-    assert job.status == NdviJob.JobStatus.FAILED
+    # RuntimeError is not a known NDVI error type, so _safe_error_message
+    # maps it to "internal_error" for security (no sensitive details leaked).
+    assert job.last_error == "internal_error"
 
 
 @pytest.mark.django_db
