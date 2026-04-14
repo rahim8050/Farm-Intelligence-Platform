@@ -58,9 +58,13 @@ def test_farm_state_uses_cached_coverage(settings: Any) -> None:
 
 
 @pytest.mark.django_db
-def test_farm_state_enqueues_coverage_on_cache_miss(
+def test_farm_state_returns_none_on_coverage_cache_miss(
     settings: Any,
 ) -> None:
+    """When coverage cache misses, coverage_pct is None (no task dispatch).
+
+    Coverage is pre-computed daily by Celery Beat, not lazily on GET.
+    """
     caches["default"].clear()
     settings.NDVI_ENGINE = "stac"
     user = get_user_model().objects.create_user(
@@ -91,4 +95,4 @@ def test_farm_state_enqueues_coverage_on_cache_miss(
     ) as mock_enqueue:
         result = build_farm_state(farm=farm, engine="stac")
         assert result.coverage_pct is None
-        mock_enqueue.assert_called_once()
+        mock_enqueue.assert_not_called()
