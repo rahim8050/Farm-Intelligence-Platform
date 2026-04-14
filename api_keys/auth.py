@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import hmac
 import logging
 import secrets
 from datetime import timedelta
-import hmac
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
