@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_error_message(status_error: Exception | str) -> str:
-    """Return a non-sensitive error code suitable for persistence/user-adjacent flows."""
+    """Return a non-sensitive error code for persistence/user flows."""
     if isinstance(status_error, str):
         safe_string_codes = {
             "auth_failed",
@@ -71,7 +71,9 @@ def _safe_error_message(status_error: Exception | str) -> str:
             "no_best_item",
             "missing_assets",
         }
-        return status_error if status_error in safe_string_codes else "internal_error"
+        if status_error in safe_string_codes:
+            return status_error
+        return "internal_error"
     if isinstance(status_error, SentinelHubAuthError):
         return "auth_failed"
     if isinstance(status_error, StacWafBlockedError):

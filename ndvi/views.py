@@ -588,7 +588,10 @@ class NdviTimeseriesView(BaseFarmView):
         try:
             engine_name = resolve_ndvi_engine_name(engine_override)
         except ValueError as exc:
-            logger.warning("Invalid NDVI engine override received.", exc_info=exc)
+            logger.warning(
+                "Invalid NDVI engine override received.",
+                exc_info=exc,
+            )
             raise ValidationError("Invalid engine parameter.") from exc
         serializer = TimeseriesRequestSerializer(
             data=request.query_params, context={"engine": engine_name}
