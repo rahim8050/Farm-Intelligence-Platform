@@ -62,7 +62,6 @@ def _permission_detail(
     return {
         "detail": "Invalid Nextcloud signature",
         "code": exc.code,
-        "reason": str(exc),
     }
 
 
