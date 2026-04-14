@@ -85,7 +85,7 @@ class Farm(models.Model):
     )
 
     area_ha = models.DecimalField(
-        max_digits=12, decimal_places=3, null=True, blank=True
+        max_digits=12, decimal_places=4, null=True, blank=True
     )
 
     is_active = models.BooleanField(default=True)
