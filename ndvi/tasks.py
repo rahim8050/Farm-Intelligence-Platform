@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_error_message(status_error: Exception | str) -> str:
-    """Return a non-sensitive error string suitable for persistence/user-adjacent flows."""
+    """Return a non-sensitive error code suitable for persistence/user-adjacent flows."""
     if isinstance(status_error, str):
         safe_string_codes = {
             "auth_failed",
@@ -84,7 +84,7 @@ def _safe_error_message(status_error: Exception | str) -> str:
         return "raster_error"
     if isinstance(status_error, ValidationError):
         return "validation_error"
-    return status_error.__class__.__name__
+    return "internal_error"
 
 
 def _parse_date(raw: str | None) -> date | None:
