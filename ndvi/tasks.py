@@ -56,6 +56,25 @@ from .services import (
 logger = logging.getLogger(__name__)
 
 
+def _safe_error_message(status_error: Exception | str) -> str:
+    """Return a non-sensitive error string suitable for persistence/user-adjacent flows."""
+    if isinstance(status_error, str):
+        return status_error
+    if isinstance(status_error, SentinelHubAuthError):
+        return "auth_failed"
+    if isinstance(status_error, StacWafBlockedError):
+        return "waf_blocked"
+    if isinstance(status_error, StacUpstreamError):
+        return "upstream_error"
+    if isinstance(status_error, StacProcessingError):
+        return "processing_error"
+    if isinstance(status_error, SentinelHubRasterError):
+        return "raster_error"
+    if isinstance(status_error, ValidationError):
+        return "validation_error"
+    return status_error.__class__.__name__
+
+
 def _parse_date(raw: str | None) -> date | None:
     if not raw:
         return None
@@ -68,7 +87,9 @@ def _parse_date(raw: str | None) -> date | None:
 def _mark_job_failed(job: NdviJob, status_error: Exception | str) -> None:
     """Persist a failed job state with the provided error message."""
 
-    job.mark_finished(NdviJob.JobStatus.FAILED, error=str(status_error))
+    job.mark_finished(
+        NdviJob.JobStatus.FAILED, error=_safe_error_message(status_error)
+    )
 
 
 def _handle_retryable_task_failure(
@@ -103,7 +124,7 @@ def _handle_retryable_task_failure(
                 job.id,
                 retry_exc,
             )
-            _mark_job_failed(job, f"Max retries exceeded: {retry_exc}")
+            _mark_job_failed(job, "max_retries_exceeded")
             ndvi_jobs_total.labels(
                 status=NdviJob.JobStatus.FAILED,
                 type=job.job_type,
@@ -233,7 +254,9 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
         return "ok"
     except SentinelHubAuthError as exc:
         logger.warning("ndvi.job.auth_failed job_id=%s err=%s", job.id, exc)
-        job.mark_finished(NdviJob.JobStatus.FAILED, error=str(exc))
+        job.mark_finished(
+            NdviJob.JobStatus.FAILED, error=_safe_error_message(exc)
+        )
         ndvi_jobs_total.labels(
             status=NdviJob.JobStatus.FAILED,
             type=job.job_type,
