@@ -2265,7 +2265,7 @@ def test_select_provider_invalid() -> None:
 
     with pytest.raises(ValidationError) as exc_info:
         _select_provider("invalid_provider_xyz")
-    assert "invalid_provider_xyz" in str(exc_info.value)
+    assert "Invalid weather provider" in str(exc_info.value)
 
 
 def test_aggregate_weekly_empty() -> None:

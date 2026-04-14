@@ -201,7 +201,7 @@ class ApiKeyAuthentication(BaseAuthentication):
             logger.warning(
                 "api_key.auth.failure reason=%s path=%s method=%s "
                 "status_code=%s ip=%s ua=%s user_id=%s key_id=%s",
-                "invalid_credentials",
+                reason if reason != "ok" else "invalid_credentials",
                 getattr(request, "path", ""),
                 getattr(request, "method", ""),
                 401,
