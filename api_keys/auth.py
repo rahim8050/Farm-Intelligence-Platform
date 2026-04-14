@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import secrets
 from datetime import timedelta
-from hashlib import sha256
+import hmac
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
@@ -68,7 +68,11 @@ def _auth_cache() -> BaseCache:
 
 
 def _auth_cache_key(raw_key: str) -> str:
-    digest = sha256(_peppered_secret(raw_key).encode("utf-8")).hexdigest()
+    digest = hmac.new(
+        settings.DJANGO_API_KEY_PEPPER.encode("utf-8"),
+        raw_key.encode("utf-8"),
+        "sha256",
+    ).hexdigest()
     return f"api_key.auth:{digest}"
 
 
