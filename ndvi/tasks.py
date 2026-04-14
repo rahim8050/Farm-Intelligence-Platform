@@ -59,7 +59,19 @@ logger = logging.getLogger(__name__)
 def _safe_error_message(status_error: Exception | str) -> str:
     """Return a non-sensitive error string suitable for persistence/user-adjacent flows."""
     if isinstance(status_error, str):
-        return status_error
+        safe_string_codes = {
+            "auth_failed",
+            "waf_blocked",
+            "upstream_error",
+            "processing_error",
+            "raster_error",
+            "validation_error",
+            "max_retries_exceeded",
+            "no_items",
+            "no_best_item",
+            "missing_assets",
+        }
+        return status_error if status_error in safe_string_codes else "internal_error"
     if isinstance(status_error, SentinelHubAuthError):
         return "auth_failed"
     if isinstance(status_error, StacWafBlockedError):
