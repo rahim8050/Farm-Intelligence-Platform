@@ -686,7 +686,8 @@ class NdviLatestView(BaseFarmView):
         try:
             engine_name = resolve_ndvi_engine_name(engine_override)
         except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
+            logger.warning("Invalid NDVI engine override provided: %s", exc)
+            raise ValidationError("Invalid engine parameter.") from exc
         serializer = LatestRequestSerializer(
             data=request.query_params, context={"engine": engine_name}
         )
