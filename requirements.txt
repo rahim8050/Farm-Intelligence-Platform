@@ -60,7 +60,7 @@ pluggy==1.6.0
 pre_commit==4.5.1
 prometheus_client==0.24.1
 prompt_toolkit==3.0.52
-Pygments==2.19.2
+Pygments==2.20.0
 PyJWT==2.12.1
 pyparsing==3.3.2
 pytest==9.0.3
