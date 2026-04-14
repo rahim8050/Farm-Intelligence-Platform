@@ -90,49 +90,43 @@ expansion) and Phase 3 (observability) remain.
 
 ## Phase 2 — Circuit Breaker Expansion
 
-**Status:** 🔶 **IN PROGRESS** (STAC only; SentinelHub engines pending)
+**Status:** ✅ **COMPLETE** (April 11, 2026)
 
 ### What's Implemented:
 
-- ✅ **`_CircuitBreaker` in `ndvi/stac_client.py`**
+- ✅ **`CircuitBreaker` in `ndvi/circuit_breaker.py`** — generic, reusable
   - Three-state machine: CLOSED → OPEN → HALF_OPEN.
-  - Opens after `NDVI_STAC_CIRCUIT_BREAKER_THRESHOLD` (default: 3) failures.
-  - Auto-recovers after `NDVI_STAC_CIRCUIT_BREAKER_TIMEOUT_SECS` (default:
-    300s).
-  - Logs state transitions at INFO level.
-  - Raises `StacUpstreamError(retryable=False)` when circuit is open.
+  - Opens after `NDVI_{ENGINE}_CIRCUIT_BREAKER_THRESHOLD` (default: 3) failures.
+  - Auto-recovers after `NDVI_{ENGINE}_CIRCUIT_BREAKER_TIMEOUT_SECS` (default: 300s).
+  - Logs state transitions at INFO/WARNING level.
+  - Raises `UpstreamFailureError(retryable=False)` when circuit is open.
+  - 20 comprehensive unit tests for all state transitions.
+  - Prometheus metrics: gauge + transition counter.
+
+- ✅ **All 3 engines protected**
+  - `StacClient` → `engine="stac"`
+  - `SentinelHubEngine` → `engine="sentinelhub"`
+  - `SentinelHubRasterEngine` → `engine="sentinelhub_raster"`
+
+- ✅ **Circuit breakers registered at Django startup**
+  - `NdviConfig.ready()` eagerly initializes all 3
+  - Engines reuse existing instances (no duplicates)
 
 - ✅ **Celery task respects circuit breaker**
   - `run_ndvi_job` catches `StacUpstreamError` with `retryable=False` and
     marks job as FAILED (no wasted retries).
   - Test: `test_run_ndvi_job_stac_circuit_breaker_persists_across_retries`.
 
-### What's Left:
+- ✅ **`.env.example` updated** with SentinelHub circuit breaker settings.
 
-- ⏳ **Extract `_CircuitBreaker` to shared module**
-  - Move from `ndvi/stac_client.py` to `ndvi/circuit_breaker.py`.
-  - Add unit tests for all state transitions.
-  - Make class generic (not STAC-specific).
-
-- ⏳ **Add circuit breaker to SentinelHub metrics engine**
-  - `ndvi/engines/sentinelhub.py` — `_request_with_retry()`.
-  - Settings: `NDVI_SENTINELHUB_CIRCUIT_BREAKER_THRESHOLD`,
-    `NDVI_SENTINELHUB_CIRCUIT_BREAKER_TIMEOUT_SECS`.
-
-- ⏳ **Add circuit breaker to SentinelHub raster engine**
-  - `ndvi/raster/sentinelhub_engine.py` — `_request_with_retry()`.
-  - Same settings pattern as metrics engine.
-
-- ⏳ **Update `.env.example`** with new SentinelHub circuit breaker settings.
-
-- ⏳ **Integration tests** that mock circuit breaker state transitions for
-  SentinelHub engines.
+- ✅ **Admin endpoint** to manually reset circuit breakers
+  - `POST /api/v1/ndvi/circuit-breaker/reset/`
 
 ---
 
 ## Phase 3 — Observability & Admin Controls
 
-**Status:** 🔶 **IN PROGRESS** (Steps 1-3 complete; Step 4 remaining)
+**Status:** ✅ **COMPLETE** (April 12, 2026)
 
 ### Step 1: Prometheus Metrics ✅ **COMPLETE**
 
@@ -147,8 +141,8 @@ expansion) and Phase 3 (observability) remain.
 - ✅ **Grafana dashboard updated** (`weather-apis-observability.json`)
   - Panel 23-25: Stat panels for STAC, SentinelHub, SH Raster circuit breaker state
     - Color-coded: green (CLOSED), red (OPEN), yellow (HALF_OPEN)
-  - Panel 26: Time series for state transition rate (5m rate)
-  - Panel 27: Time series for upstream request failure rate (5m rate)
+  - Panel 26: Time series for state transition rate (5m rate, `or vector(0)` fallback)
+  - Panel 27: Time series for upstream request failure rate (5m rate, `or vector(0)` fallback)
 
 ### Step 2: Retry-After Header Parsing ✅ **COMPLETE**
 
@@ -180,6 +174,7 @@ expansion) and Phase 3 (observability) remain.
   - Request: `{"engine": "stac"|"sentinelhub"|"sentinelhub_raster"}`
   - Response: envelope with `previous_state` and `new_state`
   - OpenAPI fully documented
+  - 4 tests (auth, invalid engine, success, noop)
 
 ### Step 4: Health Check Endpoint ✅ **COMPLETE**
 
@@ -188,179 +183,21 @@ expansion) and Phase 3 (observability) remain.
   - Response: envelope with per-engine circuit breaker status
   - Returns all registered engines with: state, failure_count, threshold, timeout
   - OpenAPI fully documented
-  - Tests: 4 tests (auth, returns all engines, field validation, state reflection)
-
----
-
-## Implementation Roadmap: How to Complete All Phases
-
-### Recommended Order of Execution
-
-The phases should be implemented in this order to maximize value while
-minimizing risk:
-
-#### Step 1: Extract Shared Circuit Breaker (1-2 days)
-
-**Why first:** This is the foundation for Phase 2 and unblocks all downstream
-work. Extracting now prevents duplication when adding SentinelHub support.
-
-**What to do:**
-1. Create `ndvi/circuit_breaker.py` with generic `_CircuitBreaker` class
-2. Add comprehensive unit tests for all state transitions
-3. Update `stac_client.py` to import from shared module
-4. Verify existing tests still pass
-
-**Files to create/modify:**
-- `ndvi/circuit_breaker.py` (NEW, ~80 lines)
-- `ndvi/tests/test_circuit_breaker.py` (NEW, ~60 lines)
-- `ndvi/stac_client.py` (update import)
-
-**Definition of done:**
-- `_CircuitBreaker` is STAC-agnostic and well-tested
-- `StacClient` uses shared implementation
-- All existing tests pass
-
----
-
-#### Step 2: Add Circuit Breakers to SentinelHub Engines (1-2 days)
-
-**Why second:** Now that the shared class exists, adding it to both engines is
-straightforward and symmetrical.
-
-**What to do:**
-1. Add circuit breaker to `SentinelHubEngine._request_with_retry()`
-2. Add circuit breaker to `SentinelHubRasterEngine._request_with_retry()`
-3. Add Django settings for both engines
-4. Update `.env.example` with new settings
-5. Add integration tests
-
-**Files to modify:**
-- `ndvi/engines/sentinelhub.py` (+15 lines)
-- `ndvi/raster/sentinelhub_engine.py` (+15 lines)
-- `config/settings.py` (+8 lines)
-- `.env.example` (+4 lines)
-- `ndvi/tests/test_ndvi_sentinelhub_engine.py` (+30 lines)
-- `ndvi/tests/test_ndvi_raster_engines.py` (+20 lines)
-
-**Definition of done:**
-- Both engines have circuit breakers with configurable thresholds
-- Tests verify state transitions
-- Settings documented in `.env.example`
-
----
-
-#### Step 3: Add Retry-After Parsing (0.5 days)
-
-**Why third:** Small, isolated change that improves 429 handling accuracy.
-
-**What to do:**
-1. Add helper `_parse_retry_after(response)` in `retry_policy.py`
-2. Update `should_retry()` to extract and return delay from header
-3. Update Celery task handler to use `decision.delay` when available
-
-**Files to modify:**
-- `ndvi/retry_policy.py` (+20 lines)
-- `ndvi/tasks.py` (+5 lines)
-- `ndvi/tests/test_ndvi_retry_policy.py` (+30 lines)
-
-**Definition of done:**
-- 429 responses with `Retry-After` header use server-suggested delay
-- Fallback to default delay when header absent
-- Tests cover both cases
-
----
-
-#### Step 4: Add Prometheus Metrics (1-2 days)
-
-**Why fourth:** Observability should land before admin endpoints so you can
-measure the impact of any changes.
-
-**What to do:**
-1. Add circuit breaker gauges to `ndvi/metrics.py`
-2. Instrument state transitions in `_CircuitBreaker`
-3. Add stream consumer metrics (when Phase 2 streams are implemented)
-4. Update Grafana dashboards
-
-**Files to modify:**
-- `ndvi/metrics.py` (+40 lines)
-- `ndvi/circuit_breaker.py` (+10 lines for metrics export)
-- Grafana dashboard JSON (update panels)
-
-**Definition of done:**
-- `ndvi_circuit_breaker_state{engine, upstream}` visible in Prometheus
-- State transition counter exported
-- Grafana panels show circuit breaker status per engine
-
----
-
-#### Step 5: Add Admin & Health Endpoints (1-2 days)
-
-**Why fifth:** Admin controls are operational tooling that benefit from
-having metrics already in place.
-
-**What to do:**
-1. Create `ndvi/views.py` admin view for circuit breaker reset
-2. Create health check endpoint for upstream status
-3. Add URL routes under `/api/v1/ndvi/`
-4. Add OpenAPI documentation
-5. Add tests
-
-**Files to create/modify:**
-- `ndvi/views.py` (+60 lines for admin + health views)
-- `ndvi/urls.py` (+4 lines for routes)
-- `ndvi/tests/test_ndvi_admin_views.py` (NEW, ~50 lines)
-
-**Definition of done:**
-- `POST /api/v1/ndvi/circuit-breaker/reset` works with proper auth
-- `GET /api/v1/ndvi/health/upstream` returns all engine statuses
-- OpenAPI documents both endpoints
-- Tests cover success and failure paths
-
----
-
-### Total Effort Estimate
-
-| Step | Description | Effort | Cumulative |
-|------|-------------|--------|------------|
-| 1 | Extract shared circuit breaker | 1-2 days | 1-2 days |
-| 2 | Add to SentinelHub engines | 1-2 days | 2-4 days |
-| 3 | Retry-After parsing | 0.5 days | 2.5-4.5 days |
-| 4 | Prometheus metrics | 1-2 days | 3.5-6.5 days |
-| 5 | Admin & health endpoints | 1-2 days | 4.5-8.5 days |
-
-**Total:** ~5-9 days of focused work
-
----
-
-## Files Modified (Phase 1)
-
-| File | Lines Changed | Description |
-|------|---------------|-------------|
-| `ndvi/retry_policy.py` | NEW (56) | Canonical retry policy with truth table |
-| `ndvi/stac_client.py` | +24/-15 | Simplified, removed duplicates |
-| `ndvi/engines/sentinelhub.py` | +24/-6 | Added `SentinelHubUpstreamError` |
-| `ndvi/raster/sentinelhub_engine.py` | +11/-4 | Added `SentinelHubRasterError` |
-| `ndvi/tasks.py` | +58/-38 | Extracted shared retry helper |
-| `ndvi/tests/test_ndvi_retry_policy.py` | NEW (84) | 28 comprehensive tests |
-| `ndvi/tests/test_ndvi_sentinelhub_engine.py` | +2/-1 | Updated assertion |
-| `ndvi/tests/test_ndvi_raster_engines.py` | +1/-1 | Updated assertion |
-
-**Total:** ~201 lines added across 8 files (2 new files).
+  - 4 tests (auth, returns all engines, field validation, state reflection)
 
 ---
 
 ## Verification
 
 - ✅ pre-commit (ruff, ruff format, bandit, mypy) passed.
-- ✅ 110 tests passed across retry policy, STAC client, raster engines,
-  SentinelHub engine, and task tests.
+- ✅ All 572+ tests passed across the full codebase.
 - ✅ No regressions in existing functionality.
 
 ---
 
 ## Recommended Next Steps
 
-**Phase 1-3 are fully complete.** No further retry policy work is required unless new requirements emerge.
+**All three phases are fully complete.** No further retry policy work is required unless new requirements emerge.
 
 **Potential future enhancements:**
 - Add alerting rules for circuit breaker OPEN state
@@ -380,5 +217,8 @@ having metrics already in place.
 - `760279e` feat(ndvi): add Retry-After header parsing for 429 responses
 - `32b81d7` feat(ndvi): add admin endpoint to reset circuit breakers
 - `e8bbb95` fix(ndvi): initialize circuit breakers at Django startup for metrics
-- `ec663c4` fix(grafana): show 0 instead of no-data for circuit breaker time series panels
-- `<pending>` feat(ndvi): add upstream health check endpoint (Phase 3 Step 4)
+- `ec663c4` fix(grafana): show 0 instead of no-data for circuit breaker time series
+- `25f7a44` feat(ndvi): add upstream health check endpoint (Phase 3 complete)
+- `fd4baf4` fix(ndvi): make farm state GET read-only with cache layer
+- `bdca6b7` fix(ndvi): harden farm state cache with stampede protection
+- `6e59ed6` fix(ndvi): align test assertions with _safe_error_message() codes
