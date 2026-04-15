@@ -26,7 +26,9 @@ Including another URLconf
 # - /api/v1/integrations/ -> integrations.urls
 
 from django.contrib import admin
+from django.http import HttpResponse
 from django.urls import include, path
+from django.views.generic import RedirectView
 from drf_spectacular.views import (
     SpectacularRedocView,
     SpectacularSwaggerView,
@@ -36,12 +38,32 @@ from .views import CachedSpectacularAPIView, home
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path(
+        "favicon.ico",
+        lambda _: HttpResponse(status=204),
+        name="favicon-ico",
+    ),
+    path(
+        "apple-touch-icon.png",
+        lambda _: HttpResponse(status=204),
+        name="apple-touch-icon",
+    ),
+    path(
+        "apple-touch-icon-precomposed.png",
+        lambda _: HttpResponse(status=204),
+        name="apple-touch-icon-precomposed",
+    ),
     path("", home, name="home"),
     path("", include("django_prometheus.urls")),
     path(
         "api/schema/",
         CachedSpectacularAPIView.as_view(),
         name="schema",
+    ),
+    path(
+        "api/docs",
+        RedirectView.as_view(url="/api/docs/", permanent=True),
+        name="swagger-ui-redirect",
     ),
     path(
         "api/docs/",

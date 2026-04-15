@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.urls import path
+from django.views.generic import RedirectView
 
 from .proxy_views import NdviIngestProxyView
 from .views import (
@@ -16,6 +17,11 @@ from .views import (
 )
 
 urlpatterns = [
+    path(
+        "farm-state/",
+        RedirectView.as_view(url="/api/v1/farms/", permanent=True),
+        name="farm-state-redirect",
+    ),
     path(
         "farm-state/<int:farm_id>/",
         FarmStateView.as_view(),

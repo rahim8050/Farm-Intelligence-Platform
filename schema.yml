@@ -257,7 +257,7 @@ paths:
       tags:
       - v1
       security:
-      - jwtAuth: []
+      - BearerAuth: []
       - ApiKeyAuth: []
       responses:
         '200':
@@ -1961,6 +1961,68 @@ paths:
               schema:
                 $ref: '#/components/schemas/NdviProxyError'
           description: ''
+  /api/v1/ndvi/circuit-breaker/reset/:
+    post:
+      operationId: v1_ndvi_circuit_breaker_reset_create
+      description: Reset a circuit breaker to CLOSED state.
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CircuitBreakerResetRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CircuitBreakerResetRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CircuitBreakerResetRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CircuitBreakerResetResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CircuitBreakerResetBadRequest'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CircuitBreakerResetForbidden'
+          description: ''
+  /api/v1/ndvi/health/upstream/:
+    get:
+      operationId: v1_ndvi_health_upstream_retrieve
+      description: Return circuit breaker status for all NDVI engines.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamHealthResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamHealthUnauthorized'
+          description: ''
   /api/v1/ndvi/jobs/{job_id}/:
     get:
       operationId: v1_ndvi_jobs_retrieve
@@ -2468,6 +2530,74 @@ components:
       required:
       - tokens
       - user
+    CircuitBreakerResetBadRequest:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - errors
+      - message
+      - status
+    CircuitBreakerResetData:
+      type: object
+      properties:
+        engine:
+          type: string
+        previous_state:
+          type: string
+        new_state:
+          type: string
+      required:
+      - engine
+      - new_state
+      - previous_state
+    CircuitBreakerResetForbidden:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - errors
+      - message
+      - status
+    CircuitBreakerResetRequest:
+      type: object
+      properties:
+        engine:
+          enum:
+          - stac
+          - sentinelhub
+          - sentinelhub_raster
+          type: string
+          description: |-
+            * `stac` - stac
+            * `sentinelhub` - sentinelhub
+            * `sentinelhub_raster` - sentinelhub_raster
+          x-spec-enum-id: 36cc72c29a1659b7
+      required:
+      - engine
+    CircuitBreakerResetResponse:
+      type: object
+      properties:
+        success:
+          type: integer
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/CircuitBreakerResetData'
+      required:
+      - data
+      - message
+      - success
     CurrentWeather:
       type: object
       properties:
@@ -2607,7 +2737,7 @@ components:
         area_ha:
           type: string
           format: decimal
-          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          pattern: ^-?\d{0,8}(?:\.\d{0,4})?$
           nullable: true
         is_active:
           type: boolean
@@ -4042,7 +4172,7 @@ components:
         area_ha:
           type: string
           format: decimal
-          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          pattern: ^-?\d{0,8}(?:\.\d{0,4})?$
           nullable: true
         is_active:
           type: boolean
@@ -4142,6 +4272,42 @@ components:
           nullable: true
       required:
       - data
+      - errors
+      - message
+      - status
+    UpstreamHealthData:
+      type: object
+      properties:
+        engines:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: {}
+      required:
+      - engines
+    UpstreamHealthResponse:
+      type: object
+      properties:
+        success:
+          type: integer
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/UpstreamHealthData'
+      required:
+      - data
+      - message
+      - success
+    UpstreamHealthUnauthorized:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
       - errors
       - message
       - status
