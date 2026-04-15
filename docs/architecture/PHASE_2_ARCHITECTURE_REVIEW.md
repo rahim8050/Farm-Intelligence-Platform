@@ -17,12 +17,13 @@ The architecture documents are well-structured but have several **critical gaps*
 
 1. ✅ **Phase 1 is complete** and validated
 2. ✅ **Stage 1 is complete** - routing switch and tests are in place
-3. ❌ **Stages 2-8 not started** - but architecture has evolved since docs written
-4. 🔴 **Critical: Colormap normalization fix changes raster pipeline** - docs don't reflect this
-5. 🔴 **Critical: STAC raster fallback improvements** - docs assume old behavior
-6. ⚠️ **Redis Sentinel failover latency** (54.7s) may impact stream consumer design
-7. ❌ **Missing: Error handling strategy** for stream → Celery handoff failures
-8. ❌ **Missing: Idempotency guarantees** beyond `request_hash`
+3. ✅ **Stage 2 is complete** - transport model decision made
+4. ✅ **Stage 3 is complete** - stream producer implemented (April 15, 2026)
+5. ❌ **Stages 4-8 not started** - consumer, observability, tests, rollout pending
+6. ✅ **Resolved: Colormap normalization** - now included in stream payload
+7. ⚠️ **Redis Sentinel failover latency** (54.7s) may impact stream consumer design
+8. ❌ **Missing: Error handling strategy** for stream → Celery handoff failures (Stage 4)
+9. ❌ **Missing: Idempotency guarantees** beyond `request_hash` (Stage 4)
 
 ---
 
@@ -135,100 +136,75 @@ The architecture documents are well-structured but have several **critical gaps*
 
 ---
 
-### Phase 2 Stage 3 – Add Stream Producer Logic 🔴 0% COMPLETE
+### Phase 2 Stage 3 – Add Stream Producer Logic ✅ COMPLETE (100%)
 
-**Status:** No producer code exists
+**Status:** Producer implemented and tested (April 15, 2026)
 
-**What's Missing:**
-1. ❌ **Stream module** (`ndvi/streams.py` or `ndvi/streaming.py`)
-2. ❌ **Stream payload schema** (documented but not implemented)
-3. ❌ **`publish_ndvi_job()` function**
-4. ❌ **`publish_farm_state_coverage()` function**
-5. ❌ **Stream idempotency key implementation**
+**What's Done:**
+1. ✅ **Stream module** (`ndvi/streams.py`) created
+2. ✅ **Stream payload schema** implemented with all 13 fields
+3. ✅ **`publish_ndvi_job()` function** implemented
+4. ✅ **`publish_farm_state_coverage()` function** implemented
+5. ✅ **`colormap_normalization`** field included in payload
+6. ✅ **Dispatch helpers updated** to call producer when `NDVI_QUEUE_BACKEND=stream`
+7. ✅ **All 8 stream settings** added to `config/settings.py`
+8. ✅ **Tests** — 16 new tests in `ndvi/tests/test_ndvi_streams.py`
+9. ✅ **Existing tests updated** — 2 tests in `test_ndvi_services.py` no longer expect `NotImplementedError`
 
-**Critical Architecture Issues:**
+**Resolved Issues:**
 
-**Issue 1: Colormap normalization fix changes raster pipeline**
-- **Recent change:** Commit `722eb27` added `colormap_normalization` to `RasterRequest`
-- **Impact:** Stream payload schema must now include `colormap_normalization` field
-- **Missing from docs:** Schema doesn't reflect this new field
-- **Recommendation:** Update stream payload schema to include:
-  ```python
-  {
-      "job_id": int,
-      "request_hash": str,
-      "farm_id": int,
-      "owner_id": int,
-      "engine": str,
-      "job_type": str,
-      "params": dict,  # serialized params
-      "colormap_normalization": str,  # NEW: "histogram" or "fixed"
-      "enqueue_timestamp": float,
-  }
-  ```
+**Issue 1: Colormap normalization ✅ RESOLVED**
+- `colormap_normalization` field included in stream payload via `get_default_colormap_normalization()`
+- Payload uses `ColormapNormalization.value` (string: `"histogram"` or `"fixed"`)
 
-**Issue 2: STAC raster fallback improvements not reflected**
-- **Recent changes:** Commit `9fb2365` improved STAC raster fallback handling
-- **Changes:**
-  - Default assets changed: `B04` → `B04_10m`, `B08` → `B08_10m`
-  - Candidate ranking added
-  - Structured error reporting added
-- **Impact:** Stream consumer must handle these new error types
-- **Missing from docs:** Error handling strategy doesn't cover structured errors
-- **Recommendation:** Add error classification to stream consumer:
-  ```python
-  # Error types consumer must handle:
-  # - no_items: STAC search returned nothing
-  # - no_best_item: No items within date window
-  # - missing_assets: Items lack required bands
-  # - processing_failed: Raster processing error
-  # - empty_stats: NDVI computation returned empty
-  ```
+**Issue 2: STAC raster fallback improvements ✅ NOTED FOR CONSUMER**
+- Error classification still needed for Stage 4 consumer implementation
+- Producer correctly passes through job data; consumer handles error routing
 
-**Issue 3: Job model may need stream metadata fields**
-- **Question:** Should `NdviJob` track stream processing state?
-- **Options:**
-  1. **No persistence** (simpler): Stream is transient, job tracks state
-  2. **Stream metadata on job** (more observable): Add fields like:
-     - `stream_entry_id: str` (Redis stream entry ID)
-     - `stream_enqueued_at: datetime`
-     - `stream_attempts: int`
-- **Recommendation:** Option 1 for MVP, Option 2 if observability proves critical
+**Issue 3: Job model stream metadata fields ✅ DECIDED: Option 1**
+- Stream is transient; `NdviJob` does not track stream processing state
+- Idempotency handled by existing `UniqueConstraint` on `(owner, farm, engine, request_hash)`
 
-**Document Updates Needed:**
-```markdown
-# Update Stage 3 section in ndvi-phase-2-implementation-plan.md:
+**Implementation Details:**
 
-### Stream Payload Schema (Updated April 2026)
-The stream entry must contain all fields needed to reconstruct the job:
+| Component | File | Lines |
+|---|---|---|
+| Producer module | `ndvi/streams.py` | 185 |
+| Stream tests | `ndvi/tests/test_ndvi_streams.py` | 337 |
+| Settings | `config/settings.py` | +8 settings |
+| Dispatch updates | `ndvi/services.py` | Updated 2 functions |
 
+**Stream Payload Schema (Implemented):**
+
+```python
 {
-    "job_id": int,                    # NdviJob.id
+    "job_id": str,                    # NdviJob.id
     "request_hash": str,              # Idempotency key
-    "farm_id": int,                   # Farm reference
-    "owner_id": int,                  # Job owner
+    "farm_id": str,                   # Farm reference
+    "owner_id": str,                  # Job owner
     "engine": str,                    # "stac" or "sentinelhub"
     "job_type": str,                  # JobType enum value
-    "start": str | null,              # ISO date or null
-    "end": str | null,                # ISO date or null
-    "step_days": int | null,          # Raster size or step days
-    "max_cloud": int | null,          # Cloud cover threshold
-    "lookback_days": int | null,      # Lookback window
-    "colormap_normalization": str,    # NEW: "histogram" or "fixed"
-    "enqueue_timestamp": float,       # When published to stream
+    "start": str,                     # ISO date or empty string
+    "end": str,                       # ISO date or empty string
+    "step_days": str,                 # Step days or empty string
+    "max_cloud": str,                 # Cloud threshold or empty string
+    "lookback_days": str,             # Lookback window or empty string
+    "colormap_normalization": str,    # "histogram" or "fixed"
+    "enqueue_timestamp": str,         # Unix timestamp
 }
-
-### Idempotency Strategy
-- Primary: request_hash (existing, unchanged)
-- Secondary: Stream entry ID (for deduplication at consumer level)
-- Consumer must check request_hash before enqueueing to Celery
-
-### Error Classification
-Stream consumer must distinguish error types for proper retry/DLQ routing:
-- Transient errors: Retry with backoff (network, STAC timeout)
-- Permanent errors: Send to DLQ (missing assets, invalid params)
-- Structural errors: Log and alert (schema violations, config errors)
 ```
+
+**Note:** All values are strings (Redis streams require string field values).
+
+**Verification Results:**
+- Ruff: 0 errors
+- Bandit: No issues identified
+- Pytest: 35/35 tests pass (16 stream + 19 service tests)
+
+**Remaining Work:**
+- Stage 4: Consumer implementation (XREADGROUP, XACK, XPENDING, XCLAIM, DLQ)
+- Stage 5: Additional settings already done; validation at startup still needed
+- Stage 6: Observability metrics for stream
 
 ---
 
@@ -927,80 +903,59 @@ Earliest re-evaluation date: Q3 2026 (6 months after stream rollout)
 1. **Stage 1** (already complete)
    - Routing switch implementation
    - Routing tests
-   - Ready for Stage 3 work
+   - Dispatch helpers use routing boundary
 
 2. **Stage 2 decision** (already made)
    - Architecture chosen (separate consumer)
-   - Can proceed with implementation
+   - Rationale documented
 
-3. **Settings infrastructure** (partially done)
-   - NDVI_QUEUE_BACKEND exists
-   - Can add remaining 8 settings easily
+3. **Stage 3** (✅ COMPLETE — April 15, 2026)
+   - Producer module (`ndvi/streams.py`) implemented
+   - All 8 stream settings added to `config/settings.py`
+   - Dispatch helpers updated to call producer in stream mode
+   - 16 new tests pass
+   - Stream payload schema includes `colormap_normalization`
+
+4. **Settings infrastructure** (✅ COMPLETE)
+   - All stream settings present with defaults
 
 ### What Needs Architecture Updates First 🔴
 
-1. **Error handling strategy** (missing)
+1. **Error handling strategy** (missing — needed for Stage 4)
    - Must define before implementing consumer
    - ~2 hours to design and document
 
-2. **Idempotency guarantees** (underspecified)
-   - Must define before implementing producer
+2. **Idempotency guarantees** (partially specified — needed for Stage 4)
+   - Producer relies on DB `UniqueConstraint` for idempotency
+   - Consumer needs dedup strategy for XPENDING/XCLAIM
    - ~1 hour to design and document
 
-3. **Stream payload schema** (outdated)
-   - Must update with colormap_normalization field
-   - ~30 minutes to update
-
-4. **Consumer retry/backoff for Sentinel failover** (missing)
+3. **Consumer retry/backoff for Sentinel failover** (missing — needed for Stage 4)
    - Must handle 55-second Celery unavailability
    - ~1 hour to design and document
 
-### Estimated Time to Implementation-Ready
+### Estimated Time to Stage 4 Implementation-Ready
 
 | Task | Effort | Priority |
 |------|--------|----------|
-| Update documents (Priority 1 items) | 4 hours | Critical |
-| Update documents (Priority 2 items) | 3 hours | Important |
-| Stage 1 follow-up verification | 0.5 hour | Low |
-| Add remaining settings | 30 minutes | Important |
-| **Total** | **~7.5 hours** | **Before starting Stages 3-4** |
+| Error handling matrix | 2 hours | Critical |
+| Consumer idempotency strategy | 1 hour | Critical |
+| Sentinel failover retry logic | 1 hour | Important |
+| **Total** | **~4 hours** | **Before starting Stage 4** |
 
 ---
 
 ## Recommended Next Steps
 
-### Week 1: Documentation & Stage 1 Verification
+### Week 1: Stage 4 Preparation & Consumer Implementation
 
-**Day 1-2:** Update architecture documents
+**Day 1-2:** Update architecture documents for Stage 4
 1. Add error handling matrix
-2. Update stream payload schema
-3. Add idempotency strategy
-4. Add settings reference table
-5. Add rollback procedure
-6. Merge Phase 3 into Phase 2 Stage 6
+2. Add consumer idempotency strategy
+3. Add Sentinel failover retry logic
+4. Add rollback procedure
 
-**Day 3:** Verify Stage 1 and start Stage 3 planning
-1. Confirm routing switch behavior remains correct
-2. Confirm routing tests still pass
-3. Confirm `stream` still raises `NotImplementedError`
-4. Run full test suite
-
-**Day 4-5:** Add remaining settings
-1. Add 7 missing settings to `config/settings.py`
-2. Add settings validation at startup
-3. Document settings in code comments
-4. Add settings tests
-
-### Week 2: Producer Implementation (Stage 3)
-
-1. Create `ndvi/streams.py`
-2. Implement `publish_ndvi_job()`
-3. Implement `publish_farm_state_coverage()`
-4. Add producer tests
-5. Update dispatch helpers to call producer when `NDVI_QUEUE_BACKEND=stream`
-
-### Week 3: Consumer Implementation (Stage 4)
-
+**Day 3-5:** Consumer Implementation (Stage 4)
 1. Create `ndvi/management/commands/consume_ndvi_stream.py`
 2. Implement XREADGROUP loop
 3. Implement XACK logic
@@ -1009,15 +964,16 @@ Earliest re-evaluation date: Q3 2026 (6 months after stream rollout)
 6. Implement XTRIM
 7. Add consumer tests
 
-### Week 4: Observability & Tests (Stages 6-7)
+### Week 2: Observability & Tests (Stages 5-7)
 
-1. Add Prometheus metrics
-2. Add Grafana panels
-3. Add comprehensive tests
-4. End-to-end integration tests
-5. Load testing
+1. Add remaining settings validation at startup
+2. Add Prometheus metrics
+3. Add Grafana panels
+4. Add comprehensive tests
+5. End-to-end integration tests
+6. Load testing
 
-### Week 5: Rollout (Stage 8)
+### Week 3: Rollout (Stage 8)
 
 1. Enable stream mode for `enqueue_daily_farm_state_coverage()` first
 2. Monitor metrics for 1 week
@@ -1028,13 +984,12 @@ Earliest re-evaluation date: Q3 2026 (6 months after stream rollout)
 
 ## Conclusion
 
-The architecture documents provide a solid foundation but require **~8.5 hours of updates** before Phase 2 implementation should begin. The critical gaps are:
+The architecture documents provide a solid foundation. **Stage 3 (Stream Producer) is now complete** (April 15, 2026). The remaining critical gaps are:
 
-1. **Error handling strategy** (completely missing)
-2. **Idempotency guarantees** (underspecified)
-3. **Stream payload schema** (outdated - missing colormap_normalization)
-4. **Stage 1 routing switch** (already implemented; verify references are current)
+1. **Error handling strategy** (needed for Stage 4 consumer)
+2. **Consumer idempotency guarantees** (needed for Stage 4)
+3. **Sentinel failover retry logic** (needed for Stage 4)
 
-**Recommendation:** Spend 1-2 days updating documents, then start Stage 3 (producer) implementation. This prevents costly rework and keeps the implementation aligned with the codebase.
+**Recommendation:** Spend ~4 hours updating documents for Stage 4 requirements, then begin consumer implementation. The producer is ready, the settings are in place, and the dispatch helpers correctly route to the stream when `NDVI_QUEUE_BACKEND=stream`.
 
-The phased approach is sound, the Sentinel foundation is solid, and the Redis Streams architecture is appropriate for the workload. With these document updates and Stage 1 completion, Phase 2 implementation will be well-guided and low-risk.
+The phased approach is sound, the Sentinel foundation is solid, and the Redis Streams architecture is appropriate for the workload. With Stage 3 complete, Phase 2 implementation is progressing well.

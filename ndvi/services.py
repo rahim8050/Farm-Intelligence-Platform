@@ -475,20 +475,27 @@ def enqueue_job(
 def dispatch_ndvi_job(job: NdviJob | int) -> None:
     """Dispatch an NDVI job to the configured queue backend.
 
+    When NDVI_QUEUE_BACKEND="stream", publishes to Redis stream.
+    When NDVI_QUEUE_BACKEND="celery" (default), enqueues directly to Celery.
+
     Args:
         job: NdviJob instance or job ID to dispatch.
 
     Raises:
-        NotImplementedError: If NDVI_QUEUE_BACKEND is set to "stream"
-            (not yet implemented).
+        redis.ConnectionError: If stream backend and Redis is unavailable.
     """
     backend = get_ndvi_queue_backend()
 
     if backend == "stream":
-        raise NotImplementedError(
-            "Redis Streams backend not yet implemented. "
-            "Set NDVI_QUEUE_BACKEND=celery"
+        from .streams import publish_ndvi_job
+
+        job_obj = (
+            job
+            if isinstance(job, NdviJob)
+            else NdviJob.objects.select_related("farm", "owner").get(id=job)
         )
+        publish_ndvi_job(job_obj)
+        return
 
     # Celery backend (default)
     from .tasks import run_ndvi_job
@@ -506,6 +513,9 @@ def dispatch_farm_state_coverage(
 ) -> None:
     """Dispatch a farm state coverage job to the configured queue backend.
 
+    When NDVI_QUEUE_BACKEND="stream", publishes to Redis stream.
+    When NDVI_QUEUE_BACKEND="celery" (default), enqueues directly to Celery.
+
     Args:
         farm_id: ID of the farm to compute coverage for.
         engine: NDVI engine to use (default from settings).
@@ -513,16 +523,20 @@ def dispatch_farm_state_coverage(
         threshold: Coverage threshold for state classification.
 
     Raises:
-        NotImplementedError: If NDVI_QUEUE_BACKEND is set to "stream"
-            (not yet implemented).
+        redis.ConnectionError: If stream backend and Redis is unavailable.
     """
     backend = get_ndvi_queue_backend()
 
     if backend == "stream":
-        raise NotImplementedError(
-            "Redis Streams backend not yet implemented. "
-            "Set NDVI_QUEUE_BACKEND=celery"
+        from .streams import publish_farm_state_coverage as _publish_coverage
+
+        _publish_coverage(
+            farm_id=farm_id,
+            engine=engine,
+            target_date=target_date,
+            threshold=threshold,
         )
+        return
 
     # Celery backend (default)
     from .tasks import compute_farm_state_coverage

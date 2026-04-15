@@ -5,7 +5,7 @@ import secrets
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Protocol
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -86,13 +86,23 @@ def test_dispatch_ndvi_job_uses_celery_delay() -> None:
     mock_delay.assert_called_once_with(123)
 
 
-def test_dispatch_ndvi_job_raises_when_backend_is_stream(
+def test_dispatch_ndvi_job_uses_stream_when_backend_is_stream(
     settings: Any,
 ) -> None:
     settings.NDVI_QUEUE_BACKEND = "stream"
 
-    with pytest.raises(NotImplementedError, match="Redis Streams backend"):
-        dispatch_ndvi_job(123)
+    with patch("ndvi.streams.publish_ndvi_job") as mock_publish:
+        mock_publish.return_value = "1713000000000-0"
+
+        with patch.object(NdviJob, "objects") as mock_objects:
+            mock_qs = MagicMock()
+            mock_qs.get.return_value = MagicMock(id=123)
+            mock_objects.select_related.return_value = mock_qs
+
+            dispatch_ndvi_job(123)
+
+        mock_qs.get.assert_called_once_with(id=123)
+        mock_publish.assert_called_once()
 
 
 def test_dispatch_farm_state_coverage_uses_celery_delay() -> None:
@@ -114,19 +124,28 @@ def test_dispatch_farm_state_coverage_uses_celery_delay() -> None:
     )
 
 
-def test_dispatch_farm_state_coverage_raises_when_backend_is_stream(
+def test_dispatch_farm_state_coverage_uses_stream_when_backend_is_stream(
     settings: Any,
 ) -> None:
     settings.NDVI_QUEUE_BACKEND = "stream"
     target_date = date(2025, 1, 3)
 
-    with pytest.raises(NotImplementedError, match="Redis Streams backend"):
+    with patch("ndvi.streams.publish_farm_state_coverage") as mock_publish:
+        mock_publish.return_value = "1713000000000-0"
+
         dispatch_farm_state_coverage(
             farm_id=7,
             engine="stac",
             target_date=target_date,
             threshold=0.4,
         )
+
+    mock_publish.assert_called_once_with(
+        farm_id=7,
+        engine="stac",
+        target_date=target_date,
+        threshold=0.4,
+    )
 
 
 def test_normalize_timeseries_params_validation() -> None:
