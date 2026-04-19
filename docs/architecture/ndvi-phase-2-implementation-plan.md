@@ -170,6 +170,40 @@ Publish NDVI jobs into a dedicated stream using deterministic identifiers.
 
 Consume stream entries safely and enqueue normal Celery tasks.
 
+### Processing lifecycle
+
+Message states:
+
+- `new`: never delivered to any consumer.
+- `pending`: delivered by group read, not yet acknowledged.
+- `reclaimed`: pending on one consumer, then taken over by another.
+- `acknowledged`: terminal success state after `XACK`.
+- `dead-lettered`: terminal failure state after DLQ write + `XACK`.
+
+State transitions:
+
+- `XADD` -> `new`
+- `XREADGROUP` -> `pending`
+- `XPENDING` + `XCLAIM` -> `reclaimed`
+- `XACK` -> `acknowledged`
+- DLQ write + `XACK` -> `dead-lettered`
+
+### Delivery guarantees
+
+- Delivery is **at-least-once**.
+- Duplicate processing is expected and acceptable.
+- Correctness depends on downstream idempotency keyed by `request_hash`.
+- Exactly-once delivery is **not** guaranteed.
+- Ordering is **not** guaranteed across consumers.
+
+### Multi-consumer model
+
+- More than one consumer may run in the same consumer group.
+- Each consumer must have a unique identity (for example `hostname:pid`).
+- Work distribution is cooperative group delivery, not static partitioning.
+- No logic may assume single-consumer operation.
+- Reclaim exists to recover from dead or stalled consumers.
+
 ### Work
 
 - Create `ndvi/management/commands/consume_ndvi_stream.py`.
@@ -187,12 +221,20 @@ Consume stream entries safely and enqueue normal Celery tasks.
 ### Recommended implementation shape
 
 - The command should run an explicit loop:
-  1. reclaim stale deliveries
+  1. run a bounded reclaim pass
   2. block on `XREADGROUP` for new work
   3. validate and route the payload
   4. enqueue Celery work
   5. `XACK` only after enqueue succeeds
-  6. move unrecoverable or over-retried entries to the DLQ
+  6. move unrecoverable or over-budget entries to the DLQ
+
+### Reclaim strategy
+
+- `XPENDING` is the authoritative reclaim source.
+- Reclaim is bounded per loop to avoid starvation.
+- Reclaim must not block new-message processing.
+- Reclaim is a recovery mechanism, not the primary processing path.
+- `NDVI_STREAM_CLAIM_IDLE_MS` remains the stale-delivery threshold.
 
 ### Payload routing contract
 
@@ -215,22 +257,16 @@ Consume stream entries safely and enqueue normal Celery tasks.
   - they must be copied to the DLQ
   - they must emit a log entry suitable for alerting
 
-### Consumer invariants
+### Retry budget and poison messages
 
-- `request_hash` uniqueness in the database remains the primary durable
-  idempotency guard.
-- A local cache of processed stream entry IDs may be used only as an
-  optimization; it must not be the only deduplication mechanism.
-- `XACK` must happen strictly after Celery enqueue succeeds.
-- If the process crashes after enqueue but before `XACK`, duplicate delivery is
-  acceptable and must be absorbed by downstream idempotency rules.
+- Stage 4 defines `MAX_DELIVERIES` as a hard delivery ceiling.
+- When delivery count exceeds `MAX_DELIVERIES`:
+  - message MUST be written to DLQ
+  - message MUST be `XACK`ed
+  - message MUST NOT be reclaimed again
+- This ceiling is mandatory; without it, infinite retry loops occur.
 
-### Expected outcome
-
-- NDVI ingestion becomes durable and observable before execution reaches Celery.
-- Recovery logic is explicit rather than hidden inside broker internals.
-
-### Error Handling Strategy (Added April 2026)
+### Error handling strategy (Added April 2026)
 
 #### Celery Enqueue Failures (e.g., Sentinel Failover)
 When consumer fails to enqueue to Celery (e.g., during 55s Sentinel failover):
@@ -246,7 +282,7 @@ When consumer fails to enqueue to Celery (e.g., during 55s Sentinel failover):
 - **Structural errors** (schema violations): XACK, log, and alert
 - **Poison messages** (retry budget exhausted): XACK and send to DLQ
 
-#### Error Classification
+#### Error classification boundaries
 Consumer must distinguish error types for proper retry/DLQ routing:
 - `no_items`: STAC search returned nothing → Retry
 - `no_best_item`: No items within date window → Retry
@@ -254,47 +290,80 @@ Consumer must distinguish error types for proper retry/DLQ routing:
 - `processing_failed`: Raster processing error → Retry
 - `empty_stats`: NDVI computation returned empty → DLQ
 
-### Retry budget and reclaim policy
+- Transient errors may succeed later and remain retryable.
+- Permanent errors are deterministic failures and must be dead-lettered.
+- Structural errors indicate producer/contract violations and must be
+  dead-lettered.
+- Misclassification causes either data loss (over-DLQ) or infinite retries
+  (under-DLQ).
 
-- The consumer must use a finite poison-message budget. An entry that exceeds
-  the delivery budget must be moved to the DLQ instead of being reclaimed
-  forever.
-- Reclaim runs must be bounded per loop iteration so one noisy backlog does not
-  starve new work.
-- `NDVI_STREAM_CLAIM_IDLE_MS` remains the threshold for reclaim eligibility.
-- `XPENDING` is the source of truth for stale delivery detection; `XCLAIM` is
-  the mechanism for takeover. `XAUTOCLAIM` is acceptable as an implementation
-  detail if the external behavior stays the same.
+### DLQ semantics
 
-### Idempotency Strategy (Added April 2026)
+- DLQ is a replayable queue, not a terminal failure sink.
+- DLQ is append-only.
+- Each DLQ entry must preserve full reconstruction context:
+  - original stream name
+  - original stream entry ID
+  - original payload
+  - error classification
+  - human-readable error message
+  - delivery count
+  - failed-at timestamp
+  - consumer name
+- DLQ trimming must not remove recent failures prematurely.
 
-#### Primary: request_hash (Existing)
-- NdviJob model has UniqueConstraint on (owner, farm, engine, request_hash)
-- Duplicate jobs with same request_hash are rejected at DB level
-- Consumer can safely retry - DB enforces idempotency
+### Backpressure and lag behavior
 
-#### Secondary: Stream entry ID (New)
-- Each stream entry gets unique ID from Redis (XADD returns it)
-- Consumer tracks processed entry IDs in local cache (LRU, 10k entries)
-- If entry ID seen before, skip processing (already handled)
+- Backlog growth is expected when producer throughput exceeds consumer
+  throughput.
+- The system does not auto-throttle producers.
+- Lag must be monitored and managed externally.
+- Acceptable lag thresholds are operational SLOs and must be defined
+  externally.
+- Stage 6 observability is required for safe operation.
 
-#### Tertiary: XPENDING deduplication
-- Consumer checks XPENDING before processing
-- If entry already pending to this consumer, skip (another instance handling it)
-- If entry pending to dead consumer, XCLAIM and process
+### Crash scenarios
 
-### DLQ payload contract
+- Scenario A: crash after enqueue, before `XACK` -> duplicate processing is
+  expected and acceptable.
+- Scenario B: crash before enqueue -> message remains pending and is reclaimed.
+- Scenario C: crash during reclaim -> message may be reassigned again safely.
 
-Each DLQ entry should preserve enough context for replay and debugging:
+### Stream trimming safety
 
-- original stream name
-- original stream entry ID
-- original payload
-- error classification
-- human-readable error message
-- delivery count
-- failed-at timestamp
-- consumer name
+- Stream trimming must be approximate (`MAXLEN ~ N`).
+- Trimming must not remove unprocessed backlog entries.
+- Trimming policy must account for real backlog size under stress.
+
+### Consumer invariants
+
+- `request_hash` uniqueness in the database is the durable idempotency guard.
+- A local processed-entry cache is optional optimization only.
+- `XACK` must happen strictly after successful Celery enqueue.
+- Reclaim and retry decisions must remain safe under duplicate delivery.
+
+### Observability hooks
+
+Consumer operation requires emitting:
+
+- processing rate
+- pending count
+- reclaim count
+- DLQ rate
+
+These hooks are mandatory for safe operation, not optional diagnostics.
+
+### Non-goals
+
+- Stage 4 does not guarantee ordering.
+- Stage 4 does not guarantee exactly-once processing.
+- Stage 4 does not replace Celery.
+- Stage 4 does not execute NDVI computation logic.
+
+### Expected outcome
+
+- NDVI ingestion becomes durable and observable before execution reaches Celery.
+- Recovery behavior is explicit and deterministic under failure.
 
 ### Acceptance criteria for Stage 4
 
@@ -305,6 +374,11 @@ Each DLQ entry should preserve enough context for replay and debugging:
 - Transient enqueue failures remain pending and are reclaimable.
 - Structural, permanent, and over-budget failures are copied to the DLQ and
   then `XACK`ed.
+- Delivery semantics are explicitly at-least-once.
+- `MAX_DELIVERIES` is enforced and prevents infinite retry loops.
+- Multi-consumer execution with unique consumer identities is supported.
+- Crash scenarios A/B/C are handled exactly as documented.
+- Observability hooks are present for rate, pending, reclaim, and DLQ.
 - Reclaim and trim behavior are explicit code paths, not operator runbooks.
 
 ## Stage 5 - Add settings and feature flags
