@@ -176,7 +176,7 @@ class TestPublishNdviJob:
         mock_redis.xadd.assert_called_once()
         call_args = mock_redis.xadd.call_args
 
-        assert call_args[0][0] == "ndvi_jobs"
+        assert call_args[0][0] == "ndvi:stream"
         payload = call_args[0][1]
         assert payload["job_id"] == str(mock_job.id)
         assert call_args[1]["maxlen"] == 10000
@@ -329,6 +329,6 @@ class TestStreamSettings:
         from django.conf import settings as django_settings
 
         assert hasattr(django_settings, "NDVI_STREAM_NAME")
-        assert django_settings.NDVI_STREAM_NAME == "ndvi_jobs"
+        assert django_settings.NDVI_STREAM_NAME == "ndvi:stream"
         assert django_settings.NDVI_STREAM_MAXLEN == 10000
-        assert django_settings.NDVI_STREAM_DLQ_NAME == "ndvi_jobs_dlq"
+        assert django_settings.NDVI_STREAM_DLQ_NAME == "ndvi:dlq"
