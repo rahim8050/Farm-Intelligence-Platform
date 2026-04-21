@@ -157,6 +157,10 @@ def _handle_retryable_task_failure(
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def run_ndvi_job(self: Any, job_id: int) -> str:
     job = NdviJob.objects.select_related("farm", "owner").get(id=job_id)
+    if job.status == NdviJob.JobStatus.SUCCESS:
+        logger.info("ndvi.job.already_successful job_id=%s", job.id)
+        return "ok"
+
     lock_timeout = get_lock_timeout_seconds()
     if not acquire_lock(job.request_hash, timeout=lock_timeout):
         logger.info("ndvi.lock.skipped job_id=%s", job.id)
