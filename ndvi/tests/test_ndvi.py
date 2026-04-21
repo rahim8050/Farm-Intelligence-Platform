@@ -229,7 +229,7 @@ class NdviApiTests(APITestCase):
         # Mock acquire_lock to force result2 = 'locked'
         with (
             patch("ndvi.tasks.get_engine", return_value=dummy),
-            patch("ndvi.tasks.acquire_lock", side_effect=[True, False]),
+            patch("ndvi.tasks.acquire_lock", side_effect=["lock-token", None]),
         ):
             caches["default"].clear()
             result1 = run_ndvi_job.apply(args=[job.id]).get()

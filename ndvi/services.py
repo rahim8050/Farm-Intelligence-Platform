@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -306,18 +307,51 @@ def detect_gaps(
     return missing
 
 
-def acquire_lock(request_hash: str, *, timeout: int | None = None) -> bool:
+def acquire_lock(
+    request_hash: str, *, timeout: int | None = None
+) -> str | None:
     ttl = timeout or get_lock_timeout_seconds()
     cache = caches["default"]
     key = f"ndvi:lock:{request_hash}"
-    acquired = cache.add(key, "1", ttl)
-    return bool(acquired)
+    token = str(uuid.uuid4())
+    if cache.add(key, token, ttl):
+        return token
+    return None
 
 
-def release_lock(request_hash: str) -> None:
+def release_lock(request_hash: str, token: str) -> None:
     cache = caches["default"]
     key = f"ndvi:lock:{request_hash}"
-    cache.delete(key)
+
+    # Lua script for atomic compare-and-delete
+    lua_script = """
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+    else
+        return 0
+    end
+    """
+
+    try:
+        client = getattr(cache, "client", None)
+        if client and hasattr(client, "get_client"):
+            redis_client = client.get_client()
+        else:
+            redis_client = None
+
+        # Check if it's a real Redis client
+        if redis_client and hasattr(redis_client, "eval"):
+            redis_client.eval(lua_script, 1, key, token)
+        else:
+            # Fallback for LocMemCache (tests) or if client is not Redis
+            if cache.get(key) == token:
+                cache.delete(key)
+    except Exception as exc:
+        # If the cache doesn't support the token logic or has other issues,
+        # try simple delete as a fallback to ensure lock doesn't stay
+        # indefinitely.
+        cache.delete(key)
+        logger.warning("Error releasing lock (token fallback): %s", exc)
 
 
 def cache_timeseries_response(

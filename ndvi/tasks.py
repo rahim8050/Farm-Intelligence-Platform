@@ -167,7 +167,8 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
     lock_timeout = get_lock_timeout_seconds()
     lock_key = f"{job.id}:{job.request_hash}"
     # Use a distributed lock that expires
-    if not acquire_lock(lock_key, timeout=lock_timeout):
+    lock_token = acquire_lock(lock_key, timeout=lock_timeout)
+    if not lock_token:
         logger.info(
             "ndvi.lock.skipped job_id=%s lock_key=%s", job.id, lock_key
         )
@@ -369,7 +370,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
         ).inc()
         raise
     finally:
-        release_lock(lock_key)
+        release_lock(lock_key, lock_token)
 
 
 @shared_task
