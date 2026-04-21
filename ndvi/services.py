@@ -347,11 +347,7 @@ def release_lock(request_hash: str, token: str) -> None:
             if cache.get(key) == token:
                 cache.delete(key)
     except Exception as exc:
-        # If the cache doesn't support the token logic or has other issues,
-        # try simple delete as a fallback to ensure lock doesn't stay
-        # indefinitely.
-        cache.delete(key)
-        logger.warning("Error releasing lock (token fallback): %s", exc)
+        logger.warning("Error releasing lock (token failure): %s", exc)
 
 
 def cache_timeseries_response(
