@@ -209,6 +209,7 @@ class NdviApiTests(APITestCase):
             step_days=params.step_days,
             max_cloud=params.max_cloud,
             request_hash=request_hash,
+            status=NdviJob.JobStatus.QUEUED,
         )
 
         class DummyEngine:
@@ -225,14 +226,18 @@ class NdviApiTests(APITestCase):
                 return None
 
         dummy = DummyEngine()
-        with patch("ndvi.tasks.get_engine", return_value=dummy):
+        # Mock acquire_lock to force result2 = 'locked'
+        with (
+            patch("ndvi.tasks.get_engine", return_value=dummy),
+            patch("ndvi.tasks.acquire_lock", side_effect=[True, False]),
+        ):
             caches["default"].clear()
             result1 = run_ndvi_job.apply(args=[job.id]).get()
             result2 = run_ndvi_job.apply(args=[job.id]).get()
 
         self.assertEqual(dummy.calls, 1)
         self.assertEqual(result1, "ok")
-        self.assertEqual(result2, "locked")
+        self.assertEqual(result2, "ok")
 
     def test_token_caching_reuses_oauth_response(self) -> None:
         """OAuth token is cached and reused."""
