@@ -314,6 +314,12 @@ def acquire_lock(request_hash: str, *, timeout: int | None = None) -> bool:
     return bool(acquired)
 
 
+def release_lock(request_hash: str) -> None:
+    cache = caches["default"]
+    key = f"ndvi:lock:{request_hash}"
+    cache.delete(key)
+
+
 def cache_timeseries_response(
     owner_id: int,
     farm_id: int,

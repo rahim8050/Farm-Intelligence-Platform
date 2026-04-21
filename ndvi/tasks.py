@@ -50,6 +50,7 @@ from .services import (
     normalize_bbox,
     normalize_latest_params,
     normalize_timeseries_params,
+    release_lock,
     upsert_observations,
 )
 
@@ -164,9 +165,9 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
         return "ok"
 
     lock_timeout = get_lock_timeout_seconds()
-    lock_key = f"ndvi:lock:{job.request_hash}"
+    lock_key = f"{job.id}:{job.request_hash}"
     # Use a distributed lock that expires
-    if not acquire_lock(job.request_hash, timeout=lock_timeout):
+    if not acquire_lock(lock_key, timeout=lock_timeout):
         logger.info(
             "ndvi.lock.skipped job_id=%s lock_key=%s", job.id, lock_key
         )
@@ -367,6 +368,8 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             engine=job.engine,
         ).inc()
         raise
+    finally:
+        release_lock(lock_key)
 
 
 @shared_task
