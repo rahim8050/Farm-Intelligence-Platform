@@ -1,5 +1,10 @@
 # Phase 2 Architecture Review & Pre-Implementation Recommendations
 
+> Historical snapshot captured on April 4, 2026.
+> This document records the review state at that time and does not represent
+> current implementation status.
+> For live status, see `docs/status/NDVI_PIPELINE_IMPLEMENTATION_STATUS.md`.
+
 **Date:** April 4, 2026  
 **Documents Reviewed:**  
 - `docs/architecture/ndvi-pipeline-evolution.md`  
@@ -7,7 +12,7 @@
 
 **Purpose:** Identify missing items, regressions, architectural issues, and document updates needed before commencing Phase 2 implementation.
 
-**Status note:** Stage 1 routing centralization has since been completed in code. The Stage 1 section below is updated to reflect the current state; later sections remain useful for the still-unimplemented stream work.
+**Status note:** Stage 1 routing centralization has since been completed in code. This remains a snapshot of the review state; later sections are historical recommendations, not current implementation guidance.
 
 ---
 

@@ -1,5 +1,9 @@
 # Stage 3 – Stream Producer Implementation Plan
 
+> Historical snapshot captured on April 15, 2026.
+> This document records the producer plan and completion notes at that time.
+> For live status, see `docs/status/NDVI_PIPELINE_IMPLEMENTATION_STATUS.md`.
+
 **Date:** April 15, 2026
 **Status:** ✅ COMPLETE (100%)
 **Completed:** April 15, 2026

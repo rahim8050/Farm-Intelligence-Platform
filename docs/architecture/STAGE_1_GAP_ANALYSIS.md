@@ -1,5 +1,10 @@
 # Stage 1 Implementation Gap Analysis (Resolved)
 
+> Historical snapshot captured on April 4, 2026.
+> This document preserves the pre-implementation gap analysis for Stage 1 and
+> should not be read as current implementation state.
+> For live status, see `docs/status/NDVI_PIPELINE_IMPLEMENTATION_STATUS.md`.
+
 **Reference:** `docs/architecture/ndvi-phase-2-implementation-plan.md` - Stage 1  
 **Date:** April 4, 2026  
 **Status:** ✅ **Resolved** - Routing switch implementation is complete

@@ -273,20 +273,29 @@ Settings now present in `config/settings.py`:
 - `NDVI_STREAM_CLAIM_IDLE_MS`
 - `NDVI_STREAM_MAXLEN`
 - `NDVI_STREAM_DLQ_NAME`
+- `NDVI_STREAM_DLQ_MAXLEN`
+- `NDVI_STREAM_BATCH_SIZE`
+- `NDVI_STREAM_MAX_DELIVERIES`
+- `NDVI_STREAM_START_ID`
+- `NDVI_STREAM_RECLAIM_INTERVAL_SECONDS`
 
 ### Settings Reference Table (Updated April 2026)
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `NDVI_QUEUE_BACKEND` | `"celery"` | Dispatch backend: "celery" or "stream" |
-| `NDVI_STREAM_NAME` | `"ndvi_jobs"` | Redis stream name for NDVI jobs |
-| `NDVI_STREAM_GROUP` | `"ndvi_workers"` | Consumer group name |
+| `NDVI_STREAM_NAME` | `"ndvi:stream"` | Redis stream name for NDVI jobs |
+| `NDVI_STREAM_GROUP` | `"ndvi-group"` | Consumer group name |
 | `NDVI_STREAM_CONSUMER` | `"consumer_1"` | This consumer's identifier |
 | `NDVI_STREAM_BLOCK_MS` | `5000` | XREADGROUP block timeout (ms) |
-| `NDVI_STREAM_CLAIM_IDLE_MS` | `30000` | Time before entry considered stale (ms) |
+| `NDVI_STREAM_CLAIM_IDLE_MS` | `60000` | Time before entry is considered stale (ms) |
 | `NDVI_STREAM_MAXLEN` | `10000` | Max stream length before trimming |
-| `NDVI_STREAM_DLQ_NAME` | `"ndvi_jobs_dlq"` | Dead-letter stream name |
-| `NDVI_STREAM_DLQ_MAXLEN` | `1000` | Max DLQ length before trimming |
+| `NDVI_STREAM_DLQ_NAME` | `"ndvi:dlq"` | Dead-letter stream name |
+| `NDVI_STREAM_DLQ_MAXLEN` | `10000` | Max DLQ length before trimming |
+| `NDVI_STREAM_BATCH_SIZE` | `10` | Max messages per read or reclaim batch |
+| `NDVI_STREAM_MAX_DELIVERIES` | `5` | Delivery ceiling before DLQ routing |
+| `NDVI_STREAM_START_ID` | `"0"` | Consumer group start ID |
+| `NDVI_STREAM_RECLAIM_INTERVAL_SECONDS` | `60` | Minimum seconds between reclaim passes |
 
 ### Defaults
 

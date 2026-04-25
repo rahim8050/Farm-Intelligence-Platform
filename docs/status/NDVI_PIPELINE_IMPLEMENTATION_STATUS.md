@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add durable queue semantics, and improve observability. **Phase 1 is complete**, **retry policy hardening (Phase 1.5) is substantially complete**, and **Phase 2 is partially implemented**: dispatch centralization, stream producer code, producer tests, and stream settings are in place; the stream consumer, stream observability, and rollout work are still pending.
+The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add durable queue semantics, and improve observability. **Phase 1 is complete**, **retry policy hardening (Phase 1.5) is substantially complete**, and **Phase 2 is partially implemented**: dispatch centralization, stream producer code, stream consumer code, producer tests, and stream settings are in place; stream observability and rollout work are still pending.
 
 **New dependency:** The Redis Streams implementation (Phase 2) should integrate with the hardened retry policy (`ndvi/retry_policy.py`) to ensure stream consumers make correct retry decisions.
 
@@ -112,7 +112,7 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 
 ## Phase 2 - Redis Streams for NDVI
 
-**Status:** 🟡 **PARTIALLY IMPLEMENTED** (Stages 1, 3, and 5 complete; Stage 4 not started)
+**Status:** 🟡 **PARTIALLY IMPLEMENTED** (Stages 1, 3, 4, and 5 complete; Stage 6 and rollout work still pending)
 
 ### Stage 1 - Centralize NDVI Dispatch (100% Complete)
 
@@ -154,13 +154,13 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 
 **What's Left Out:**
 
-- ❌ **No consumer implementation**
-  - No `ndvi/management/commands/consume_ndvi_stream.py`
-  - No `XREADGROUP` logic
-  - No `XACK` logic
-  - No `XPENDING` monitoring
-  - No `XCLAIM` reclaim logic
-  - No dead-letter stream handling
+- ✅ **Consumer implementation exists**
+  - `ndvi/management/commands/consume_ndvi_stream.py` exists
+  - `XREADGROUP` logic is implemented
+  - `XACK` logic is implemented
+  - `XPENDING` monitoring is implemented
+  - `XAUTOCLAIM`/`XCLAIM` reclaim logic is implemented
+  - Dead-letter stream handling is implemented
 
 ---
 
@@ -198,7 +198,7 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 
 ---
 
-### Stage 4 - Stream Consumer Logic (0% Complete)
+### Stage 4 - Stream Consumer Logic (100% Complete)
 
 **What's Left Out:**
 

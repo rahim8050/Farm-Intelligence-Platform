@@ -3,6 +3,10 @@
 **Date:** March 24, 2026  
 **System summary:** Django + DRF (`weather-apis`) running Celery 5.6.2, backed by a single-node Redis instance used for broker/result/cache, and the separate Rust-based `ndvi-service` proxy (ports 8081/8090) that feeds farm-state coverage data back into Django.
 
+> Historical architecture snapshot captured during the phased rollout design.
+> Current implementation details may have moved ahead of the notes below.
+> For live status, see `docs/status/NDVI_PIPELINE_IMPLEMENTATION_STATUS.md`.
+
 ## 1. Problem statement
 - **Single-node Redis = SPOF:** A Redis outage halts Celery and makes `/api/v1/farm-state/{farm_id}` unreliable because broker, result backend, and cache all live on that node.
 - **Celery sensitivity:** Grafana shows P95 spikes even under modest traffic, indicating Celery queues are fragile when Redis performance degrades (no automatic failover).
@@ -34,12 +38,12 @@
 **Objective:** Give NDVI coverage jobs durable, observable queue semantics without touching the rest of Celery.
 
 - ✅ **Stage 1 dispatch centralization is already complete in code.**
-- ⚠️ **The stream transport choice is still open.** The current code keeps `NDVI_QUEUE_BACKEND=celery` as the default and raises `NotImplementedError` if `stream` is selected before the producer exists.
-- The recommended architecture remains a separate Redis Streams producer/consumer path rather than relying on Celery/Kombu stream transport.
-- Stream entries contain deterministic job keys (`farm_id|engine|lookback`) mirroring `NdviJob` idempotency guards.
+- The current code keeps `NDVI_QUEUE_BACKEND=celery` as the default and supports `stream` as an opt-in Redis Streams transport.
+- The implementation uses a separate Redis Streams producer/consumer path rather than Celery/Kombu stream transport.
+- Stream entries are produced by `ndvi/streams.py` and consumed by `ndvi/management/commands/consume_ndvi_stream.py`.
 - Consumers:
   - `XREADGROUP` → process task → `XACK`.
-  - Use `XPENDING`/`XCLAIM` to retry (reclaim entries older than the soft time limit).
+  - Use `XAUTOCLAIM` and `XPENDING` to recover stale entries.
   - Send persistent failures to a dead-letter stream trimmed by `XTRIM`.
 - Back-pressure/retry handling:
   - Monitor `XPENDING` thresholds; throttle producers/backoff when backlog grows.

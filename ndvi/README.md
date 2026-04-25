@@ -223,7 +223,11 @@ Settings read from `config/settings.py` (non-exhaustive; see that file for full
 list):
 
 - `NDVI_ENGINE` (default: `sentinelhub`; set to `stac` for STAC backend)
-- `NDVI_QUEUE_BACKEND` (default: `celery`; `stream` is reserved for the future Redis Streams path and currently raises `NotImplementedError`)
+- `NDVI_QUEUE_BACKEND` (default: `celery`; set to `stream` to publish NDVI work to Redis Streams)
+- `NDVI_STREAM_NAME`, `NDVI_STREAM_GROUP`, `NDVI_STREAM_CONSUMER`
+- `NDVI_STREAM_BLOCK_MS`, `NDVI_STREAM_CLAIM_IDLE_MS`, `NDVI_STREAM_RECLAIM_INTERVAL_SECONDS`
+- `NDVI_STREAM_MAXLEN`, `NDVI_STREAM_DLQ_NAME`, `NDVI_STREAM_DLQ_MAXLEN`
+- `NDVI_STREAM_BATCH_SIZE`, `NDVI_STREAM_MAX_DELIVERIES`, `NDVI_STREAM_START_ID`
 - `NDVI_MAX_AREA_KM2`, `NDVI_MAX_DATERANGE_DAYS`
 - `NDVI_DEFAULT_STEP_DAYS`, `NDVI_DEFAULT_MAX_CLOUD`, `NDVI_DEFAULT_LOOKBACK_DAYS`
 - `NDVI_CACHE_TTL_TIMESERIES_SECONDS`, `NDVI_CACHE_TTL_LATEST_SECONDS`
