@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, TypeVar
 
 from celery import shared_task
 from celery.exceptions import (  # type: ignore[import-untyped]
@@ -10,7 +11,7 @@ from celery.exceptions import (  # type: ignore[import-untyped]
 )
 from django.conf import settings
 from django.core.files.base import ContentFile
-from django.db import transaction
+from django.db import OperationalError, close_old_connections, transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -55,6 +56,23 @@ from .services import (
 )
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+def _with_fresh_connection(func: Callable[[], T]) -> T:
+    """Run a DB-bound callback after refreshing stale Django connections.
+
+    Celery workers are long-lived, so a MySQL connection can go stale while
+    the task spends time in upstream NDVI processing. Refresh before the write
+    path, and retry once if the first DB operation still hits a dead socket.
+    """
+    close_old_connections()
+    try:
+        return func()
+    except OperationalError:
+        close_old_connections()
+        return func()
 
 
 def _safe_error_message(status_error: Exception | str) -> str:
@@ -101,9 +119,11 @@ def _parse_date(raw: str | None) -> date | None:
 
 def _mark_job_failed(job: NdviJob, status_error: Exception | str) -> None:
     """Persist a failed job state with the provided error message."""
-
-    job.mark_finished(
-        NdviJob.JobStatus.FAILED, error=_safe_error_message(status_error)
+    _with_fresh_connection(
+        lambda: job.mark_finished(
+            NdviJob.JobStatus.FAILED,
+            error=_safe_error_message(status_error),
+        )
     )
 
 
@@ -202,8 +222,12 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 max_cloud=latest_params.max_cloud,
             )
             if point:
-                upsert_observations(
-                    farm=job.farm, engine=job.engine, points=[point]
+                _with_fresh_connection(
+                    lambda: upsert_observations(
+                        farm=job.farm,
+                        engine=job.engine,
+                        points=[point],
+                    )
                 )
         elif job.job_type == NdviJob.JobType.RASTER_PNG:
             raster_date = job.start or job.end or date.today()
@@ -234,16 +258,18 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 f"ndvi_raster_{job.farm_id}_{raster_date}_{raster_size}_"
                 f"{max_cloud}_{content_hash[:8]}.png"
             )
-            artifact, _ = NdviRasterArtifact.objects.update_or_create(
-                farm=job.farm,
-                engine=job.engine,
-                date=raster_date,
-                size=raster_size,
-                max_cloud=max_cloud,
-                defaults={
-                    "owner_id": job.owner_id,
-                    "content_hash": content_hash,
-                },
+            artifact, _ = _with_fresh_connection(
+                lambda: NdviRasterArtifact.objects.update_or_create(
+                    farm=job.farm,
+                    engine=job.engine,
+                    date=raster_date,
+                    size=raster_size,
+                    max_cloud=max_cloud,
+                    defaults={
+                        "owner_id": job.owner_id,
+                        "content_hash": content_hash,
+                    },
+                )
             )
             artifact.content_hash = content_hash
             artifact.owner_id = job.owner_id
@@ -253,7 +279,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 "NDVI raster saved at path=%s",
                 artifact.image.path or artifact.image.name,
             )
-            artifact.save()
+            _with_fresh_connection(lambda: artifact.save())
         else:
             engine = get_engine(job.engine)
             timeseries_params = normalize_timeseries_params(
@@ -271,10 +297,16 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 max_cloud=timeseries_params.max_cloud,
             )
             if points:
-                upsert_observations(
-                    farm=job.farm, engine=job.engine, points=points
+                _with_fresh_connection(
+                    lambda: upsert_observations(
+                        farm=job.farm,
+                        engine=job.engine,
+                        points=points,
+                    )
                 )
-        job.mark_finished(NdviJob.JobStatus.SUCCESS)
+        _with_fresh_connection(
+            lambda: job.mark_finished(NdviJob.JobStatus.SUCCESS)
+        )
         logger.info(
             "NDVI raster job completed successfully for farm_id=%s",
             job.farm_id,
