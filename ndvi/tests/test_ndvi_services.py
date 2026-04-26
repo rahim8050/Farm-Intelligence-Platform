@@ -16,6 +16,7 @@ from farms.models import Farm
 from ndvi.engines.base import BBox
 from ndvi.models import NdviJob, NdviObservation
 from ndvi.services import (
+    NDVI_LATEST_CACHE_VERSION,
     LatestParams,
     TimeseriesParams,
     cache_latest_response,
@@ -199,7 +200,7 @@ def test_cache_latest_response_round_trip() -> None:
 
     # Ensure cache entry respects the TTL path (coverage for cache set).
     assert caches["default"].get(
-        f"ndvi:cache:latest:1:2:{default_engine}:7:30"
+        f"ndvi:cache:v{NDVI_LATEST_CACHE_VERSION}:latest:1:2:{default_engine}:7:30"
     )
 
 

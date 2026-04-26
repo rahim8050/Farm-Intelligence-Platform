@@ -115,6 +115,65 @@ def test_run_ndvi_job_timeseries_skips_empty_points(
 
 
 @pytest.mark.django_db
+def test_run_ndvi_job_timeseries_skips_cloudy_points(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="cloud-owner",
+        email="cloud-owner@example.com",
+        password=password,
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Farm",
+        slug="farm-cloud",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    job = NdviJob.objects.create(
+        owner=user,
+        farm=farm,
+        engine="sentinelhub",
+        job_type=NdviJob.JobType.GAP_FILL,
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 8),
+        step_days=7,
+        max_cloud=30,
+        request_hash="cloud-hash",
+    )
+    dummy_engine = MagicMock()
+    dummy_engine.get_timeseries.return_value = [
+        NdviPoint(
+            date=date(2025, 1, 1),
+            mean=0.35,
+            cloud_fraction=20.0,
+        ),
+        NdviPoint(
+            date=date(2025, 1, 8),
+            mean=-0.04,
+            cloud_fraction=48.5,
+        ),
+    ]
+    monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
+    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: dummy_engine)
+
+    result = run_ndvi_job.apply(args=[job.id]).get()
+
+    assert result == "ok"
+    assert NdviObservation.objects.filter(farm=farm).count() == 1
+    assert NdviObservation.objects.filter(
+        farm=farm, bucket_date=date(2025, 1, 1)
+    ).exists()
+    assert not NdviObservation.objects.filter(
+        farm=farm, bucket_date=date(2025, 1, 8)
+    ).exists()
+
+
+@pytest.mark.django_db
 def test_run_ndvi_job_invalid_raster_size_returns_invalid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

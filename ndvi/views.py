@@ -71,6 +71,7 @@ from .services import (
     enforce_quota,
     enqueue_job,
     expected_buckets,
+    filter_observations_by_cloud,
     get_cached_latest_response,
     get_cached_timeseries_response,
     get_default_lookback_days,
@@ -621,6 +622,10 @@ class NdviTimeseriesView(BaseFarmView):
                 bucket_date__lte=params.end,
             ).order_by("bucket_date")
         )
+        observations = filter_observations_by_cloud(
+            observations,
+            max_cloud=params.max_cloud,
+        )
         serialized = NdviObservationSerializer(observations, many=True).data
         existing_dates = {obs.bucket_date for obs in observations}
         expected = expected_buckets(
@@ -710,11 +715,15 @@ class NdviLatestView(BaseFarmView):
         if cached:
             return success_response(cached, message="NDVI latest (cached)")
 
-        observation = (
-            NdviObservation.objects.filter(farm=farm, engine=engine_name)
-            .order_by("-bucket_date")
-            .first()
+        observations = filter_observations_by_cloud(
+            list(
+                NdviObservation.objects.filter(
+                    farm=farm, engine=engine_name
+                ).order_by("-bucket_date")
+            ),
+            max_cloud=params.max_cloud,
         )
+        observation = observations[0] if observations else None
 
         stale = is_stale(observation, params.lookback_days)
         if stale:

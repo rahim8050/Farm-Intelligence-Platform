@@ -41,6 +41,8 @@ DEFAULT_LOCK_TIMEOUT_SECONDS = 60
 DEFAULT_CACHE_TTL_TIMESERIES_SECONDS = 86400
 DEFAULT_CACHE_TTL_LATEST_SECONDS = 21600
 DEFAULT_COLORMAP_NORMALIZATION = "histogram"
+NDVI_TIMESERIES_CACHE_VERSION = 2
+NDVI_LATEST_CACHE_VERSION = 2
 
 
 def _get_int_setting(name: str, default: int) -> int:
@@ -105,6 +107,48 @@ def get_default_colormap_normalization() -> ColormapNormalization:
             mode_str,
         )
         return ColormapNormalization.HISTOGRAM
+
+
+def normalize_cloud_fraction(cloud_fraction: float | None) -> float | None:
+    """Normalize cloud cover values to a 0.0-1.0 ratio when possible."""
+
+    if cloud_fraction is None:
+        return None
+    value = float(cloud_fraction)
+    if value > 1.0:
+        return value / 100.0
+    return value
+
+
+def cloud_fraction_is_within_limit(
+    cloud_fraction: float | None,
+    max_cloud: int,
+) -> bool:
+    """Return True when a point is clean enough for the requested limit."""
+
+    normalized = normalize_cloud_fraction(cloud_fraction)
+    if normalized is None:
+        return True
+    # Cap the effective threshold so overly permissive settings do not let
+    # obviously cloudy scenes leak into stored observations or derived reads.
+    effective_max_cloud = min(max_cloud, DEFAULT_MAX_CLOUD)
+    return normalized <= (effective_max_cloud / 100.0)
+
+
+def filter_observations_by_cloud(
+    observations: Iterable[NdviObservation],
+    *,
+    max_cloud: int,
+) -> list[NdviObservation]:
+    """Filter stored observations to those within the cloud threshold."""
+
+    return [
+        observation
+        for observation in observations
+        if cloud_fraction_is_within_limit(
+            observation.cloud_fraction, max_cloud
+        )
+    ]
 
 
 def get_lock_timeout_seconds() -> int:
@@ -359,8 +403,9 @@ def cache_timeseries_response(
 ) -> None:
     cache = caches["default"]
     key = (
-        f"ndvi:cache:ts:{owner_id}:{farm_id}:{engine}:"
-        f"{params.start}:{params.end}:{params.step_days}:{params.max_cloud}"
+        f"ndvi:cache:v{NDVI_TIMESERIES_CACHE_VERSION}:ts:{owner_id}:"
+        f"{farm_id}:{engine}:{params.start}:{params.end}:"
+        f"{params.step_days}:{params.max_cloud}"
     )
     cache.set(key, payload, get_cache_ttl_timeseries())
 
@@ -373,8 +418,9 @@ def get_cached_timeseries_response(
 ) -> dict[str, Any] | None:
     cache = caches["default"]
     key = (
-        f"ndvi:cache:ts:{owner_id}:{farm_id}:{engine}:"
-        f"{params.start}:{params.end}:{params.step_days}:{params.max_cloud}"
+        f"ndvi:cache:v{NDVI_TIMESERIES_CACHE_VERSION}:ts:{owner_id}:"
+        f"{farm_id}:{engine}:{params.start}:{params.end}:"
+        f"{params.step_days}:{params.max_cloud}"
     )
     cached = cache.get(key)
     if cached:
@@ -391,9 +437,8 @@ def cache_latest_response(
 ) -> None:
     cache = caches["default"]
     key = (
-        "ndvi:cache:latest:"
-        f"{owner_id}:{farm_id}:{engine}:"
-        f"{params.lookback_days}:{params.max_cloud}"
+        f"ndvi:cache:v{NDVI_LATEST_CACHE_VERSION}:latest:{owner_id}:"
+        f"{farm_id}:{engine}:{params.lookback_days}:{params.max_cloud}"
     )
     cache.set(key, payload, get_cache_ttl_latest())
 
@@ -406,9 +451,8 @@ def get_cached_latest_response(
 ) -> dict[str, Any] | None:
     cache = caches["default"]
     key = (
-        "ndvi:cache:latest:"
-        f"{owner_id}:{farm_id}:{engine}:"
-        f"{params.lookback_days}:{params.max_cloud}"
+        f"ndvi:cache:v{NDVI_LATEST_CACHE_VERSION}:latest:{owner_id}:"
+        f"{farm_id}:{engine}:{params.lookback_days}:{params.max_cloud}"
     )
     cached = cache.get(key)
     if cached:
@@ -426,11 +470,26 @@ def upsert_observations(
     *,
     farm: Farm,
     engine: str,
+    max_cloud: int,
     points: Iterable[NdviPoint],
 ) -> list[NdviObservation]:
     saved: list[NdviObservation] = []
     with transaction.atomic():
         for point in points:
+            if not cloud_fraction_is_within_limit(
+                point.cloud_fraction,
+                max_cloud,
+            ):
+                logger.info(
+                    "ndvi.observation.skipped_cloudy farm_id=%s engine=%s "
+                    "date=%s cloud_fraction=%s max_cloud=%s",
+                    farm.id,
+                    engine,
+                    point.date,
+                    point.cloud_fraction,
+                    max_cloud,
+                )
+                continue
             obj, _ = NdviObservation.objects.update_or_create(
                 farm=farm,
                 engine=engine,

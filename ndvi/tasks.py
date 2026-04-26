@@ -226,6 +226,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                     lambda: upsert_observations(
                         farm=job.farm,
                         engine=job.engine,
+                        max_cloud=latest_params.max_cloud,
                         points=[point],
                     )
                 )
@@ -301,6 +302,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                     lambda: upsert_observations(
                         farm=job.farm,
                         engine=job.engine,
+                        max_cloud=timeseries_params.max_cloud,
                         points=points,
                     )
                 )

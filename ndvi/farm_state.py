@@ -29,6 +29,7 @@ from ndvi.models import NdviObservation
 from ndvi.services import (
     dispatch_farm_state_coverage,
     enforce_quota,
+    filter_observations_by_cloud,
     get_default_max_cloud,
     get_default_ndvi_engine_name,
     normalize_bbox,
@@ -595,6 +596,10 @@ def _compute_farm_state(
             bucket_date__gte=start,
             bucket_date__lte=end,
         ).order_by("bucket_date")
+    )
+    observations = filter_observations_by_cloud(
+        observations,
+        max_cloud=_default_max_cloud_for_engine(engine),
     )
 
     mean_ndvi = _compute_mean_ndvi(observations)

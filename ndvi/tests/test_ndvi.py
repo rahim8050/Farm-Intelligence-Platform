@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +16,7 @@ from ndvi.engines.sentinelhub import SentinelHubEngine
 from ndvi.models import NdviJob, NdviObservation
 from ndvi.services import (
     TimeseriesParams,
+    get_default_max_cloud,
     get_default_ndvi_engine_name,
     hash_request,
 )
@@ -331,6 +332,40 @@ class NdviApiTests(APITestCase):
         mock_delay.assert_not_called()
 
     @patch("ndvi.views.dispatch_ndvi_job")
+    def test_timeseries_filters_cloudy_observations(
+        self, mock_delay: MagicMock
+    ) -> None:
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine=self.default_engine,
+            bucket_date=date(2024, 1, 1),
+            mean=0.52,
+            cloud_fraction=12.0,
+        )
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine=self.default_engine,
+            bucket_date=date(2024, 1, 8),
+            mean=-0.04,
+            cloud_fraction=48.5,
+        )
+        self.client.force_authenticate(user=self.user)
+        payload = {
+            "start": "2024-01-01",
+            "end": "2024-01-08",
+            "step_days": "7",
+            "max_cloud": "30",
+        }
+        resp = self.client.get(self.timeseries_url, payload, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.json()["data"]
+        self.assertEqual(len(data["observations"]), 1)
+        self.assertEqual(data["observations"][0]["bucket_date"], "2024-01-01")
+        self.assertTrue(data["is_partial"])
+        self.assertEqual(data["missing_buckets_count"], 1)
+        mock_delay.assert_called_once()
+
+    @patch("ndvi.views.dispatch_ndvi_job")
     def test_latest_view_stale_enqueues_refresh(
         self, mock_delay: MagicMock
     ) -> None:
@@ -371,24 +406,57 @@ class NdviApiTests(APITestCase):
         mock_enqueue.assert_not_called()
 
     @patch("ndvi.views.enqueue_job")
-    def test_latest_view_cached_response(
+    def test_latest_view_ignores_cloudy_newer_observation(
         self, mock_enqueue: MagicMock
+    ) -> None:
+        clean_date = date.today() - timedelta(days=1)
+        cloudy_date = date.today()
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine=self.default_engine,
+            bucket_date=cloudy_date,
+            mean=-0.04,
+            cloud_fraction=48.5,
+        )
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine=self.default_engine,
+            bucket_date=clean_date,
+            mean=0.45,
+            cloud_fraction=12.0,
+        )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(self.latest_url, {"lookback_days": "7"})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.json()["data"]
+        self.assertFalse(data["stale"])
+        self.assertIsNotNone(data["observation"])
+        self.assertEqual(
+            data["observation"]["bucket_date"],
+            clean_date.isoformat(),
+        )
+        mock_enqueue.assert_not_called()
+
+    @patch("ndvi.views.get_cached_latest_response")
+    @patch("ndvi.views.enqueue_job")
+    def test_latest_view_cached_response(
+        self,
+        mock_enqueue: MagicMock,
+        mock_get_cached: MagicMock,
     ) -> None:
         self.client.force_authenticate(user=self.user)
         cached_payload = {
             "observation": None,
             "engine": self.default_engine,
             "lookback_days": 7,
-            "max_cloud": 30,
+            "max_cloud": get_default_max_cloud(),
             "stale": True,
         }
-        caches["default"].set(
-            f"ndvi:cache:latest:{self.user.id}:{self.farm.id}:{self.default_engine}:7:30",
-            cached_payload,
-        )
+        mock_get_cached.return_value = cached_payload
         resp = self.client.get(self.latest_url, {"lookback_days": "7"})
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.json()["data"], cached_payload)
+        mock_get_cached.assert_called_once()
         mock_enqueue.assert_not_called()
 
     @patch("ndvi.views.dispatch_ndvi_job")
