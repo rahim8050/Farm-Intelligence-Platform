@@ -3,6 +3,8 @@
 > Historical snapshot captured on April 4, 2026.
 > This document preserves the pre-implementation gap analysis for Stage 1 and
 > should not be read as current implementation state.
+> For the consolidated NDVI architecture and implementation spec, see
+> `docs/architecture/ndvi-system-evolution-phased-spec.md`.
 > For live status, see `docs/status/NDVI_PIPELINE_IMPLEMENTATION_STATUS.md`.
 
 **Reference:** `docs/architecture/ndvi-phase-2-implementation-plan.md` - Stage 1  

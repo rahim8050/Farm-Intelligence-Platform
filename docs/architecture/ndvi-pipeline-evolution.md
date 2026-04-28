@@ -5,6 +5,7 @@
 
 > Historical architecture snapshot captured during the phased rollout design.
 > Current implementation details may have moved ahead of the notes below.
+> For the consolidated NDVI architecture and implementation spec, see `docs/architecture/ndvi-system-evolution-phased-spec.md`.
 > For live status, see `docs/status/NDVI_PIPELINE_IMPLEMENTATION_STATUS.md`.
 
 ## 1. Problem statement

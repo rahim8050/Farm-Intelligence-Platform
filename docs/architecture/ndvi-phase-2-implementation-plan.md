@@ -6,6 +6,9 @@ implementation plan. The goal is to introduce Redis Streams for NDVI
 ingestion without rewriting the rest of the async stack or destabilizing the
  existing Celery-based workflow.
 
+For the consolidated NDVI architecture and implementation spec, see
+`docs/architecture/ndvi-system-evolution-phased-spec.md`.
+
 ## Objective
 
 Phase 2 should give NDVI ingestion durable, observable queue semantics while

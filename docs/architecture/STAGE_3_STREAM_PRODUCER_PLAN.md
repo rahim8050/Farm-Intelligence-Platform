@@ -2,6 +2,8 @@
 
 > Historical snapshot captured on April 15, 2026.
 > This document records the producer plan and completion notes at that time.
+> For the consolidated NDVI architecture and implementation spec, see
+> `docs/architecture/ndvi-system-evolution-phased-spec.md`.
 > For live status, see `docs/status/NDVI_PIPELINE_IMPLEMENTATION_STATUS.md`.
 
 **Date:** April 15, 2026

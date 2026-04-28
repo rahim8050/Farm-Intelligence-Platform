@@ -3,6 +3,8 @@
 > Historical snapshot captured on April 4, 2026.
 > This document records the review state at that time and does not represent
 > current implementation status.
+> For the consolidated NDVI architecture and implementation spec, see
+> `docs/architecture/ndvi-system-evolution-phased-spec.md`.
 > For live status, see `docs/status/NDVI_PIPELINE_IMPLEMENTATION_STATUS.md`.
 
 **Date:** April 4, 2026  
