@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from datetime import date, timedelta
 from typing import Any, TypeVar
@@ -32,7 +33,7 @@ from ndvi.stac_client import (
     StacWafBlockedError,
 )
 
-from .metrics import ndvi_jobs_total
+from .metrics import ndvi_jobs_total, ndvi_task_runtime_seconds
 from .models import NdviJob, NdviRasterArtifact
 from .raster.service import render_ndvi_png
 from .services import (
@@ -180,21 +181,22 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
     job = NdviJob.objects.select_related("farm", "owner").get(id=job_id)
     # Refresh to catch status changes from concurrent task execution
     job.refresh_from_db()
-    if job.status == NdviJob.JobStatus.SUCCESS:
-        logger.info("ndvi.job.already_successful job_id=%s", job.id)
-        return "ok"
-
+    started_at = time.monotonic()
+    task_engine = job.engine
     lock_timeout = get_lock_timeout_seconds()
     lock_key = f"{job.id}:{job.request_hash}"
-    # Use a distributed lock that expires
-    lock_token = acquire_lock(lock_key, timeout=lock_timeout)
-    if not lock_token:
-        logger.info(
-            "ndvi.lock.skipped job_id=%s lock_key=%s", job.id, lock_key
-        )
-        return "locked"
-
+    lock_token: str | None = None
     try:
+        if job.status == NdviJob.JobStatus.SUCCESS:
+            logger.info("ndvi.job.already_successful job_id=%s", job.id)
+            return "ok"
+        lock_token = acquire_lock(lock_key, timeout=lock_timeout)
+        if not lock_token:
+            logger.info(
+                "ndvi.lock.skipped job_id=%s lock_key=%s", job.id, lock_key
+            )
+            return "locked"
+
         # Check success again after locking
         job.refresh_from_db()
         if job.status == NdviJob.JobStatus.SUCCESS:
@@ -212,6 +214,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
 
         if job.job_type == NdviJob.JobType.REFRESH_LATEST:
             engine = get_engine(job.engine)
+            task_engine = job.engine
             latest_params = normalize_latest_params(
                 lookback_days=job.lookback_days or get_default_lookback_days(),
                 max_cloud=job.max_cloud or get_default_max_cloud(),
@@ -283,6 +286,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             _with_fresh_connection(lambda: artifact.save())
         else:
             engine = get_engine(job.engine)
+            task_engine = job.engine
             timeseries_params = normalize_timeseries_params(
                 start=job.start
                 or date.today() - timedelta(days=get_default_step_days()),
@@ -404,7 +408,16 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
         ).inc()
         raise
     finally:
-        release_lock(lock_key, lock_token)
+        if lock_token:
+            release_lock(lock_key, lock_token)
+        ndvi_task_runtime_seconds.labels(
+            task="run_ndvi_job",
+            engine=task_engine,
+        ).observe(max(time.monotonic() - started_at, 0.0))
+        ndvi_task_runtime_seconds.labels(
+            task="run_ndvi_job",
+            engine=job.engine,
+        ).observe(max(time.monotonic() - started_at, 0.0))
 
 
 @shared_task
@@ -442,66 +455,75 @@ def compute_farm_state_coverage(
     target_date: str | None = None,
     threshold: float | None = None,
 ) -> str:
-    farm = Farm.objects.filter(is_active=True, id=farm_id).first()
-    if farm is None:
-        return "missing"
     resolved_engine = engine or get_default_ndvi_engine_name()
-    resolved_threshold = (
-        float(threshold) if threshold is not None else get_coverage_threshold()
-    )
-    resolved_date = _parse_date(target_date)
-    if resolved_date is None:
-        latest = (
-            farm.ndvi_observations.filter(engine=resolved_engine)
-            .order_by("-bucket_date")
-            .first()
-        )
-        if not latest:
-            return "no_observations"
-        resolved_date = latest.bucket_date
-
-    cached, _ = get_cached_coverage_for_farm(
-        farm_id=farm.id,
-        engine=resolved_engine,
-        target_date=resolved_date,
-        threshold=resolved_threshold,
-    )
-    if cached:
-        return "cached"
-
+    started_at = time.monotonic()
     try:
-        value = compute_coverage_for_farm(
-            farm=farm,
+        farm = Farm.objects.filter(is_active=True, id=farm_id).first()
+        if farm is None:
+            return "missing"
+        resolved_threshold = (
+            float(threshold)
+            if threshold is not None
+            else get_coverage_threshold()
+        )
+        resolved_date = _parse_date(target_date)
+        if resolved_date is None:
+            latest = (
+                farm.ndvi_observations.filter(engine=resolved_engine)
+                .order_by("-bucket_date")
+                .first()
+            )
+            if not latest:
+                return "no_observations"
+            resolved_date = latest.bucket_date
+
+        cached, _ = get_cached_coverage_for_farm(
+            farm_id=farm.id,
             engine=resolved_engine,
             target_date=resolved_date,
             threshold=resolved_threshold,
         )
-    except StacUpstreamError as exc:
-        decision = should_retry(exc)
-        logger.info(
-            "ndvi.coverage retry_decision retry=%s delay=%s reason=%s "
-            "farm_id=%s err=%s",
-            decision.retry,
-            decision.delay,
-            decision.reason,
-            farm.id,
-            exc,
+        if cached:
+            return "cached"
+
+        try:
+            value = compute_coverage_for_farm(
+                farm=farm,
+                engine=resolved_engine,
+                target_date=resolved_date,
+                threshold=resolved_threshold,
+            )
+        except StacUpstreamError as exc:
+            decision = should_retry(exc)
+            logger.info(
+                "ndvi.coverage retry_decision retry=%s delay=%s reason=%s "
+                "farm_id=%s err=%s",
+                decision.retry,
+                decision.delay,
+                decision.reason,
+                farm.id,
+                exc,
+            )
+            if decision.retry:
+                retry_kwargs: dict[str, Any] = {}
+                if decision.delay is not None:
+                    retry_kwargs["countdown"] = decision.delay
+                raise self.retry(exc=exc, **retry_kwargs) from exc
+            value = None
+        cache_coverage_for_farm(
+            farm_id=farm.id,
+            engine=resolved_engine,
+            target_date=resolved_date,
+            threshold=resolved_threshold,
+            value=value,
         )
-        if decision.retry:
-            retry_kwargs: dict[str, Any] = {}
-            if decision.delay is not None:
-                retry_kwargs["countdown"] = decision.delay
-            raise self.retry(exc=exc, **retry_kwargs) from exc
-        value = None
-    cache_coverage_for_farm(
-        farm_id=farm.id,
-        engine=resolved_engine,
-        target_date=resolved_date,
-        threshold=resolved_threshold,
-        value=value,
-    )
-    invalidate_farm_state_cache(farm_id=farm.id, engine=resolved_engine)
-    return "ok"
+        invalidate_farm_state_cache(farm_id=farm.id, engine=resolved_engine)
+        return "ok"
+    finally:
+        ndvi_task_runtime_seconds.labels(
+            task="compute_farm_state_coverage",
+            engine=resolved_engine,
+        ).observe(max(time.monotonic() - started_at, 0.0))
 
 
 @shared_task

@@ -163,6 +163,46 @@ groups:
           summary: "No successful NDVI jobs recently"
           description: "No successful NDVI jobs in the last 6h (enable only if periodic jobs are expected)."
 
+      - alert: NdviStreamLagHigh
+        expr: |
+          sum by (group) (redis_stream_pending_entries) > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "NDVI stream lag high"
+          description: "NDVI stream '{{ $labels.group }}' has > 100 pending entries for 10m."
+
+      - alert: NdviStreamOldMessage
+        expr: |
+          max by (group) (redis_stream_pending_age_max) > 3600
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "NDVI stream old message"
+          description: "Oldest message in NDVI stream '{{ $labels.group }}' is > 1h old."
+
+      - alert: NdviStreamConsumerDown
+        expr: |
+          (time() - ndvi_stream_consumer_heartbeat) > 600
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "NDVI stream consumer down"
+          description: "NDVI stream consumer '{{ $labels.consumer }}' has not sent a heartbeat for 10m."
+
+      - alert: NdviStreamConsumerFailuresHigh
+        expr: |
+          sum by (consumer, failure_type) (rate(ndvi_stream_consumer_failures_total[10m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "NDVI stream consumer failures high"
+          description: "NDVI stream consumer '{{ $labels.consumer }}' is failing ({{ $labels.failure_type }}) > 0.1/s for 10m."
+
   - name: weather
     rules:
       - alert: WeatherProviderErrorRateHigh

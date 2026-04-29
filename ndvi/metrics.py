@@ -27,6 +27,37 @@ ndvi_cache_hit_total = Counter(
     labelnames=["layer"],
 )
 
+ndvi_task_runtime_seconds = Histogram(
+    "ndvi_task_runtime_seconds",
+    "Runtime of NDVI Celery tasks",
+    labelnames=["task", "engine"],
+    buckets=(0.1, 0.3, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300),
+)
+
+redis_stream_pending_entries = Gauge(
+    "redis_stream_pending_entries",
+    "Number of pending entries in a Redis stream consumer group",
+    labelnames=["group"],
+)
+
+redis_stream_pending_age_max = Gauge(
+    "redis_stream_pending_age_max",
+    "Age in seconds of the oldest pending Redis stream entry",
+    labelnames=["group"],
+)
+
+ndvi_stream_consumer_heartbeat = Gauge(
+    "ndvi_stream_consumer_heartbeat",
+    "Unix timestamp of the NDVI stream consumer heartbeat",
+    labelnames=["consumer"],
+)
+
+ndvi_stream_consumer_failures_total = Counter(
+    "ndvi_stream_consumer_failures_total",
+    "Total NDVI stream consumer failures",
+    labelnames=["consumer", "failure_type"],
+)
+
 ndvi_farms_stale_total = Gauge(
     "ndvi_farms_stale_total",
     "Gauge of farms missing fresh NDVI observations",

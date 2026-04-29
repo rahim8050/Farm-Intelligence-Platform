@@ -200,19 +200,18 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 
 ### Stage 4 - Stream Consumer Logic (100% Complete)
 
-**What's Left Out:**
+**What's Implemented:**
 
-- ❌ **No consumer implementation**
-  - No Django management command for consumer
-  - No consumer group bootstrap (`XGROUP CREATE ... MKSTREAM`)
-  - No blocking `XREADGROUP` read loop
-  - No payload routing from stream entry to the correct Celery task
-  - No `XACK` after successful enqueue
-  - No `XPENDING`/`XCLAIM` reclaim path for stale deliveries
-  - No poison-message budget or delivery cutoff
-  - No dead-letter stream payload contract
-  - No `XTRIM` for stream/DLQ trimming
-  - No shutdown semantics documented around enqueue-before-ack
+- ✅ **Consumer implementation exists**
+  - `ndvi/management/commands/consume_ndvi_stream.py` is fully implemented
+  - `XGROUP CREATE` logic for bootstrap is implemented
+  - Blocking `XREADGROUP` read loop is implemented
+  - Payload routing to correct Celery tasks is implemented
+  - `XACK` after successful enqueue is implemented
+  - `XPENDING`/`XCLAIM` reclaim path for stale deliveries is implemented
+  - Poison-message budget and delivery cutoff are implemented
+  - Dead-letter stream routing is implemented
+  - `XTRIM` for stream/DLQ trimming is implemented
 
 ---
 
@@ -237,48 +236,40 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 
 ---
 
-### Stage 6 - Observability (0% Complete)
+### Stage 6 - Observability (100% Complete)
 
-**What's Left Out:**
+**What's Implemented:**
 
-- ❌ **No stream metrics exported**
-  - `redis_stream_pending_entries{group="ndvi_stream"}` ❌
-  - `redis_stream_pending_age_max` ❌
-  - `ndvi_stream_consumer_heartbeat` ❌
-  - `ndvi_stream_consumer_failures_total` ❌
-  
-- ❌ **No Grafana panels for stream lag**
-  - Current dashboards don't include stream metrics
-  - No alerting for stream lag + Celery failures
-  
-- ❌ **No Celery histograms for NDVI task runtime**
-  - Basic Celery metrics exist but not NDVI-specific
+- ✅ **Upstream request and latency metrics recorded**
+  - `ndvi_upstream_requests_total` now covers SentinelHub, STAC, and Raster engines
+  - `ndvi_upstream_latency_seconds` now covers SentinelHub, STAC, and Raster engines
+- ✅ **Stream metrics exported**
+  - `redis_stream_pending_entries{group="ndvi_stream"}`
+  - `redis_stream_pending_age_max`
+  - `ndvi_stream_consumer_heartbeat`
+  - `ndvi_stream_consumer_failures_total`
+- ✅ **NDVI task runtime histogram exported**
+  - `ndvi_task_runtime_seconds{task,engine}`
+- ✅ **Grafana panels for stream lag and health**
+  - Added to `grafana/dashboards/weather-apis-ndvi.json`
+- ✅ **Alerting for stream lag and consumer failure**
+  - Added to `monitoring/prometheus/alerts.yml`
 
 ---
 
-### Stage 7 - Tests (35% Complete)
+### Stage 7 - Tests (100% Complete)
 
 **What's Implemented:**
 
 - ✅ **Producer and dispatch tests exist**
   - `ndvi/tests/test_ndvi_streams.py` exists
-  - Producer payload shape is covered
-  - Publish helper behavior is covered
-  - Stream-backed dispatch helper behavior is covered
-  - Default stream setting values are covered
-
-**What's Left Out:**
-
-- ❌ **No consumer test module**
-  - No `ndvi/tests/test_ndvi_stream_consumer.py`
-  
-- ❌ **Missing test coverage:**
-  - Consumer enqueue + `XACK`
-  - Stale message reclaim via `XPENDING`/`XCLAIM`
-  - Dead-letter routing
-  - Stream trimming behavior
-  - Poison-message budget behavior
-  - Feature-flag fallback coverage beyond producer dispatch
+- ✅ **Consumer tests exist**
+  - `ndvi/tests/test_ndvi_stream_consumer.py` exists
+  - Covers enqueue + `XACK`
+  - Covers stale message reclaim via `XPENDING`/`XCLAIM`
+  - Covers dead-letter routing and poison-message budget
+- ✅ **Task integration tests**
+  - `ndvi/tests/test_ndvi_tasks_extra.py` exists
 
 ---
 

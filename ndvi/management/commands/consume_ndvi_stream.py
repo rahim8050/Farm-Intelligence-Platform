@@ -28,6 +28,12 @@ import redis
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
+from ndvi.metrics import (
+    ndvi_stream_consumer_failures_total,
+    ndvi_stream_consumer_heartbeat,
+    redis_stream_pending_age_max,
+    redis_stream_pending_entries,
+)
 from ndvi.streams import _get_stream_redis_client
 from ndvi.tasks import compute_farm_state_coverage, run_ndvi_job
 
@@ -64,9 +70,12 @@ class Command(BaseCommand):
 
         client = _get_stream_redis_client()
         self._ensure_group(client)
+        self._mark_heartbeat()
+        self._update_stream_metrics(client)
 
         while not self.should_exit:
             try:
+                self._mark_heartbeat()
                 # 1. Periodic bounded reclaim pass using XAUTOCLAIM
                 self._periodic_reclaim(client)
 
@@ -79,8 +88,11 @@ class Command(BaseCommand):
 
                 # 3. Stream trimming
                 self._trim_streams(client)
+                self._update_stream_metrics(client)
+                self._mark_heartbeat()
 
             except redis.ConnectionError as exc:
+                self._record_failure("redis_connection")
                 logger.error(
                     "Redis connection error: %s. Retrying in 5s...",
                     exc,
@@ -88,6 +100,7 @@ class Command(BaseCommand):
                 )
                 time.sleep(5)
             except Exception as exc:
+                self._record_failure("loop_exception")
                 logger.exception(
                     "Unexpected error in consumer loop: %s",
                     exc,
@@ -98,6 +111,7 @@ class Command(BaseCommand):
         # Final wait for any in-flight processing that might have started
         # just before should_exit became True
         with self._processing_lock:
+            self._mark_heartbeat()
             self.stdout.write(
                 self.style.SUCCESS("NDVI stream consumer stopped.")
             )
@@ -234,6 +248,7 @@ class Command(BaseCommand):
                     self._process_batch(client, reclaimed_messages)
 
         except Exception as exc:
+            self._record_failure("autoclaim_error")
             logger.exception("XAUTOCLAIM failed: %s", exc)
 
     def _process_batch(
@@ -301,6 +316,7 @@ class Command(BaseCommand):
                 )
 
         except Exception as exc:
+            self._record_failure("message_exception")
             logger.exception(
                 "Error processing message %s: %s",
                 entry_id,
@@ -326,6 +342,7 @@ class Command(BaseCommand):
             )
             return True
         except (KeyError, ValueError) as exc:
+            self._record_failure("route_validation_error")
             logger.error(
                 "Structural error in farm_state_coverage payload: %s",
                 exc,
@@ -349,6 +366,7 @@ class Command(BaseCommand):
             run_ndvi_job.delay(job_id)
             return True
         except (KeyError, ValueError) as exc:
+            self._record_failure("route_validation_error")
             logger.error(
                 "Structural error in NDVI job payload: %s",
                 exc,
@@ -395,6 +413,72 @@ class Command(BaseCommand):
             maxlen=dlq_maxlen,
             approximate=True,
         )
+
+    def _mark_heartbeat(self) -> None:
+        """Record the latest consumer heartbeat timestamp."""
+        ndvi_stream_consumer_heartbeat.labels(consumer=self.consumer_name).set(
+            time.time()
+        )
+
+    def _record_failure(self, failure_type: str) -> None:
+        """Increment the consumer failure counter for a known failure type."""
+        ndvi_stream_consumer_failures_total.labels(
+            consumer=self.consumer_name,
+            failure_type=failure_type,
+        ).inc()
+
+    def _update_stream_metrics(self, client: redis.Redis) -> None:
+        """Refresh pending-entry and pending-age gauges for the stream."""
+        stream_name = settings.NDVI_STREAM_NAME
+        group_name = settings.NDVI_STREAM_GROUP
+        pending = 0
+        age_seconds = 0.0
+
+        try:
+            summary = client.xpending(stream_name, group_name)
+            if isinstance(summary, dict):
+                pending = int(summary.get("pending", 0) or 0)
+            elif isinstance(summary, (list, tuple)) and summary:
+                pending = int(summary[0] or 0)
+
+            oldest = client.xpending_range(
+                stream_name, group_name, "-", "+", 1
+            )
+            if isinstance(oldest, (list, tuple)) and oldest:
+                age_seconds = self._extract_pending_age_seconds(oldest[0])
+        except Exception as exc:
+            self._record_failure("metrics_update_error")
+            logger.warning(
+                "Unable to refresh NDVI stream metrics: %s",
+                exc,
+                extra={"action": "metrics_update"},
+            )
+            return
+
+        redis_stream_pending_entries.labels(group=group_name).set(pending)
+        redis_stream_pending_age_max.labels(group=group_name).set(age_seconds)
+
+    @staticmethod
+    def _extract_pending_age_seconds(entry: dict[str, Any]) -> float:
+        """Extract a pending-entry age in seconds from xpending_range data."""
+        for key in (
+            "time_since_delivered",
+            "time_since_last_delivered",
+            "idle",
+            "milliseconds_since_delivered",
+        ):
+            value = entry.get(key)
+            if isinstance(value, (int, float)):
+                return max(float(value) / 1000.0, 0.0)
+
+        message_id = entry.get("message_id")
+        if isinstance(message_id, str) and "-" in message_id:
+            try:
+                timestamp_ms = int(message_id.split("-", 1)[0])
+            except ValueError:
+                return 0.0
+            return max((time.time() * 1000.0 - timestamp_ms) / 1000.0, 0.0)
+        return 0.0
 
     def _decode_str(self, val: Any) -> str:
         """Safe decode bytes to str."""
