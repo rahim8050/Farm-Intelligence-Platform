@@ -5,6 +5,8 @@ from typing import Any
 
 from ndvi.serializers import (
     LatestRequestSerializer,
+    NdviIngestSerializer,
+    NdviJobSerializer,
     RasterPngRequestSerializer,
 )
 from ndvi.services import get_default_lookback_days, get_default_max_cloud
@@ -59,3 +61,58 @@ def test_raster_png_serializer_rejects_large_canvas(settings: Any) -> None:
 
     assert not serializer.is_valid()
     assert "size too large" in serializer.errors["non_field_errors"][0].lower()
+
+
+def test_ndvi_job_serializer() -> None:
+    from ndvi.models import NdviJob
+
+    job = NdviJob(
+        id=123,
+        job_type=NdviJob.JobType.REFRESH_LATEST,
+        status=NdviJob.JobStatus.QUEUED,
+        attempts=1,
+    )
+    serializer = NdviJobSerializer(instance=job)
+    assert serializer.data["id"] == 123
+    assert serializer.data["job_type"] == "refresh_latest"
+    assert serializer.data["status"] == "queued"
+
+
+def test_ndvi_ingest_serializer_valid() -> None:
+    data = {
+        "farm_id": "550e8400-e29b-41d4-a716-446655440000",
+        "timestamp": "2024-01-01T12:00:00Z",
+        "mean": 0.5,
+        "min": 0.3,
+        "max": 0.7,
+    }
+    serializer = NdviIngestSerializer(data=data)
+    assert serializer.is_valid(), serializer.errors
+
+
+def test_ndvi_ingest_serializer_invalid_range() -> None:
+    data = {
+        "farm_id": "550e8400-e29b-41d4-a716-446655440000",
+        "timestamp": "2024-01-01T12:00:00Z",
+        "mean": 1.5,
+        "min": 0.3,
+        "max": 0.7,
+    }
+    serializer = NdviIngestSerializer(data=data)
+    assert not serializer.is_valid()
+    assert "mean" in serializer.errors
+
+
+def test_ndvi_ingest_serializer_invalid_order() -> None:
+    data = {
+        "farm_id": "550e8400-e29b-41d4-a716-446655440000",
+        "timestamp": "2024-01-01T12:00:00Z",
+        "mean": 0.2,
+        "min": 0.3,
+        "max": 0.7,
+    }
+    serializer = NdviIngestSerializer(data=data)
+    assert not serializer.is_valid()
+    assert "NDVI values must satisfy min <= mean <= max" in str(
+        serializer.errors["non_field_errors"][0]
+    )
