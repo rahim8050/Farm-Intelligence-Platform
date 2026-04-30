@@ -14,6 +14,8 @@ from ndvi.farm_state import (
     _compute_max_ndvi,
     _compute_mean_ndvi,
     _coverage_lock_key,
+    _get_cached_coverage,
+    _set_cached_coverage,
     build_farm_state,
     get_coverage_cache_ttl_seconds,
     get_coverage_lock_seconds,
@@ -172,3 +174,83 @@ def test_compute_mean_ndvi_empty_returns_none() -> None:
 def test_compute_max_ndvi_empty_returns_none() -> None:
     result = _compute_max_ndvi([])
     assert result is None
+
+
+def test_classify_farm_state_unknown_when_mean_none() -> None:
+    from ndvi.farm_state import classify_farm_state
+
+    state, interpretation, action = classify_farm_state(
+        mean_ndvi=None, max_ndvi=0.5, trend=0.1
+    )
+    assert state == "unknown"
+
+
+def test_classify_farm_state_unknown_when_max_none() -> None:
+    from ndvi.farm_state import classify_farm_state
+
+    state, interpretation, action = classify_farm_state(
+        mean_ndvi=0.3, max_ndvi=None, trend=0.1
+    )
+    assert state == "unknown"
+
+
+def test_classify_farm_state_establishment() -> None:
+    from ndvi.farm_state import classify_farm_state
+
+    state, interpretation, action = classify_farm_state(
+        mean_ndvi=0.1, max_ndvi=0.8, trend=None
+    )
+    assert state == "establishment"
+
+
+def test_classify_farm_state_full_canopy() -> None:
+    from ndvi.farm_state import classify_farm_state
+
+    state, interpretation, action = classify_farm_state(
+        mean_ndvi=0.7, max_ndvi=0.9, trend=0.05
+    )
+    assert state == "full_canopy"
+
+
+def test_classify_farm_state_decline() -> None:
+    from ndvi.farm_state import classify_farm_state
+
+    state, interpretation, action = classify_farm_state(
+        mean_ndvi=0.4, max_ndvi=0.5, trend=-0.1
+    )
+    assert state == "decline"
+
+
+def test_classify_farm_state_growth() -> None:
+    from ndvi.farm_state import classify_farm_state
+
+    state, interpretation, action = classify_farm_state(
+        mean_ndvi=0.4, max_ndvi=0.5, trend=0.1
+    )
+    assert state == "growth"
+
+
+def test_set_and_get_cached_coverage() -> None:
+    from datetime import date as date_cls
+
+    farm_id = 999
+    engine = "stac"
+    target = date_cls(2024, 6, 1)
+    threshold = 0.5
+
+    _set_cached_coverage(
+        farm_id=farm_id,
+        engine=engine,
+        target_date=target,
+        threshold=threshold,
+        value=75.5,
+    )
+
+    found, value = _get_cached_coverage(
+        farm_id=farm_id,
+        engine=engine,
+        target_date=target,
+        threshold=threshold,
+    )
+    assert found is True
+    assert value == 75.5
