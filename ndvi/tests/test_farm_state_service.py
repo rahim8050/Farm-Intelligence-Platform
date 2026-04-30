@@ -11,8 +11,14 @@ from django.core.cache import caches
 
 from farms.models import Farm
 from ndvi.farm_state import (
+    _compute_max_ndvi,
+    _compute_mean_ndvi,
+    _coverage_lock_key,
     build_farm_state,
+    get_coverage_cache_ttl_seconds,
+    get_coverage_lock_seconds,
     get_coverage_threshold,
+    get_trend_window_days,
 )
 from ndvi.models import NdviObservation
 
@@ -96,3 +102,73 @@ def test_farm_state_returns_none_on_coverage_cache_miss(
         result = build_farm_state(farm=farm, engine="stac")
         assert result.coverage_pct is None
         mock_enqueue.assert_not_called()
+
+
+def test_coverage_lock_key_format() -> None:
+    result = _coverage_lock_key(
+        farm_id=1, engine="stac", target_date=date(2024, 1, 1), threshold=0.5
+    )
+    assert result == "farm_state:coverage:lock:1:stac:2024-01-01:0.500"
+
+
+def test_coverage_threshold_default() -> None:
+    threshold = get_coverage_threshold()
+    assert 0.0 <= threshold <= 1.0
+
+
+def test_coverage_cache_ttl_seconds() -> None:
+    ttl = get_coverage_cache_ttl_seconds()
+    assert ttl > 0
+
+
+def test_coverage_lock_seconds() -> None:
+    lock_ttl = get_coverage_lock_seconds()
+    assert lock_ttl > 0
+
+
+def test_trend_window_days() -> None:
+    window = get_trend_window_days()
+    assert 1 <= window <= 365
+
+
+def test_compute_mean_ndvi_returns_mean() -> None:
+    observations = [
+        NdviObservation(
+            farm_id=1, engine="stac", bucket_date=date(2024, 1, 1), mean=0.2
+        ),
+        NdviObservation(
+            farm_id=1, engine="stac", bucket_date=date(2024, 1, 2), mean=0.4
+        ),
+        NdviObservation(
+            farm_id=1, engine="stac", bucket_date=date(2024, 1, 3), mean=0.6
+        ),
+    ]
+    result = _compute_mean_ndvi(observations)
+    assert result is not None
+    assert abs(result - 0.4) < 0.001
+
+
+def test_compute_max_ndvi_returns_max() -> None:
+    observations = [
+        NdviObservation(
+            farm_id=1, engine="stac", bucket_date=date(2024, 1, 1), mean=0.2
+        ),
+        NdviObservation(
+            farm_id=1, engine="stac", bucket_date=date(2024, 1, 2), mean=0.8
+        ),
+        NdviObservation(
+            farm_id=1, engine="stac", bucket_date=date(2024, 1, 3), mean=0.6
+        ),
+    ]
+    result = _compute_max_ndvi(observations)
+    assert result == 0.8
+
+
+def test_compute_mean_ndvi_empty_returns_none() -> None:
+    result = _compute_mean_ndvi([])
+    assert result is None
+
+
+def test_compute_max_ndvi_empty_returns_none() -> None:
+    result = _compute_max_ndvi([])
+    assert result is None
