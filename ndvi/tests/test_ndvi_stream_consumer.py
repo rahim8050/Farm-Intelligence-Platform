@@ -11,6 +11,20 @@ from ndvi.management.commands.consume_ndvi_stream import Command
 
 
 class TestStreamConsumerMetrics:
+    def test_starts_metrics_server_on_configured_port(self) -> None:
+        command = Command()
+
+        with (
+            patch("django.conf.settings.NDVI_STREAM_METRICS_PORT", 8002),
+            patch(
+                "ndvi.management.commands.consume_ndvi_stream.start_http_server"
+            ) as mock_start_http_server,
+        ):
+            command._start_metrics_server()
+
+        mock_start_http_server.assert_called_once_with(8002)
+        assert command._metrics_server_started
+
     def test_updates_pending_and_age_metrics(self) -> None:
         command = Command()
         command.consumer_name = "test-consumer"

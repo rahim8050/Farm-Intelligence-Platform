@@ -692,9 +692,15 @@ if IS_TESTING:
 # NDVI defaults and limits
 NDVI_ENGINE = env("NDVI_ENGINE", default="sentinelhub")
 NDVI_QUEUE_BACKEND = env("NDVI_QUEUE_BACKEND", default="celery")
+NDVI_CELERY_METRICS_PORT = env.int("NDVI_CELERY_METRICS_PORT", default=8003)
+NDVI_CELERY_METRICS_DIR = env(
+    "NDVI_CELERY_METRICS_DIR",
+    default=str(BASE_DIR / "tmp" / "celery-metrics"),
+)
 NDVI_STREAM_NAME = env("NDVI_STREAM_NAME", default="ndvi:stream")
 NDVI_STREAM_GROUP = env("NDVI_STREAM_GROUP", default="ndvi-group")
 NDVI_STREAM_CONSUMER = env("NDVI_STREAM_CONSUMER", default="consumer_1")
+NDVI_STREAM_METRICS_PORT = env.int("NDVI_STREAM_METRICS_PORT", default=8002)
 NDVI_STREAM_BLOCK_MS = env.int("NDVI_STREAM_BLOCK_MS", default=5000)
 NDVI_STREAM_CLAIM_IDLE_MS = env.int("NDVI_STREAM_CLAIM_IDLE_MS", default=60000)
 NDVI_STREAM_MAXLEN = env.int("NDVI_STREAM_MAXLEN", default=10000)

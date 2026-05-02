@@ -54,7 +54,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (status) (increase(ndvi_jobs_total[15m]))",
+          "expr": "sum by (status) (increase(ndvi_jobs_total[15m])) or label_replace(vector(0), \"status\", \"none\", \"\", \"\")",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -92,7 +92,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (engine, outcome) (rate(ndvi_upstream_requests_total[5m]))",
+          "expr": "sum by (engine, outcome) (rate(ndvi_upstream_requests_total[5m])) or label_replace(label_replace(vector(0), \"engine\", \"none\", \"\", \"\"), \"outcome\", \"none\", \"\", \"\")",
           "legendFormat": "{{engine}}/{{outcome}}",
           "refId": "A"
         }
@@ -130,7 +130,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, engine) (rate(ndvi_upstream_latency_seconds_bucket[5m])))",
+          "expr": "(histogram_quantile(0.95, sum by (le, engine) (rate(ndvi_upstream_latency_seconds_bucket[5m]))) >= 0) or label_replace(vector(0), \"engine\", \"none\", \"\", \"\")",
           "legendFormat": "{{engine}}",
           "refId": "A"
         }
@@ -168,7 +168,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (layer) (rate(ndvi_cache_hit_total[5m]))",
+          "expr": "sum by (layer) (rate(ndvi_cache_hit_total[5m])) or label_replace(vector(0), \"layer\", \"none\", \"\", \"\")",
           "legendFormat": "{{layer}}",
           "refId": "A"
         }
@@ -206,7 +206,7 @@
       },
       "targets": [
         {
-          "expr": "max by (engine) (ndvi_farms_stale_total)",
+          "expr": "max by (engine) (ndvi_farms_stale_total) or label_replace(vector(0), \"engine\", \"none\", \"\", \"\")",
           "legendFormat": "{{engine}}",
           "refId": "A"
         }
@@ -249,7 +249,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (type) (increase(ndvi_jobs_total[15m]))",
+          "expr": "sum by (type) (increase(ndvi_jobs_total[15m])) or label_replace(vector(0), \"type\", \"none\", \"\", \"\")",
           "legendFormat": "{{type}}",
           "refId": "A"
         }
@@ -374,7 +374,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (consumer, failure_type) (rate(ndvi_stream_consumer_failures_total[5m]))",
+          "expr": "sum by (consumer, failure_type) (rate(ndvi_stream_consumer_failures_total[5m])) or label_replace(label_replace(vector(0), \"consumer\", \"none\", \"\", \"\"), \"failure_type\", \"none\", \"\", \"\")",
           "legendFormat": "{{consumer}} / {{failure_type}}",
           "refId": "A"
         }
@@ -403,7 +403,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, task, engine) (rate(ndvi_task_runtime_seconds_bucket[5m])))",
+          "expr": "(histogram_quantile(0.95, sum by (le, task, engine) (rate(ndvi_task_runtime_seconds_bucket[5m]))) >= 0) or label_replace(label_replace(vector(0), \"task\", \"none\", \"\", \"\"), \"engine\", \"none\", \"\", \"\")",
           "legendFormat": "{{task}} / {{engine}}",
           "refId": "A"
         }
