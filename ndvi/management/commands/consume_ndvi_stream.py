@@ -27,6 +27,7 @@ from typing import Any
 import redis
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from prometheus_client import start_http_server
 
 from ndvi.metrics import (
     ndvi_stream_consumer_failures_total,
@@ -55,6 +56,7 @@ class Command(BaseCommand):
         self._processing_lock = threading.Lock()
         self._last_reclaim_time = 0.0
         self._autoclaim_start_id = "0-0"
+        self._metrics_server_started = False
 
     def handle(self, *args: Any, **options: Any) -> None:
         """Main entry point for the management command."""
@@ -67,6 +69,8 @@ class Command(BaseCommand):
                 f"Starting NDVI stream consumer: {self.consumer_name}"
             )
         )
+
+        self._start_metrics_server()
 
         client = _get_stream_redis_client()
         self._ensure_group(client)
@@ -115,6 +119,23 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.SUCCESS("NDVI stream consumer stopped.")
             )
+
+    def _start_metrics_server(self) -> None:
+        """Expose consumer metrics on a dedicated Prometheus HTTP port."""
+        if self._metrics_server_started:
+            return
+
+        metrics_port = int(getattr(settings, "NDVI_STREAM_METRICS_PORT", 0))
+        if metrics_port <= 0:
+            return
+
+        start_http_server(metrics_port)
+        self._metrics_server_started = True
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"NDVI stream metrics available on :{metrics_port}"
+            )
+        )
 
     def _handle_signal(self, signum: int, frame: Any) -> None:
         """Handle termination signals."""

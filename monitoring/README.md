@@ -6,8 +6,15 @@
 - Django Prometheus middleware is enabled, providing request, response, and DB metrics.
 - Custom metrics:
   - NDVI: `ndvi_jobs_total`, `ndvi_upstream_requests_total`, `ndvi_upstream_latency_seconds`, `ndvi_cache_hit_total`, `ndvi_farms_stale_total`
+  - NDVI stream consumer: `redis_stream_pending_entries`, `redis_stream_pending_age_max`, `ndvi_stream_consumer_heartbeat`, `ndvi_stream_consumer_failures_total`
   - Weather: `weather_provider_requests_total`, `weather_provider_errors_total`, `weather_provider_latency_seconds`, `weather_cache_hits_total`, `weather_cache_misses_total`
   - Celery: `celery_tasks_total`, `celery_tasks_in_progress`, `celery_task_runtime_seconds`
+
+NDVI stream consumer metrics are exposed from the consumer process itself on
+`NDVI_STREAM_METRICS_PORT` (default `8002`).
+
+Celery worker metrics are exposed from the worker process itself on
+`NDVI_CELERY_METRICS_PORT` (default `8003`).
 
 Celery metrics are aggregated via the shared cache; ensure the Celery workers
 and Django API share the same Redis cache in production.
