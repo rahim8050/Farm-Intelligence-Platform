@@ -14,7 +14,6 @@ omit =
     */staticfiles/*
     */dist/*
     */build/*
-    */tests/*
     import_dashboards.py
 
 [report]
