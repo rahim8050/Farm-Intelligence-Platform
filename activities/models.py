@@ -95,8 +95,8 @@ class Activity(models.Model):
             and self.interval_days
         ):
             if self.next_due_at is None:
-                self.next_due_at = (
-                    self.scheduled_at + timedelta(days=self.interval_days)
+                self.next_due_at = self.scheduled_at + timedelta(
+                    days=self.interval_days
                 )
         if self.next_due_at is None:
             self.next_due_at = self.scheduled_at
