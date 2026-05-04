@@ -95,6 +95,7 @@ INSTALLED_APPS = [
     "farms",
     "ndvi",
     "weather",
+    "activities",
     "django_celery_beat",
 ]
 
