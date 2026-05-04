@@ -1,4 +1,5 @@
 import os
+import secrets
 from datetime import timedelta
 
 import pytest
@@ -9,7 +10,7 @@ from rest_framework.test import APIClient
 
 from activities.models import Activity
 
-TEST_PASSWORD = os.environ.get("TEST_USER_PASSWORD", "testpass123")
+TEST_PASSWORD = secrets.token_urlsafe(16)
 
 
 @pytest.mark.django_db
