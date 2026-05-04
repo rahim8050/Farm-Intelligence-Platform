@@ -1,3 +1,4 @@
+import os
 from datetime import timedelta
 
 import pytest
@@ -7,6 +8,8 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from activities.models import Activity
+
+TEST_PASSWORD = os.environ.get("TEST_USER_PASSWORD", "testpass123")
 
 
 @pytest.mark.django_db
@@ -19,7 +22,7 @@ class TestActivityAPI(TestCase):
         self.user = user_model.objects.create_user(
             username="testuser",
             email="test@example.com",
-            password="testpass123",
+            password=TEST_PASSWORD,
         )
         self.client.force_authenticate(user=self.user)
 
@@ -101,7 +104,7 @@ class TestActivityAPI(TestCase):
         other_user = user_model.objects.create_user(
             username="other",
             email="other@example.com",
-            password="otherpass123",
+            password=TEST_PASSWORD,
         )
         self.client.force_authenticate(user=other_user)
 
