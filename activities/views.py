@@ -1,3 +1,5 @@
+from typing import Any
+
 from rest_framework import status, viewsets
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -18,10 +20,9 @@ class ActivityViewSet(viewsets.ModelViewSet):
 
     serializer_class = ActivitySerializer
 
-    def get_queryset(self) -> Activity:
-        return Activity.objects.filter(owner=self.request.user).select_related(
-            "farm"
-        )
+    def get_queryset(self) -> Any:
+        user = self.request.user
+        return Activity.objects.filter(owner=user).select_related("farm")
 
     def list(
         self, request: Request, *args: object, **kwargs: object

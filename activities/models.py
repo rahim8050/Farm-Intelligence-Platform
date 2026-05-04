@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from django.conf import settings
 from django.db import models
@@ -89,7 +90,7 @@ class Activity(models.Model):
         tstatus = self.status
         return f"Activity(id={tid}, type={ttype}, status={tstatus})"
 
-    def save(self, *args: object, **kwargs: object) -> None:
+    def save(self, *args: Any, **kwargs: Any) -> None:
         if (
             self.recurrence_type == self.RecurrenceType.INTERVAL
             and self.interval_days
