@@ -52,8 +52,8 @@ jobs:
       # Optional: if your settings read DATABASE_URL, this forces MySQL instead of SQLite
       DATABASE_URL: "mysql://test_user:test_pass@127.0.0.1:3306/test_db"
 
-      # Coverage gate (adjusted for activities module)
-      COVERAGE_FAIL_UNDER: "94"
+      # Coverage gate (adjust to your standard)
+      COVERAGE_FAIL_UNDER: "96"
 
       # Python hygiene
       PYTHONDONTWRITEBYTECODE: "1"
