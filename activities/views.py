@@ -114,7 +114,8 @@ class ActivityViewSet(viewsets.ModelViewSet):
     ) -> Response:
         """Create a new activity.
 
-        Input: type, scheduled_at, optional recurrence_type, interval_days, farm, metadata.
+        Input: type, scheduled_at, optional recurrence_type,
+               interval_days, farm, metadata.
         Output: Created activity with generated next_due_at.
         """
         serializer = ActivityCreateSerializer(data=request.data)
