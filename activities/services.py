@@ -1,3 +1,19 @@
+"""Activity service layer for state machine and execution.
+
+Provides atomic claim, state transitions, and execution validation per
+prompts/harden.md execution model freeze.
+
+State transitions MUST only occur via this service layer.
+Direct model mutation of status is forbidden.
+
+Exports:
+    claim_activity: Atomic activity claim for execution.
+    validate_execution: Validate execution_id for idempotency.
+    ActivityStateMachine: Enforces allowed state transitions.
+    InvalidTransitionError: Raised on invalid transitions.
+    StaleExecutionError: Raised on execution_id mismatch.
+"""
+
 from __future__ import annotations
 
 import uuid
