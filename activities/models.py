@@ -19,9 +19,11 @@ class Activity(models.Model):
     class Status(models.TextChoices):
         CREATED = "created", "Created"
         PENDING = "pending", "Pending"
+        DISPATCHED = "dispatched", "Dispatched"
         RUNNING = "running", "Running"
-        DONE = "done", "Done"
+        SUCCESS = "success", "Success"
         FAILED = "failed", "Failed"
+        RETRY = "retry", "Retry"
 
     class RecurrenceType(models.TextChoices):
         NONE = "none", "One-time"
@@ -61,8 +63,13 @@ class Activity(models.Model):
 
     metadata = models.JSONField(default=dict, blank=True)
 
+    execution_id = models.UUIDField(null=True, blank=True, editable=False)
+    execution_started_at = models.DateTimeField(null=True, blank=True)
+    execution_completed_at = models.DateTimeField(null=True, blank=True)
+
     last_error = models.TextField(null=True, blank=True)
     retry_count = models.PositiveIntegerField(default=0)
+    max_retries = models.PositiveIntegerField(default=3)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

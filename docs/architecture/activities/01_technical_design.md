@@ -200,29 +200,35 @@ Handler.execute() complete
                          │ scheduled_at <= now
                          ▼
                     ┌──────────┐
-              ┌─────►│ PENDING │◄──────┐
-              │      └────┬─────┘           │
-              │           │                 │
-              │           │ dispatch         │ retry
-              │           ▼                 │
-              │      ┌──────────┐      │
-              │      │RUNNING │      │
-              │      └────┬─────┘      │
-              │           │              │
-              │     ┌─────┴─────┐       │
-              │     │ success   │failure │
-              │     ▼          ▼       │
-              │  ┌──────┐  ┌─────┐  │
-              │  │DONE  │  │FAILED│──┘
-              │  └──┬───┘  └──┬──┘  │
-              │     │          │      │
-              │  recurrence   │      │
-              │  (reschedule)│      │
-              │     │          │      │
-              │     ▼          ◄────┘
-              │  ┌──────────┐
-              └──│ PENDING │ (next occurrence)
-                 └──────────┘
+               ┌────►│ PENDING │◄──────┐
+               │      └────┬─────┘           │
+               │           │                 │
+               │           │ dispatch        │ retry
+               │           ▼                 │
+               │      ┌──────────┐      │
+               │      │DISPATCHED│      │
+               │      └────┬─────┘      │
+               │           │              │
+               │           │ execute      │
+               │           ▼              │
+               │      ┌──────────┐      │
+               │      │ RUNNING │      │
+               │      └────┬─────┘      │
+               │           │              │
+               │     ┌─────┴─────┐       │
+               │     │ success   │failure │
+               │     ▼          ▼       │
+               │  ┌──────┐  ┌─────┐  │
+               │  │SUCCESS│  │FAILED│──┘
+               │  └──┬───┘  └──┬──┘  │
+               │     │          │      │
+               │  recurrence   │      │
+               │  (reschedule)│      │
+               │     │          │      │
+               │     ▼          ◄────┘
+               │  ┌──────────┐
+               └──│ PENDING │ (next occurrence)
+                  └──────────┘
 ```
 
 ### 3.2 Status Definitions
@@ -231,9 +237,11 @@ Handler.execute() complete
 |--------|---------|
 | CREATED | Recently created, not yet due |
 | PENDING | Due for execution |
+| DISPATCHED | Claimed by scheduler, queued for worker |
 | RUNNING | Currently being processed |
-| DONE | Completed successfully (terminal unless recurring) |
+| SUCCESS | Completed successfully (terminal unless recurring) |
 | FAILED | Execution failed after retries exhausted |
+| RETRY | Scheduled for retry with backoff |
 
 ### 3.3 Activity Types
 
@@ -604,9 +612,11 @@ class Activity(models.Model):
     class Status(models.TextChoices):
         CREATED = "created", "Created"
         PENDING = "pending", "Pending"
+        DISPATCHED = "dispatched", "Dispatched"
         RUNNING = "running", "Running"
-        DONE = "done", "Done"
+        SUCCESS = "success", "Success"
         FAILED = "failed", "Failed"
+        RETRY = "retry", "Retry"
     
     class RecurrenceType(models.TextChoices):
         NONE = "none", "One-time"
@@ -651,9 +661,17 @@ class Activity(models.Model):
     # Metadata (type-specific)
     metadata = models.JSONField(default=dict, blank=True)
     
+    # Execution tracking (per prompts/harden.md)
+    execution_id = models.UUIDField(null=True, blank=True, editable=False)
+    execution_started_at = models.DateTimeField(null=True, blank=True)
+    execution_completed_at = models.DateTimeField(null=True, blank=True)
+    
+    # Retry configuration
+    retry_count = models.PositiveIntegerField(default=0)
+    max_retries = models.PositiveIntegerField(default=3)
+    
     # Error tracking
     last_error = models.TextField(null=True, blank=True)
-    retry_count = models.PositiveIntegerField(default=0)
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1397,6 +1415,7 @@ ACTIVITY_RETRY_BACKOFF_MAX = 600
 |---------|------|--------|---------|
 | 1.0 | May 3, 2026 | opencode | Initial TDD |
 | 1.1 | May 3, 2026 | opencode | Added cache strategy (Section 10B) for farm state caching |
+| 1.2 | May 5, 2026 | opencode | execution_id lifecycle, DISPATCHED state, atomic claim per prompts/harden.md |
 
 ---
 
