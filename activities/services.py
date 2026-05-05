@@ -53,18 +53,26 @@ class ActivityStateMachine:
     """
 
     ALLOWED_TRANSITIONS = {
-        "PENDING": ["DISPATCHED"],
-        "DISPATCHED": ["RUNNING"],
-        "RUNNING": ["SUCCESS", "FAILED", "RETRY"],
-        "RETRY": ["PENDING"],
-        "SUCCESS": [],
-        "FAILED": ["PENDING"],
+        Activity.Status.PENDING: [Activity.Status.DISPATCHED],
+        Activity.Status.DISPATCHED: [Activity.Status.RUNNING],
+        Activity.Status.RUNNING: [
+            Activity.Status.SUCCESS,
+            Activity.Status.FAILED,
+            Activity.Status.RETRY,
+        ],
+        Activity.Status.RETRY: [Activity.Status.PENDING],
+        Activity.Status.SUCCESS: [],
+        Activity.Status.FAILED: [Activity.Status.PENDING],
     }
 
     @classmethod
     def can_transition(cls, current: str, new: str) -> bool:
         """Check if transition is allowed."""
-        return new in cls.ALLOWED_TRANSITIONS.get(current, [])
+        current_status = (
+            Activity.Status(current) if isinstance(current, str) else current
+        )
+        new_status = Activity.Status(new) if isinstance(new, str) else new
+        return new_status in cls.ALLOWED_TRANSITIONS.get(current_status, [])
 
     @classmethod
     @transaction.atomic
