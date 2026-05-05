@@ -52,27 +52,36 @@ class ActivityStateMachine:
     Direct model mutation of status is forbidden.
     """
 
-    ALLOWED_TRANSITIONS = {
-        Activity.Status.PENDING: [Activity.Status.DISPATCHED],
-        Activity.Status.DISPATCHED: [Activity.Status.RUNNING],
-        Activity.Status.RUNNING: [
-            Activity.Status.SUCCESS,
-            Activity.Status.FAILED,
-            Activity.Status.RETRY,
-        ],
-        Activity.Status.RETRY: [Activity.Status.PENDING],
-        Activity.Status.SUCCESS: [],
-        Activity.Status.FAILED: [Activity.Status.PENDING],
-    }
+    _ALLOWED_TRANSITIONS: dict = None
+
+    @classmethod
+    def _ensure_transitions(cls) -> None:
+        """Lazy initialization of transitions after Activity is loaded."""
+        if cls._ALLOWED_TRANSITIONS is None:
+            from activities.models import Activity
+
+            cls._ALLOWED_TRANSITIONS = {
+                Activity.Status.PENDING: [Activity.Status.DISPATCHED],
+                Activity.Status.DISPATCHED: [Activity.Status.RUNNING],
+                Activity.Status.RUNNING: [
+                    Activity.Status.SUCCESS,
+                    Activity.Status.FAILED,
+                    Activity.Status.RETRY,
+                ],
+                Activity.Status.RETRY: [Activity.Status.PENDING],
+                Activity.Status.SUCCESS: [],
+                Activity.Status.FAILED: [Activity.Status.PENDING],
+            }
 
     @classmethod
     def can_transition(cls, current: str, new: str) -> bool:
         """Check if transition is allowed."""
+        cls._ensure_transitions()
         current_status = (
             Activity.Status(current) if isinstance(current, str) else current
         )
         new_status = Activity.Status(new) if isinstance(new, str) else new
-        return new_status in cls.ALLOWED_TRANSITIONS.get(current_status, [])
+        return new_status in cls._ALLOWED_TRANSITIONS.get(current_status, [])
 
     @classmethod
     @transaction.atomic
@@ -82,6 +91,7 @@ class ActivityStateMachine:
         Raises:
             InvalidTransitionError: If transition is not allowed.
         """
+        cls._ensure_transitions()
         if not cls.can_transition(activity.status, new_status):
             raise InvalidTransitionError(
                 f"Invalid transition {activity.status} -> {new_status}"
