@@ -1191,13 +1191,21 @@ For handler-specific failures:
 
 **Objective:** Basic scheduling
 
-- [ ] Celery Beat poll task
-- [ ] Redis lock implementation
-- [ ] Dispatch task
-- [ ] Activity handler registry stub
-- [ ] Status state machine
-- [ ] Retry policy
-- [ ] Integration tests
+- [x] Activity model with migrations
+- [x] POST /api/v1/activities/ endpoint
+- [x] GET /api/v1/activities/ endpoint
+- [x] GET /api/v1/activities/{id}/ endpoint
+- [x] PATCH /api/v1/activities/{id}/ endpoint
+- [x] DELETE /api/v1/activities/{id}/ endpoint
+- [x] Serializer validation
+- [x] User isolation (queryset filtering)
+- [x] Unit tests for API
+- [x] Service layer (atomic claim, state machine)
+- [x] Execution model (execution_id, DISPATCHED state)
+- [x] Handler registry stub
+- [x] Scheduler task (poll_activities)
+- [x] Execute task (execute_activity)
+- [x] Recovery task (recover_stale)
 
 ### Phase 3: Execution + WebSocket (Week 5-6)
 

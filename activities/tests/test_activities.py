@@ -1,5 +1,6 @@
 import secrets
 from datetime import timedelta
+from typing import Any
 
 import pytest
 from django.test import TestCase
@@ -355,3 +356,80 @@ class TestActivityServices(TestCase):
 
         with self.assertRaises(InvalidTransitionError):
             ActivityStateMachine.transition(activity, Activity.Status.RUNNING)
+
+
+@pytest.mark.django_db
+class TestActivityHandlers(TestCase):
+    """Phase 2 tests for handler registry."""
+
+    def setUp(self) -> None:
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password=TEST_PASSWORD,
+        )
+
+        from farms.models import Farm
+
+        self.farm = Farm.objects.create(
+            name="Test Farm",
+            slug="test-farm",
+            owner=self.user,
+            centroid_lat=0.0,
+            centroid_lon=0.0,
+        )
+
+    def test_handler_registry_get_handler(self) -> None:
+        """Test get_handler returns handler for type."""
+        from activities.handlers import DefaultHandler, get_handler
+
+        handler = get_handler("vaccination")
+        self.assertIsInstance(handler, DefaultHandler)
+
+    def test_handler_execute(self) -> None:
+        """Test handler execution."""
+        from activities.handlers import get_handler
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.PENDING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        handler = get_handler("vaccination")
+        result = handler.execute(activity)
+
+        self.assertIn("vaccination", result)
+
+    def test_default_handler(self) -> None:
+        """Test default handler for unknown type."""
+        from activities.handlers import DefaultHandler
+
+        handler = DefaultHandler("unknown_type")
+        self.assertEqual(handler.type, "unknown_type")
+
+        result = handler.execute(None)
+        self.assertIn("unknown_type", result)
+
+    def test_register_handler_decorator(self) -> None:
+        """Test handler registration decorator."""
+        from activities.handlers import (  # noqa: I001
+            ActivityHandler,
+            HANDLER_REGISTRY,
+            register_handler,
+        )
+
+        class TestHandler(ActivityHandler):
+            type = "test_type"
+
+            def execute(self, activity: Any) -> str:  # type: ignore[override]
+                return "test_result"
+
+        registered = register_handler(TestHandler)
+        self.assertEqual(registered, TestHandler)
+        self.assertIn("test_type", HANDLER_REGISTRY)
