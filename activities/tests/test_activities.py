@@ -549,3 +549,88 @@ class TestActivityTasks(TestCase):
         self.assertEqual(handler.type, "base")
         result = handler.execute(None)
         self.assertEqual(result, "Executed base")
+
+
+@pytest.mark.django_db
+class TestValidationGuards(TestCase):
+    """Test strengthened validation guards."""
+
+    def setUp(self) -> None:
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password=TEST_PASSWORD,
+        )
+
+        from farms.models import Farm
+
+        self.farm = Farm.objects.create(
+            name="Test Farm",
+            slug="test-farm",
+            owner=self.user,
+            centroid_lat=0.0,
+            centroid_lon=0.0,
+        )
+
+    def test_validate_rejects_terminal_status(self) -> None:
+        """Test validate_execution rejects terminal states."""
+        import uuid as uuid_module
+        from activities.services import (
+            InvalidTransitionError,
+            validate_execution,
+        )
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.SUCCESS,
+            execution_id=uuid_module.uuid4(),
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        with self.assertRaises(InvalidTransitionError):
+            validate_execution(activity.id, str(activity.execution_id))
+
+    def test_validate_rejects_none_execution_id(self) -> None:
+        """Test validate_execution rejects None execution_id."""
+        from activities.services import (
+            StaleExecutionError,
+            validate_execution,
+        )
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.DISPATCHED,
+            execution_id=None,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        with self.assertRaises(StaleExecutionError):
+            validate_execution(activity.id, "any-id")
+
+    def test_recovery_clears_execution_id(self) -> None:
+        """Test recover_stale_activity clears execution_id."""
+        import uuid as uuid_module
+        from activities.services import recover_stale_activity
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.RUNNING,
+            execution_id=uuid_module.uuid4(),
+            retry_count=0,
+            max_retries=3,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        recovered = recover_stale_activity(activity)
+
+        self.assertIsNone(recovered.execution_id)
+        self.assertEqual(recovered.status, Activity.Status.RETRY)

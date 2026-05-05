@@ -112,6 +112,7 @@ class ActivityStateMachine:
         return activity
 
 
+@transaction.atomic
 def claim_activity(
     activity_id: int,
 ) -> tuple[Activity | None, str | None]:
@@ -132,7 +133,9 @@ def claim_activity(
 
     execution_id = uuid.uuid4()
 
-    updated = Activity.objects.filter(
+    updated = Activity.objects.select_for_update(
+        skip_locked=True
+    ).filter(
         id=activity_id,
         status=Activity.Status.PENDING,
     ).update(
@@ -153,9 +156,11 @@ def validate_execution(activity_id: int, execution_id: str) -> Activity:
 
     Worker MUST call this before processing.
     Aborts if execution_id does not match (stale execution).
+    Rejects if status is not DISPATCHED/RUNNING.
 
     Raises:
-        StaleExecutionError: If execution_id mismatch.
+        StaleExecutionError: If execution_id mismatch or None.
+        InvalidTransitionError: If status is terminal.
     """
     from activities.models import Activity
 
@@ -163,6 +168,17 @@ def validate_execution(activity_id: int, execution_id: str) -> Activity:
         activity = Activity.objects.get(id=activity_id)
     except Activity.DoesNotExist as e:
         raise StaleExecutionError("Activity not found") from e
+
+    if activity.status not in [
+        Activity.Status.DISPATCHED,
+        Activity.Status.RUNNING,
+    ]:
+        raise InvalidTransitionError(
+            f"Cannot execute: status is {activity.status}"
+        )
+
+    if activity.execution_id is None:
+        raise StaleExecutionError("execution_id is None - not claimed")
 
     if str(activity.execution_id) != execution_id:
         raise StaleExecutionError(
@@ -234,25 +250,47 @@ def transition_to_retry(activity: Activity, next_due_at: datetime) -> Activity:
     return activity
 
 
+@transaction.atomic
 def recover_stale_activity(activity: Activity) -> Activity:
     """Recover stale DISPATCHED or RUNNING activities.
 
     Called by recovery task to reset stuck activities.
+    Uses select_for_update to prevent worker collisions.
+    Clears execution_id to prevent stale execution reuse.
     """
     from activities.models import Activity
 
-    if activity.status in [
+    activity = Activity.objects.filter(
+        id=activity.id
+    ).select_for_update().first()
+
+    if not activity:
+        return activity
+
+    if activity.status not in [
         Activity.Status.DISPATCHED,
         Activity.Status.RUNNING,
     ]:
-        if activity.retry_count < activity.max_retries:
-            activity.status = Activity.Status.RETRY
-            activity.retry_count += 1
-        else:
-            activity.status = Activity.Status.FAILED
-            activity.last_error = "Recovered as stale - max retries exceeded"
+        return activity  # Worker finished normally
+
+    activity.execution_id = None
+    activity.execution_started_at = None
+
+    if activity.retry_count < activity.max_retries:
+        activity.status = Activity.Status.RETRY
+        activity.retry_count += 1
+    else:
+        activity.status = Activity.Status.FAILED
+        activity.last_error = "Max retries exceeded in recovery"
 
     activity.save(
-        update_fields=["status", "retry_count", "last_error", "updated_at"]
+        update_fields=[
+            "status",
+            "execution_id",
+            "execution_started_at",
+            "retry_count",
+            "last_error",
+            "updated_at",
+        ],
     )
     return activity
