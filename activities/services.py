@@ -76,11 +76,21 @@ class ActivityStateMachine:
     @classmethod
     def can_transition(cls, current: str, new: str) -> bool:
         """Check if transition is allowed."""
+        from activities.models import Activity
+
         cls._ensure_transitions()
-        current_status = (
-            Activity.Status(current) if isinstance(current, str) else current
-        )
-        new_status = Activity.Status(new) if isinstance(new, str) else new
+
+        # Handle both strings and enum values
+        if isinstance(current, str):
+            current_status = Activity.Status(current)
+        else:
+            current_status = current
+
+        if isinstance(new, str):
+            new_status = Activity.Status(new)
+        else:
+            new_status = new
+
         return new_status in cls._ALLOWED_TRANSITIONS.get(current_status, [])
 
     @classmethod
