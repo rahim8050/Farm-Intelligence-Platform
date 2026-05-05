@@ -38,13 +38,10 @@ def poll_activities(self: Any) -> dict[str, Any]:
     """
     from activities.models import Activity
 
-    batch_size = getattr(
-        settings, "ACTIVITY_SCHEDULER_BATCH_SIZE", 100
-    )
+    batch_size = getattr(settings, "ACTIVITY_SCHEDULER_BATCH_SIZE", 100)
 
     due_activities = Activity.objects.filter(
-        status=Activity.Status.PENDING,
-        next_due_at__lte=timezone.now()
+        status=Activity.Status.PENDING, next_due_at__lte=timezone.now()
     ).order_by("next_due_at")[:batch_size]
 
     dispatched = 0
@@ -125,9 +122,7 @@ def execute_activity(
     }
 
 
-def _validate_and_execute(
-    activity_id: int, execution_id: str
-) -> Any:
+def _validate_and_execute(activity_id: int, execution_id: str) -> Any:
     """Validate execution and run handler.
 
     Uses services.validate_execution for idempotency.
@@ -221,9 +216,7 @@ def recover_stale_activities(self: Any) -> dict[str, Any]:
     from activities.models import Activity
     from activities.services import recover_stale_activity
 
-    stale_threshold = getattr(
-        settings, "ACTIVITY_STALE_THRESHOLD_MINUTES", 30
-    )
+    stale_threshold = getattr(settings, "ACTIVITY_STALE_THRESHOLD_MINUTES", 30)
 
     stale_activities = Activity.objects.filter(
         status__in=[
