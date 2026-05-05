@@ -20,20 +20,18 @@ from activities.serializers import (
 )
 from config.api.responses import success_response
 
-ActivityListSerializer = inline_serializer(
-    name="ActivityListSerializer",
-    fields={
-        "id": serializers.IntegerField(),
-        "type": serializers.CharField(),
-        "status": serializers.CharField(),
-        "scheduled_at": serializers.DateTimeField(),
-        "next_due_at": serializers.DateTimeField(allow_null=True),
-        "recurrence_type": serializers.CharField(allow_null=True),
-        "interval_days": serializers.IntegerField(allow_null=True),
-        "farm": serializers.IntegerField(allow_null=True),
-        "created_at": serializers.DateTimeField(),
-    },
-)
+
+class _ActivityListSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    type = serializers.CharField()
+    status = serializers.CharField()
+    scheduled_at = serializers.DateTimeField()
+    next_due_at = serializers.DateTimeField(allow_null=True)
+    recurrence_type = serializers.CharField(allow_null=True)
+    interval_days = serializers.IntegerField(allow_null=True)
+    farm = serializers.IntegerField(allow_null=True)
+    created_at = serializers.DateTimeField()
+
 
 ActivityEnvelope = inline_serializer(
     name="ActivityEnvelope",
@@ -50,7 +48,7 @@ ActivityListEnvelope = inline_serializer(
     fields={
         "status": serializers.IntegerField(),
         "message": serializers.CharField(),
-        "data": ActivityListSerializer(many=True),
+        "data": _ActivityListSerializer(many=True),
         "errors": serializers.JSONField(allow_null=True),
     },
 )

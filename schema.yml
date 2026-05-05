@@ -4,6 +4,180 @@ info:
   version: 1.0.0
   description: REST API for user authentication and API key lifecycle management.
 paths:
+  /api/v1/activities/:
+    get:
+      operationId: v1_activities_list
+      description: |-
+        List user's activities.
+
+        Returns all activities owned by the authenticated user.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ActivityListEnvelope'
+          description: ''
+    post:
+      operationId: v1_activities_create
+      description: |-
+        Create a new activity.
+
+        Input: type, scheduled_at, optional recurrence_type, interval_days, farm, metadata.
+        Output: Created activity with generated next_due_at.
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivityCreate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ActivityCreate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ActivityCreate'
+        required: true
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityEnvelope'
+          description: ''
+  /api/v1/activities/{id}/:
+    get:
+      operationId: v1_activities_retrieve
+      description: |-
+        Retrieve a single activity by ID.
+
+        Returns activity details for the authenticated user.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityEnvelope'
+          description: ''
+    put:
+      operationId: v1_activities_update
+      description: |-
+        Activity CRUD operations.
+
+        Auth: IsAuthenticated
+        Response: envelope with `data` = ActivitySerializer output.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Activity'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Activity'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Activity'
+        required: true
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Activity'
+          description: ''
+    patch:
+      operationId: v1_activities_partial_update
+      description: |-
+        Update an activity (partial).
+
+        Input: Any subset of activity fields.
+        Output: Updated activity.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedActivity'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedActivity'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedActivity'
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityEnvelope'
+          description: ''
+    delete:
+      operationId: v1_activities_destroy
+      description: |-
+        Delete an activity.
+
+        Output: 204 No Content on success.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '204':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NullEnvelope'
+          description: ''
   /api/v1/auth/login/:
     post:
       operationId: v1_auth_login_create
@@ -2263,6 +2437,177 @@ paths:
           description: ''
 components:
   schemas:
+    Activity:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        type:
+          enum:
+          - vaccination
+          - fertilizer
+          - irrigation
+          - ndvi_trigger
+          type: string
+          description: |-
+            * `vaccination` - Vaccination
+            * `fertilizer` - Fertilizer
+            * `irrigation` - Irrigation
+            * `ndvi_trigger` - NDVI Trigger
+          x-spec-enum-id: 1ce88b7606ecd946
+        status:
+          enum:
+          - created
+          - pending
+          - running
+          - done
+          - failed
+          type: string
+          description: |-
+            * `created` - Created
+            * `pending` - Pending
+            * `running` - Running
+            * `done` - Done
+            * `failed` - Failed
+          x-spec-enum-id: 71f721945e914618
+          readOnly: true
+        scheduled_at:
+          type: string
+          format: date-time
+        next_due_at:
+          type: string
+          format: date-time
+          readOnly: true
+        last_executed_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        recurrence_type:
+          enum:
+          - none
+          - interval
+          - cron
+          type: string
+          description: |-
+            * `none` - One-time
+            * `interval` - Interval
+            * `cron` - Cron (future)
+          x-spec-enum-id: 0558a0275e55b584
+        interval_days:
+          type: integer
+          maximum: 4294967295
+          minimum: 0
+          format: int64
+          nullable: true
+        farm:
+          type: integer
+          nullable: true
+        metadata: {}
+        retry_count:
+          type: integer
+          readOnly: true
+        last_error:
+          type: string
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - id
+      - last_error
+      - last_executed_at
+      - next_due_at
+      - retry_count
+      - scheduled_at
+      - status
+      - type
+      - updated_at
+    ActivityCreate:
+      type: object
+      properties:
+        type:
+          enum:
+          - vaccination
+          - fertilizer
+          - irrigation
+          - ndvi_trigger
+          type: string
+          description: |-
+            * `vaccination` - Vaccination
+            * `fertilizer` - Fertilizer
+            * `irrigation` - Irrigation
+            * `ndvi_trigger` - NDVI Trigger
+          x-spec-enum-id: 1ce88b7606ecd946
+        scheduled_at:
+          type: string
+          format: date-time
+        recurrence_type:
+          enum:
+          - none
+          - interval
+          - cron
+          type: string
+          description: |-
+            * `none` - One-time
+            * `interval` - Interval
+            * `cron` - Cron (future)
+          x-spec-enum-id: 0558a0275e55b584
+        interval_days:
+          type: integer
+          maximum: 4294967295
+          minimum: 0
+          format: int64
+          nullable: true
+        farm:
+          type: integer
+          nullable: true
+        metadata: {}
+      required:
+      - scheduled_at
+      - type
+    ActivityEnvelope:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/Activity'
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    ActivityListEnvelope:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/_ActivityList'
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
     ApiKeyCreate:
       type: object
       properties:
@@ -3989,6 +4334,22 @@ components:
       - errors
       - message
       - status
+    NullEnvelope:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        data:
+          nullable: true
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
     PasswordChange:
       type: object
       properties:
@@ -4091,6 +4452,89 @@ components:
       - errors
       - message
       - status
+    PatchedActivity:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        type:
+          enum:
+          - vaccination
+          - fertilizer
+          - irrigation
+          - ndvi_trigger
+          type: string
+          description: |-
+            * `vaccination` - Vaccination
+            * `fertilizer` - Fertilizer
+            * `irrigation` - Irrigation
+            * `ndvi_trigger` - NDVI Trigger
+          x-spec-enum-id: 1ce88b7606ecd946
+        status:
+          enum:
+          - created
+          - pending
+          - running
+          - done
+          - failed
+          type: string
+          description: |-
+            * `created` - Created
+            * `pending` - Pending
+            * `running` - Running
+            * `done` - Done
+            * `failed` - Failed
+          x-spec-enum-id: 71f721945e914618
+          readOnly: true
+        scheduled_at:
+          type: string
+          format: date-time
+        next_due_at:
+          type: string
+          format: date-time
+          readOnly: true
+        last_executed_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        recurrence_type:
+          enum:
+          - none
+          - interval
+          - cron
+          type: string
+          description: |-
+            * `none` - One-time
+            * `interval` - Interval
+            * `cron` - Cron (future)
+          x-spec-enum-id: 0558a0275e55b584
+        interval_days:
+          type: integer
+          maximum: 4294967295
+          minimum: 0
+          format: int64
+          nullable: true
+        farm:
+          type: integer
+          nullable: true
+        metadata: {}
+        retry_count:
+          type: integer
+          readOnly: true
+        last_error:
+          type: string
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
     PatchedApiKeyCreate:
       type: object
       properties:
@@ -4433,6 +4877,44 @@ components:
       - t_min_avg_c
       - week_end
       - week_start
+    _ActivityList:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+        status:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        next_due_at:
+          type: string
+          format: date-time
+          nullable: true
+        recurrence_type:
+          type: string
+          nullable: true
+        interval_days:
+          type: integer
+          nullable: true
+        farm:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - created_at
+      - farm
+      - id
+      - interval_days
+      - next_due_at
+      - recurrence_type
+      - scheduled_at
+      - status
+      - type
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
