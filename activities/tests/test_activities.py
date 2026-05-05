@@ -433,3 +433,115 @@ class TestActivityHandlers(TestCase):
         registered = register_handler(TestHandler)
         self.assertEqual(registered, TestHandler)
         self.assertIn("test_type", HANDLER_REGISTRY)
+
+
+@pytest.mark.django_db
+class TestActivityTasks(TestCase):
+    """Phase 2 tests for Celery tasks."""
+
+    def setUp(self) -> None:
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password=TEST_PASSWORD,
+        )
+
+        from farms.models import Farm
+
+        self.farm = Farm.objects.create(
+            name="Test Farm",
+            slug="test-farm",
+            owner=self.user,
+            centroid_lat=0.0,
+            centroid_lon=0.0,
+        )
+
+    def test_poll_activities_returns_dict(self) -> None:
+        """Test poll_activities returns proper dict structure."""
+        from activities.tasks import poll_activities
+
+        result = poll_activities()
+        self.assertIn("dispatched", result)
+        self.assertIn("scanned", result)
+
+    def test_claim_and_dispatch_returns_tuple(self) -> None:
+        """Test _claim_and_dispatch returns tuple."""
+        from activities.tasks import _claim_and_dispatch
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.PENDING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        activity, execution_id = _claim_and_dispatch(activity.id)
+        self.assertIsNotNone(activity)
+        self.assertIsNotNone(execution_id)
+
+    def test_validate_and_execute_calls_handlers(self) -> None:
+        """Test _validate_and_execute runs handler."""
+        from activities.tasks import _claim_and_dispatch, _validate_and_execute
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.PENDING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        activity, execution_id = _claim_and_dispatch(activity.id)
+        result = _validate_and_execute(activity.id, execution_id)
+
+        self.assertEqual(result.status, Activity.Status.SUCCESS)
+
+    def test_recover_stale_activities(self) -> None:
+        """Test recover_stale_activities function."""
+        from activities.tasks import recover_stale_activities
+
+        result = recover_stale_activities()
+        self.assertIn("recovered", result)
+
+    def test_get_handler_function(self) -> None:
+        """Test _get_handler returns handler."""
+        from activities.tasks import _get_handler
+
+        handler = _get_handler("vaccination")
+        self.assertIsNotNone(handler)
+        self.assertTrue(hasattr(handler, "execute"))
+
+    def test_handler_instantiation_from_registry(self) -> None:
+        """Test handler is instantiated when retrieved."""
+        from activities.handlers import (  # noqa: I001
+            ActivityHandler,
+            register_handler,
+        )
+
+        class CustomHandler(ActivityHandler):
+            type = "custom"
+
+            def execute(self, activity: Any) -> str:  # type: ignore[override]
+                return "custom_result"
+
+        register_handler(CustomHandler)
+
+        from activities.handlers import get_handler
+
+        handler = get_handler("custom")
+        self.assertIsInstance(handler, CustomHandler)
+        result = handler.execute(None)
+        self.assertEqual(result, "custom_result")
+
+    def test_activity_handler_base_execute(self) -> None:
+        """Test base ActivityHandler execute method."""
+        from activities.handlers import ActivityHandler
+
+        handler = ActivityHandler()
+        self.assertEqual(handler.type, "base")
+        result = handler.execute(None)
+        self.assertEqual(result, "Executed base")
