@@ -1,6 +1,7 @@
 import secrets
 from datetime import timedelta
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from django.test import TestCase
@@ -479,7 +480,10 @@ class TestActivityTasks(TestCase):
             scheduled_at=timezone.now() + timedelta(days=1),
         )
 
-        activity, execution_id = _claim_and_dispatch(activity.id)
+        with patch("activities.tasks.execute_activity.delay") as mock_delay:
+            activity, execution_id = _claim_and_dispatch(activity.id)
+
+        mock_delay.assert_called_once_with(activity.id, execution_id)
         self.assertIsNotNone(activity)
         self.assertIsNotNone(execution_id)
 
@@ -495,7 +499,10 @@ class TestActivityTasks(TestCase):
             scheduled_at=timezone.now() + timedelta(days=1),
         )
 
-        activity, execution_id = _claim_and_dispatch(activity.id)
+        with patch("activities.tasks.execute_activity.delay") as mock_delay:
+            activity, execution_id = _claim_and_dispatch(activity.id)
+
+        mock_delay.assert_called_once_with(activity.id, execution_id)
 
         result = _validate_and_execute(activity.id, execution_id)
 
