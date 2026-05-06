@@ -649,12 +649,12 @@ class TestValidationGuards(TestCase):
         self.assertEqual(recovered.status, Activity.Status.RETRY)
 
 
-@pytest.mark.django_db(transaction=True)
 class TestConcurrency(TestCase):
     """Test concurrent claim_activity calls.
 
-    Note: This test uses real concurrency. SQLite may fail due to table locks.
-    PostgreSQL is required for proper concurrency testing.
+    Note: This test uses real concurrency.
+    SQLite may fail due to table locks.
+    PostgreSQL is required for proper testing.
     """
 
     def setUp(self) -> None:

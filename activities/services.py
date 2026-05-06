@@ -148,7 +148,10 @@ def claim_activity(
     )
 
     if not updated:
-        logger.debug("claim_contended activity_id=%d", activity_id)
+        logger.info(
+            "activity_claim_skipped activity_id=%d reason=contention",
+            activity_id,
+        )
         return None, None
 
     activity = Activity.objects.get(id=activity_id)
