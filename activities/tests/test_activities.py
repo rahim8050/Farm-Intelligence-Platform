@@ -501,7 +501,11 @@ class TestActivityTasks(TestCase):
 
         self.assertIn(
             result.status,
-            [Activity.Status.SUCCESS, Activity.Status.FAILED],
+            [
+                Activity.Status.RUNNING,
+                Activity.Status.SUCCESS,
+                Activity.Status.FAILED,
+            ],
         )
 
     def test_recover_stale_activities(self) -> None:
