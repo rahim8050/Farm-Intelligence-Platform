@@ -118,32 +118,23 @@ def claim_activity(
 ) -> tuple[Activity | None, str | None]:
     """Atomically claim an activity for execution.
 
-    Implements the SINGLE mandatory claim mechanism from prompts/harden.md:
-    - Single atomic DB update with status condition
-    - Assigns execution_id
-    - No SELECT-then-UPDATE patterns allowed
+    Uses atomic UPDATE with status=PENDING condition.
+    No SELECT-then-UPDATE pattern.
 
     Returns:
         (Activity, execution_id) if claimed, (None, None) if contention.
-
-    Raises:
-        Activity.DoesNotExist: If activity not found.
     """
     from activities.models import Activity
 
     execution_id = uuid.uuid4()
 
-    updated = (
-        Activity.objects.select_for_update(skip_locked=True)
-        .filter(
-            id=activity_id,
-            status=Activity.Status.PENDING,
-        )
-        .update(
-            status=Activity.Status.DISPATCHED,
-            execution_id=execution_id,
-            execution_started_at=timezone.now(),
-        )
+    updated = Activity.objects.filter(
+        id=activity_id,
+        status=Activity.Status.PENDING,
+    ).update(
+        status=Activity.Status.DISPATCHED,
+        execution_id=execution_id,
+        execution_started_at=timezone.now(),
     )
 
     if not updated:
