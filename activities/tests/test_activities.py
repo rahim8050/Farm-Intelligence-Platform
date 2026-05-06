@@ -578,6 +578,7 @@ class TestValidationGuards(TestCase):
     def test_validate_rejects_terminal_status(self) -> None:
         """Test validate_execution rejects terminal states."""
         import uuid as uuid_module
+
         from activities.services import (
             InvalidTransitionError,
             validate_execution,
@@ -617,6 +618,7 @@ class TestValidationGuards(TestCase):
     def test_recovery_clears_execution_id(self) -> None:
         """Test recover_stale_activity clears execution_id."""
         import uuid as uuid_module
+
         from activities.services import recover_stale_activity
 
         activity = Activity.objects.create(

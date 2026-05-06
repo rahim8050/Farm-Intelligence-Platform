@@ -133,15 +133,17 @@ def claim_activity(
 
     execution_id = uuid.uuid4()
 
-    updated = Activity.objects.select_for_update(
-        skip_locked=True
-    ).filter(
-        id=activity_id,
-        status=Activity.Status.PENDING,
-    ).update(
-        status=Activity.Status.DISPATCHED,
-        execution_id=execution_id,
-        execution_started_at=timezone.now(),
+    updated = (
+        Activity.objects.select_for_update(skip_locked=True)
+        .filter(
+            id=activity_id,
+            status=Activity.Status.PENDING,
+        )
+        .update(
+            status=Activity.Status.DISPATCHED,
+            execution_id=execution_id,
+            execution_started_at=timezone.now(),
+        )
     )
 
     if not updated:
@@ -260,9 +262,9 @@ def recover_stale_activity(activity: Activity) -> Activity:
     """
     from activities.models import Activity
 
-    activity = Activity.objects.filter(
-        id=activity.id
-    ).select_for_update().first()
+    activity = (
+        Activity.objects.filter(id=activity.id).select_for_update().first()
+    )
 
     if not activity:
         return activity
