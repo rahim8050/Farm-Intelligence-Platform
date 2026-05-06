@@ -16,12 +16,15 @@ Exports:
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from django.db import transaction
 from django.utils import timezone
+
+logger = logging.getLogger("activities")
 
 if TYPE_CHECKING:
     from activities.models import Activity
@@ -112,7 +115,6 @@ class ActivityStateMachine:
         return activity
 
 
-@transaction.atomic
 def claim_activity(
     activity_id: int,
 ) -> tuple[Activity | None, str | None]:
@@ -120,6 +122,14 @@ def claim_activity(
 
     Uses atomic UPDATE with status=PENDING condition.
     No SELECT-then-UPDATE pattern.
+    No SELECT FOR UPDATE used.
+
+    Correctness depends on:
+    - status=PENDING condition in WHERE clause
+    - Single UPDATE statement is atomic at DB level
+
+    Multiple schedulers may attempt to claim same activity;
+    the status=PENDING condition ensures only one succeeds.
 
     Returns:
         (Activity, execution_id) if claimed, (None, None) if contention.
@@ -138,9 +148,17 @@ def claim_activity(
     )
 
     if not updated:
+        logger.debug("claim_contended activity_id=%d", activity_id)
         return None, None
 
     activity = Activity.objects.get(id=activity_id)
+
+    logger.info(
+        "activity_claimed activity_id=%d execution_id=%s",
+        activity_id,
+        execution_id,
+    )
+
     return activity, str(execution_id)
 
 

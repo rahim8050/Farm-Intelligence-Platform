@@ -647,3 +647,68 @@ class TestValidationGuards(TestCase):
 
         self.assertIsNone(recovered.execution_id)
         self.assertEqual(recovered.status, Activity.Status.RETRY)
+
+
+@pytest.mark.django_db(transaction=True)
+class TestConcurrency(TestCase):
+    """Test concurrent claim_activity calls.
+
+    Note: This test uses real concurrency. SQLite may fail due to table locks.
+    PostgreSQL is required for proper concurrency testing.
+    """
+
+    def setUp(self) -> None:
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password=TEST_PASSWORD,
+        )
+
+        from farms.models import Farm
+
+        self.farm = Farm.objects.create(
+            name="Test Farm",
+            slug="test-farm",
+            owner=self.user,
+            centroid_lat=0.0,
+            centroid_lon=0.0,
+        )
+
+    def test_concurrent_claim_single_success(self) -> None:
+        """Test exactly one claim succeeds under concurrent access.
+
+        Uses ThreadPoolExecutor to simulate parallel workers.
+        Validates that the integration works correctly.
+
+        Note: SQLite may fail with "database table is locked".
+        This test requires PostgreSQL for proper validation.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        from activities.services import claim_activity
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.PENDING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        def attempt_claim() -> tuple:
+            try:
+                return claim_activity(activity.id)
+            except Exception:  # noqa: BLE001
+                return (None, None)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(attempt_claim) for _ in range(2)]
+            results = [f.result() for f in futures]
+
+        successes = [r for r in results if r[0] is not None]
+
+        self.assertEqual(len(successes), 1)
+        self.assertIsNotNone(successes[0][1])
