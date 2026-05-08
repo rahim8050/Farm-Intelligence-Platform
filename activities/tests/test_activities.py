@@ -712,3 +712,124 @@ class TestConcurrency(TransactionTestCase):
 
         self.assertEqual(len(successes), 1)
         self.assertIsNotNone(successes[0][1])
+
+# Phase 3 Tests
+@pytest.mark.django_db
+class TestPhase3Handlers(TestCase):
+    """Test Phase 3 activity handlers."""
+
+    def setUp(self) -> None:
+        """Set up test data."""
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password=TEST_PASSWORD,
+        )
+
+        from farms.models import Farm
+
+        self.farm = Farm.objects.create(
+            name="Test Farm",
+            slug="test-farm",
+            owner=self.user,
+            centroid_lat=0.0,
+            centroid_lon=0.0,
+        )
+
+    def test_vaccination_handler_registered(self) -> None:
+        """Test vaccination handler is registered."""
+        from activities.handlers import get_handler
+
+        handler = get_handler("vaccination")
+        self.assertIsNotNone(handler)
+        self.assertEqual(handler.type, "vaccination")
+
+    def test_fertilizer_handler_registered(self) -> None:
+        """Test fertilizer handler is registered."""
+        from activities.handlers import get_handler
+
+        handler = get_handler("fertilizer")
+        self.assertIsNotNone(handler)
+        self.assertEqual(handler.type, "fertilizer")
+
+    def test_irrigation_handler_registered(self) -> None:
+        """Test irrigation handler is registered."""
+        from activities.handlers import get_handler
+
+        handler = get_handler("irrigation")
+        self.assertIsNotNone(handler)
+        self.assertEqual(handler.type, "irrigation")
+
+    def test_vaccination_handler_execute(self) -> None:
+        """Test vaccination handler execution."""
+        from activities.handlers import get_handler
+        from activities.models import Activity
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type="vaccination",
+            status=Activity.Status.PENDING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+            metadata={"cattle_id": "C123"},
+        )
+
+        handler = get_handler("vaccination")
+        result = handler.execute(activity)
+
+        from activities.handlers import HandlerResult
+
+        self.assertIsInstance(result, HandlerResult)
+        self.assertTrue(result.success)
+        self.assertEqual(result.message, "Vaccination completed")
+        self.assertEqual(result.metadata["cattle_id"], "C123")
+
+    def test_fertilizer_handler_execute(self) -> None:
+        """Test fertilizer handler execution."""
+        from activities.handlers import get_handler
+        from activities.models import Activity
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type="fertilizer",
+            status=Activity.Status.PENDING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+            metadata={"amount_kg": 50, "fertilizer_type": "urea"},
+        )
+
+        handler = get_handler("fertilizer")
+        result = handler.execute(activity)
+
+        from activities.handlers import HandlerResult
+
+        self.assertIsInstance(result, HandlerResult)
+        self.assertTrue(result.success)
+        self.assertEqual(result.message, "Fertilizer applied")
+        self.assertEqual(result.metadata["amount_kg"], 50)
+
+    def test_irrigation_handler_execute(self) -> None:
+        """Test irrigation handler execution."""
+        from activities.handlers import get_handler
+        from activities.models import Activity
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type="irrigation",
+            status=Activity.Status.PENDING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+            metadata={"duration_min": 20},
+        )
+
+        handler = get_handler("irrigation")
+        result = handler.execute(activity)
+
+        from activities.handlers import HandlerResult
+
+        self.assertIsInstance(result, HandlerResult)
+        self.assertTrue(result.success)
+        self.assertEqual(result.message, "Irrigation completed")

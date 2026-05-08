@@ -13,11 +13,28 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from asgiref.sync import async_to_sync
 from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
 
+from activities.handlers import (  # noqa: F401
+    fertilizer,
+    irrigation,
+    vaccination,
+)
+from activities.handlers.base import HandlerResult
+
+# Import metrics
+from activities.metrics import (  # noqa: F401
+    activities_active,
+    activities_dispatched,
+    activity_duration_seconds,
+)
+
 logger = logging.getLogger("activities")
+
+# Import metrics
 
 
 @shared_task(
@@ -50,12 +67,18 @@ def poll_activities(self: Any) -> dict[str, Any]:
             activity, execution_id = _claim_and_dispatch(activity.id)
             if activity:
                 dispatched += 1
+                activities_dispatched.labels(
+                    type=activity.type, status="success"
+                ).inc()
                 logger.info(
                     "dispatched activity_id=%d execution_id=%s",
                     activity.id,
                     execution_id,
                 )
         except Exception as e:
+            activities_dispatched.labels(
+                type=activity.type, status="failure"
+            ).inc()
             logger.warning(
                 "Failed to dispatch activity %d: %s",
                 activity.id,
@@ -106,6 +129,7 @@ def execute_activity(
     Transitions to RUNNING.
     Executes handler.
     Transitions to SUCCESS/FAILED.
+    Emits WebSocket event on completion.
 
     Args:
         activity_id: Activity ID to execute.
@@ -114,6 +138,7 @@ def execute_activity(
     Returns:
         Dict with status and result.
     """
+    from activities.consumers import emit_activity_event
     from activities.services import (
         transition_to_failed,
         transition_to_running,
@@ -125,22 +150,51 @@ def execute_activity(
 
     transition_to_running(activity)
 
+    import time
+
+    start_time = time.time()
     try:
         handler = _get_handler(activity.type)
         result = handler.execute(activity)
 
         transition_to_success(activity)
 
+        duration = time.time() - start_time
+        activity_duration_seconds.labels(type=activity.type).observe(duration)
+
+        # Handle HandlerResult or string return
+        if isinstance(result, HandlerResult):
+            message = result.message
+            metadata = result.metadata or {}
+        else:
+            message = str(result)
+            metadata = {}
+
         logger.info(
             "activity_executed activity_id=%d type=%s result=%s",
             activity.id,
             activity.type,
-            result,
+            message,
+        )
+
+        # Emit WebSocket event
+        async_to_sync(emit_activity_event)(
+            activity.owner_id,
+            {
+                "activity_id": activity.id,
+                "activity_type": activity.type,
+                "action": "completed",
+                "farm_id": activity.farm_id,
+                "message": message,
+                "metadata": metadata,
+                "timestamp": timezone.now().isoformat(),
+            },
         )
 
         return {
             "status": "success",
             "activity_id": activity_id,
+            "result": message,
         }
 
     except Exception as e:
