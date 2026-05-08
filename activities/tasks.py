@@ -114,12 +114,44 @@ def execute_activity(
     Returns:
         Dict with status and result.
     """
-    _validate_and_execute(activity_id, execution_id)
+    from activities.services import (
+        transition_to_failed,
+        transition_to_running,
+        transition_to_success,
+        validate_execution,
+    )
 
-    return {
-        "status": "success",
-        "activity_id": activity_id,
-    }
+    activity = validate_execution(activity_id, execution_id)
+
+    transition_to_running(activity)
+
+    try:
+        handler = _get_handler(activity.type)
+        result = handler.execute(activity)
+
+        transition_to_success(activity)
+
+        logger.info(
+            "activity_executed activity_id=%d type=%s result=%s",
+            activity.id,
+            activity.type,
+            result,
+        )
+
+        return {
+            "status": "success",
+            "activity_id": activity_id,
+        }
+
+    except Exception as e:
+        transition_to_failed(activity, str(e))
+        logger.error(
+            "activity_failed activity_id=%d type=%s error=%s",
+            activity.id,
+            activity.type,
+            e,
+        )
+        raise
 
 
 def _validate_and_execute(activity_id: int, execution_id: str) -> Any:

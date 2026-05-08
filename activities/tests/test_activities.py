@@ -488,8 +488,8 @@ class TestActivityTasks(TestCase):
         self.assertIsNotNone(execution_id)
 
     def test_validate_and_execute_calls_handlers(self) -> None:
-        """Test _validate_and_execute runs handler."""
-        from activities.tasks import _claim_and_dispatch, _validate_and_execute
+        """Test execute_activity runs handler."""
+        from activities.tasks import _claim_and_dispatch, execute_activity
 
         activity = Activity.objects.create(
             owner=self.user,
@@ -504,16 +504,16 @@ class TestActivityTasks(TestCase):
 
         mock_delay.assert_called_once_with(activity.id, execution_id)
 
-        result = _validate_and_execute(activity.id, execution_id)
+        result = execute_activity(activity.id, execution_id)
 
         self.assertIn(
-            result.status,
+            result["status"],
             [
-                Activity.Status.RUNNING,
-                Activity.Status.SUCCESS,
-                Activity.Status.FAILED,
+                "success",
             ],
         )
+        activity.refresh_from_db()
+        self.assertEqual(activity.status, Activity.Status.SUCCESS)
 
     def test_recover_stale_activities(self) -> None:
         """Test recover_stale_activities function."""
