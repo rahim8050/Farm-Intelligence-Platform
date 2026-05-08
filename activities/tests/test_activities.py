@@ -323,8 +323,8 @@ class TestServicesCoverage(TestCase):
         claimed, execution_id = claim_activity(activity.id)
         self.assertIsNotNone(claimed.execution_started_at)
 
-    def test_transition_to_running_sets_started_at(self) -> None:
-        """Test transition_to_running sets execution_started_at."""
+    def test_transition_to_running_sets_status(self) -> None:
+        """Test transition_to_running sets status to RUNNING."""
         activity = Activity.objects.create(
             owner=self.user,
             farm=self.farm,
@@ -334,7 +334,7 @@ class TestServicesCoverage(TestCase):
         )
 
         transitioned = transition_to_running(activity)
-        self.assertIsNotNone(transitioned.execution_started_at)
+        self.assertEqual(transitioned.status, Activity.Status.RUNNING)
 
     def test_transition_to_success_sets_completed_at(self) -> None:
         """Test transition_to_success sets execution_completed_at."""
