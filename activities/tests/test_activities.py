@@ -385,14 +385,15 @@ class TestActivityHandlers(TestCase):
 
     def test_handler_registry_get_handler(self) -> None:
         """Test get_handler returns handler for type."""
-        from activities.handlers import DefaultHandler, get_handler
+        from activities.handlers import get_handler
+        from activities.handlers.vaccination import VaccinationHandler
 
         handler = get_handler("vaccination")
-        self.assertIsInstance(handler, DefaultHandler)
+        self.assertIsInstance(handler, VaccinationHandler)
 
     def test_handler_execute(self) -> None:
         """Test handler execution."""
-        from activities.handlers import get_handler
+        from activities.handlers import HandlerResult, get_handler
 
         activity = Activity.objects.create(
             owner=self.user,
@@ -405,7 +406,8 @@ class TestActivityHandlers(TestCase):
         handler = get_handler("vaccination")
         result = handler.execute(activity)
 
-        self.assertIn("vaccination", result)
+        self.assertIsInstance(result, HandlerResult)
+        self.assertTrue(result.message)  # Handler returns HandlerResult
 
     def test_default_handler(self) -> None:
         """Test default handler for unknown type."""

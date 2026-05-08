@@ -14,6 +14,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter
 from django.core.asgi import get_asgi_application
+from django.urls import path
 
 from activities.consumers import ActivityConsumer
 
@@ -23,9 +24,7 @@ application = ProtocolTypeRouter(
         "websocket": AuthMiddlewareStack(
             URLRouter(
                 [
-                    # WebSocket URL patterns
-                    # Activity WebSocket
-                    ActivityConsumer.as_asgi(),
+                    path("ws/activities/", ActivityConsumer.as_asgi()),
                 ]
             )
         ),
