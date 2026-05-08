@@ -2,7 +2,7 @@
 
 This module provides CRUD operations for Activity resources.
 
-Auth: IsAuthenticated
+Auth: IsAuthenticated (permission_classes enforced on ViewSet)
 Response: All responses use success_response envelope.
 """
 
@@ -10,6 +10,7 @@ from typing import Any
 
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status, viewsets
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
@@ -72,6 +73,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = ActivitySerializer
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self) -> Any:
         user = self.request.user
