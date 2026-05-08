@@ -42,4 +42,6 @@ repos:
           - pytest-django
           - django-extensions
           - django-celery-beat
+          - channels
+          - channels-redis
           
