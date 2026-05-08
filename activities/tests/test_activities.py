@@ -4,7 +4,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -649,7 +649,7 @@ class TestValidationGuards(TestCase):
         self.assertEqual(recovered.status, Activity.Status.RETRY)
 
 
-class TestConcurrency(TestCase):
+class TestConcurrency(TransactionTestCase):
     """Test concurrent claim_activity calls.
 
     Note: This test uses real concurrency.
