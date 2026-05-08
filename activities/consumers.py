@@ -8,6 +8,12 @@ WebSocket URL: ws://domain/ws/activities/
 Semantics:
 - PostgreSQL = authoritative source of truth
 - Redis/WebSocket = best effort only (failures must not affect correctness)
+
+Backpressure Strategy:
+- If channel layer is overloaded, emits will fail gracefully
+- Clients should reconnect on disconnect
+- Server-side rate limiting can be added via throttle scopes
+- No guaranteed delivery - client should poll REST API for state
 """
 
 import logging
