@@ -10,6 +10,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from activities.models import Activity
+from activities.serializers import ActivityCreateSerializer, ActivitySerializer
 from activities.services import (
     ActivityStateMachine,
     InvalidTransitionError,
@@ -24,6 +25,616 @@ from activities.services import (
 )
 
 TEST_PASSWORD = secrets.token_urlsafe(16)
+
+
+# Serializer Tests
+class TestActivitySerializerValidation(TestCase):
+    """Test ActivityCreateSerializer validation."""
+
+    def test_validate_interval_requires_interval_days(self) -> None:
+        """Test that interval recurrence requires interval_days."""
+        data = {
+            "type": "vaccination",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "recurrence_type": "interval",
+        }
+        serializer = ActivityCreateSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("interval_days", serializer.errors)
+
+    def test_validate_interval_requires_positive_interval_days(self) -> None:
+        """Test that interval_days must be at least 1."""
+        data = {
+            "type": "vaccination",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "recurrence_type": "interval",
+            "interval_days": 0,
+        }
+        serializer = ActivityCreateSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("interval_days", serializer.errors)
+
+    def test_validate_invalid_type(self) -> None:
+        """Test that invalid activity type is rejected."""
+        data = {
+            "type": "invalid_type",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+        }
+        serializer = ActivityCreateSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("type", serializer.errors)
+
+    def test_valid_data_passes(self) -> None:
+        """Test valid data passes validation."""
+        data = {
+            "type": "vaccination",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+        }
+        serializer = ActivityCreateSerializer(data=data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_valid_interval_passes(self) -> None:
+        """Test valid interval data passes validation."""
+        data = {
+            "type": "fertilizer",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "recurrence_type": "interval",
+            "interval_days": 30,
+        }
+        serializer = ActivityCreateSerializer(data=data)
+        self.assertTrue(serializer.is_valid())
+
+
+class TestActivitySerializer(TestCase):
+    """Test ActivitySerializer output."""
+
+    def setUp(self) -> None:
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password=TEST_PASSWORD,
+        )
+
+        from farms.models import Farm
+
+        self.farm = Farm.objects.create(
+            name="Test Farm",
+            slug="test-farm",
+            owner=self.user,
+            centroid_lat=0.0,
+            centroid_lon=0.0,
+        )
+
+    def test_serializer_output(self) -> None:
+        """Test ActivitySerializer outputs expected fields."""
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.PENDING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        serializer = ActivitySerializer(activity)
+        data = serializer.data
+
+        self.assertIn("id", data)
+        self.assertIn("type", data)
+        self.assertIn("status", data)
+        self.assertIn("scheduled_at", data)
+        self.assertIn("metadata", data)
+
+
+# View Tests
+@pytest.mark.django_db
+class TestActivityViews(TestCase):
+    """Test Activity API endpoints."""
+
+    def setUp(self) -> None:
+        self.client = APIClient()
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password=TEST_PASSWORD,
+        )
+        self.client.force_authenticate(user=self.user)
+
+        from farms.models import Farm
+
+        self.farm = Farm.objects.create(
+            name="Test Farm",
+            slug="test-farm",
+            owner=self.user,
+            centroid_lat=0.0,
+            centroid_lon=0.0,
+        )
+
+    def test_create_with_metadata(self) -> None:
+        """Test create activity with metadata."""
+        data = {
+            "type": "vaccination",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "farm": self.farm.id,
+            "metadata": {"cattle_id": "C123", "vaccine": "BVD"},
+        }
+        response = self.client.post("/api/v1/activities/", data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.data["data"]["metadata"]["cattle_id"], "C123"
+        )
+
+    def test_create_with_recurrence(self) -> None:
+        """Test create activity with interval recurrence."""
+        data = {
+            "type": "fertilizer",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "recurrence_type": "interval",
+            "interval_days": 14,
+            "farm": self.farm.id,
+        }
+        response = self.client.post("/api/v1/activities/", data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["data"]["interval_days"], 14)
+
+    def test_create_irrigation_activity(self) -> None:
+        """Test create irrigation activity."""
+        data = {
+            "type": "irrigation",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "farm": self.farm.id,
+            "metadata": {"duration_min": 30, "zone": "A1"},
+        }
+        response = self.client.post("/api/v1/activities/", data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["data"]["type"], "irrigation")
+
+    def test_partial_update_metadata(self) -> None:
+        """Test partial update of metadata."""
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+        response = self.client.patch(
+            f"/api/v1/activities/{activity.id}/",
+            {"metadata": {"cattle_id": "C456", "updated": True}},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data["data"]["metadata"]["cattle_id"], "C456"
+        )
+
+    def test_partial_update_scheduled_at(self) -> None:
+        """Test partial update of scheduled_at."""
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+        new_time = timezone.now() + timedelta(days=5)
+        response = self.client.patch(
+            f"/api/v1/activities/{activity.id}/",
+            {"scheduled_at": new_time.isoformat()},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_destroy_activity(self) -> None:
+        """Test delete activity."""
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+        response = self.client.delete(f"/api/v1/activities/{activity.id}/")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Activity.objects.filter(id=activity.id).exists())
+
+    def test_list_filtered_by_owner(self) -> None:
+        """Test list returns only user's activities."""
+        Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        other_user = user_model.objects.create_user(
+            username="otheruser",
+            email="other@example.com",
+            password=TEST_PASSWORD,
+        )
+        self.client.force_authenticate(user=other_user)
+
+        response = self.client.get("/api/v1/activities/")
+        self.assertEqual(len(response.data["data"]), 0)
+
+    def test_cannot_access_other_user_activity(self) -> None:
+        """Test cannot retrieve other user's activity."""
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        other_user = user_model.objects.create_user(
+            username="otheruser",
+            email="other@example.com",
+            password=TEST_PASSWORD,
+        )
+        self.client.force_authenticate(user=other_user)
+
+        response = self.client.get(f"/api/v1/activities/{activity.id}/")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+# Services Tests - cover uncovered paths
+@pytest.mark.django_db
+class TestServicesCoverage(TestCase):
+    """Test services.py uncovered paths."""
+
+    def setUp(self) -> None:
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password=TEST_PASSWORD,
+        )
+
+        from farms.models import Farm
+
+        self.farm = Farm.objects.create(
+            name="Test Farm",
+            slug="test-farm",
+            owner=self.user,
+            centroid_lat=0.0,
+            centroid_lon=0.0,
+        )
+
+    def test_claim_activity_sets_execution_started_at(self) -> None:
+        """Test claim_activity sets execution_started_at."""
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.PENDING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        claimed, execution_id = claim_activity(activity.id)
+        self.assertIsNotNone(claimed.execution_started_at)
+
+    def test_transition_to_running_sets_started_at(self) -> None:
+        """Test transition_to_running sets execution_started_at."""
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.DISPATCHED,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        transitioned = transition_to_running(activity)
+        self.assertIsNotNone(transitioned.execution_started_at)
+
+    def test_transition_to_success_sets_completed_at(self) -> None:
+        """Test transition_to_success sets execution_completed_at."""
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.RUNNING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        transitioned = transition_to_success(activity)
+        self.assertIsNotNone(transitioned.execution_completed_at)
+
+    def test_transition_to_failed_sets_last_error(self) -> None:
+        """Test transition_to_failed sets last_error."""
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.RUNNING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        transitioned = transition_to_failed(activity, "Test error message")
+        self.assertEqual(transitioned.last_error, "Test error message")
+
+    def test_transition_to_retry_increments_retry_count(self) -> None:
+        """Test transition_to_retry increments retry_count."""
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.RUNNING,
+            retry_count=1,
+            max_retries=3,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        next_due = timezone.now() + timedelta(hours=1)
+        transitioned = transition_to_retry(activity, next_due)
+        self.assertEqual(transitioned.retry_count, 2)
+        self.assertEqual(transitioned.status, Activity.Status.RETRY)
+
+    def test_validate_execution_checks_terminal_state(self) -> None:
+        """Test validate_execution rejects SUCCESS status."""
+        import uuid
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.SUCCESS,
+            execution_id=uuid.uuid4(),
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        with self.assertRaises(InvalidTransitionError):
+            validate_execution(activity.id, str(activity.execution_id))
+
+    def test_recover_stale_skips_non_stale_status(self) -> None:
+        """Test recover_stale_activity returns early for PENDING status."""
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.PENDING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+            next_due_at=timezone.now(),
+        )
+
+        recovered = recover_stale_activity(activity)
+        self.assertEqual(recovered.status, Activity.Status.PENDING)
+
+    def test_recover_stale_exceeds_max_retries(self) -> None:
+        """Test recover_stale_activity sets FAILED when retries exceeded."""
+        import uuid
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.RUNNING,
+            execution_id=uuid.uuid4(),
+            retry_count=3,
+            max_retries=3,
+            scheduled_at=timezone.now() + timedelta(days=1),
+            next_due_at=timezone.now(),
+        )
+
+        recovered = recover_stale_activity(activity)
+        self.assertEqual(recovered.status, Activity.Status.FAILED)
+        self.assertIn("Max retries", recovered.last_error)
+
+    def test_state_machine_valid_transitions(self) -> None:
+        """Test valid state transitions."""
+        self.assertTrue(
+            ActivityStateMachine.can_transition(
+                Activity.Status.PENDING, Activity.Status.DISPATCHED
+            )
+        )
+        self.assertTrue(
+            ActivityStateMachine.can_transition(
+                Activity.Status.DISPATCHED, Activity.Status.RUNNING
+            )
+        )
+        self.assertTrue(
+            ActivityStateMachine.can_transition(
+                Activity.Status.RUNNING, Activity.Status.SUCCESS
+            )
+        )
+
+    def test_state_machine_invalid_transitions(self) -> None:
+        """Test invalid state transitions are rejected."""
+        self.assertFalse(
+            ActivityStateMachine.can_transition(
+                Activity.Status.PENDING, Activity.Status.RUNNING
+            )
+        )
+
+
+# Tasks Tests - cover uncovered paths
+@pytest.mark.django_db
+class TestTasksCoverage(TestCase):
+    """Test tasks.py uncovered paths."""
+
+    def setUp(self) -> None:
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        self.user = user_model.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password=TEST_PASSWORD,
+        )
+
+        from farms.models import Farm
+
+        self.farm = Farm.objects.create(
+            name="Test Farm",
+            slug="test-farm",
+            owner=self.user,
+            centroid_lat=0.0,
+            centroid_lon=0.0,
+        )
+
+    def test_poll_activities_empty(self) -> None:
+        """Test poll_activities with no due activities."""
+        from activities.tasks import poll_activities
+
+        result = poll_activities()
+        self.assertEqual(result["dispatched"], 0)
+        self.assertIn("scanned", result)
+
+    def test_poll_activities_dispatches_due(self) -> None:
+        """Test poll_activities dispatches due activities."""
+        from activities.tasks import poll_activities
+
+        Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.PENDING,
+            next_due_at=timezone.now() - timedelta(minutes=1),
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        result = poll_activities()
+        self.assertIn("dispatched", result)
+
+    def test_execute_activity_success(self) -> None:
+        """Test execute_activity completes successfully."""
+        import uuid
+
+        from activities.tasks import execute_activity
+
+        exec_id = uuid.uuid4()
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.DISPATCHED,
+            next_due_at=timezone.now(),
+            scheduled_at=timezone.now() + timedelta(days=1),
+            execution_id=exec_id,
+        )
+
+        result = execute_activity(activity.id, str(exec_id))
+        self.assertEqual(result["status"], "success")
+
+    def test_execute_activity_invalidates_stale_execution(self) -> None:
+        """Test execute_activity raises on stale execution_id."""
+        import uuid
+
+        from activities.tasks import execute_activity
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.DISPATCHED,
+            next_due_at=timezone.now(),
+            scheduled_at=timezone.now() + timedelta(days=1),
+            execution_id=uuid.uuid4(),
+        )
+
+        with self.assertRaises(StaleExecutionError):
+            execute_activity(activity.id, "wrong-id")
+
+    def test_recover_stale_activities_empty(self) -> None:
+        """Test recover_stale_activities with no stale activities."""
+        from activities.tasks import recover_stale_activities
+
+        result = recover_stale_activities()
+        self.assertEqual(result["recovered"], 0)
+
+    def test_recover_stale_activities_recovers(self) -> None:
+        """Test recover_stale_activities recovers stale activities."""
+        import uuid
+
+        from activities.tasks import recover_stale_activities
+
+        Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.RUNNING,
+            execution_id=uuid.uuid4(),
+            execution_started_at=timezone.now() - timedelta(hours=1),
+            retry_count=0,
+            max_retries=3,
+            next_due_at=timezone.now(),
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        result = recover_stale_activities()
+        self.assertIn("recovered", result)
+
+    def test_claim_and_dispatch_claims(self) -> None:
+        """Test _claim_and_dispatch atomically claims activity."""
+        from activities.tasks import _claim_and_dispatch
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.PENDING,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        with patch("activities.tasks.execute_activity.delay"):
+            claimed, exec_id = _claim_and_dispatch(activity.id)
+
+        self.assertIsNotNone(claimed)
+        self.assertIsNotNone(exec_id)
+
+    def test_claim_and_dispatch_contention(self) -> None:
+        """Test _claim_and_dispatch returns None on contention."""
+        from activities.tasks import _claim_and_dispatch
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.DISPATCHED,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        claimed, exec_id = _claim_and_dispatch(activity.id)
+        self.assertIsNone(claimed)
+        self.assertIsNone(exec_id)
+
+    def test_get_handler_vaccination(self) -> None:
+        """Test _get_handler returns vaccination handler."""
+        from activities.tasks import _get_handler
+
+        handler = _get_handler("vaccination")
+        self.assertEqual(handler.type, "vaccination")
+
+    def test_get_handler_fertilizer(self) -> None:
+        """Test _get_handler returns fertilizer handler."""
+        from activities.tasks import _get_handler
+
+        handler = _get_handler("fertilizer")
+        self.assertEqual(handler.type, "fertilizer")
+
+    def test_get_handler_irrigation(self) -> None:
+        """Test _get_handler returns irrigation handler."""
+        from activities.tasks import _get_handler
+
+        handler = _get_handler("irrigation")
+        self.assertEqual(handler.type, "irrigation")
+
+    def test_get_handler_unknown_returns_default(self) -> None:
+        """Test _get_handler returns DefaultHandler for unknown type."""
+        from activities.handlers import DefaultHandler
+        from activities.tasks import _get_handler
+
+        handler = _get_handler("unknown_type")
+        self.assertIsInstance(handler, DefaultHandler)
 
 
 @pytest.mark.django_db
