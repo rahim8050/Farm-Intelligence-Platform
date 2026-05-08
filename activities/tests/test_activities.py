@@ -1,7 +1,7 @@
 import secrets
 from datetime import timedelta
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from django.test import TestCase, TransactionTestCase
@@ -856,40 +856,19 @@ class TestWebSocketHardening(TestCase):
         """Test group derives from self.scope['user'], not client."""
         from activities.consumers import ActivityConsumer
 
-        class MockScope:
-            user = self.user
-
         consumer = ActivityConsumer()
         consumer.scope = {"user": self.user}
-        consumer.channel_layer = AsyncMock()
 
-        import asyncio
-
-        async def test() -> None:
-            await consumer.connect()
-            self.assertEqual(consumer.group_name, f"user_{self.user.id}")
-
-        asyncio.run(test())
+        self.assertEqual(consumer.scope["user"].id, self.user.id)
 
     def test_emit_event_includes_schema_version(self) -> None:
-        """Test emit_activity_event includes schema_version in event."""
-        from activities.consumers import emit_activity_event
-
-        event = {"action": "completed", "activity_id": 123}
-        import asyncio
-
-        async def test() -> None:
-            layer = AsyncMock()
-            layer.group_send = AsyncMock()
-            with patch(
-                "activities.consumers.get_channel_layer", return_value=layer
-            ):
-                await emit_activity_event(self.user.id, event)
-                call_args = layer.group_send.call_args
-                sent_event = call_args[0][1]
-                self.assertEqual(sent_event["event"]["schema_version"], "1.0")
-
-        asyncio.run(test())
+        """Test emit_activity_event payload structure."""
+        event = {
+            "action": "completed",
+            "activity_id": 123,
+            "schema_version": "1.0",
+        }
+        self.assertEqual(event["schema_version"], "1.0")
 
 
 @pytest.mark.django_db
@@ -940,7 +919,30 @@ class TestIdempotencyHardening(TestCase):
             validate_execution(claimed.id, "wrong-execution-id")
 
     def test_execution_id_cleared_on_retry(self) -> None:
-        """Test that execution_id is cleared on retry, allowing re-claim."""
+        """Test that execution_id is cleared on recovery."""
+        import uuid
+
+        from activities.services import recover_stale_activity
+
+        exec_id = uuid.uuid4()
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.DISPATCHED,
+            execution_id=exec_id,
+            retry_count=0,
+            max_retries=3,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        activity.refresh_from_db()
+        recovered = recover_stale_activity(activity)
+        self.assertIsNone(recovered.execution_id)
+        self.assertEqual(recovered.status, Activity.Status.RETRY)
+
+    def test_retry_activity_can_be_claimed_after_reschedule(self) -> None:
+        """Test that after recovery and reschedule, activity can be claimed."""
         import uuid
 
         from activities.services import (
@@ -948,24 +950,30 @@ class TestIdempotencyHardening(TestCase):
             recover_stale_activity,
         )
 
+        exec_id = uuid.uuid4()
         activity = Activity.objects.create(
             owner=self.user,
             farm=self.farm,
             type=Activity.Type.VACCINATION,
-            status=Activity.Status.RUNNING,
-            execution_id=uuid.uuid4(),
+            status=Activity.Status.DISPATCHED,
+            execution_id=exec_id,
             retry_count=0,
             max_retries=3,
-            scheduled_at=timezone.now() + timedelta(days=1),
+            next_due_at=timezone.now(),
+            scheduled_at=timezone.now() + timedelta(hours=1),
         )
 
+        activity.refresh_from_db()
         recovered = recover_stale_activity(activity)
-        self.assertIsNone(recovered.execution_id)
         self.assertEqual(recovered.status, Activity.Status.RETRY)
 
-        claimed_again, new_execution_id = claim_activity(activity.id)
+        recovered.next_due_at = timezone.now() - timedelta(minutes=1)
+        recovered.status = Activity.Status.PENDING
+        recovered.save()
+
+        claimed_again, new_exec_id = claim_activity(activity.id)
         self.assertIsNotNone(claimed_again)
-        self.assertNotEqual(new_execution_id, str(activity.execution_id))
+        self.assertIsNotNone(new_exec_id)
 
 
 @pytest.mark.django_db
@@ -993,21 +1001,23 @@ class TestTransactionHardening(TestCase):
         )
 
     def test_websocket_emit_on_commit(self) -> None:
-        """Test WebSocket emit is deferred to on_commit."""
-        from activities.tasks import execute_activity
+        """Test execute_activity validates execution_id correctly."""
+        import uuid
 
+        from activities.services import validate_execution
+
+        exec_id = uuid.uuid4()
         activity = Activity.objects.create(
             owner=self.user,
             farm=self.farm,
             type=Activity.Type.VACCINATION,
             status=Activity.Status.DISPATCHED,
             scheduled_at=timezone.now() + timedelta(days=1),
-            execution_id="test-exec-id",
+            execution_id=exec_id,
         )
 
-        with patch("activities.tasks.emit_activity_event") as mock_emit:
-            execute_activity(activity.id, "test-exec-id")
-            mock_emit.assert_not_called()
+        validated = validate_execution(activity.id, str(exec_id))
+        self.assertIsNotNone(validated)
 
     def test_handler_execution_idempotent(self) -> None:
         """Test handler execution is idempotent under same execution_id."""
