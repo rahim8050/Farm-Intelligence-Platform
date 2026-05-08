@@ -713,6 +713,7 @@ class TestConcurrency(TransactionTestCase):
         self.assertEqual(len(successes), 1)
         self.assertIsNotNone(successes[0][1])
 
+
 # Phase 3 Tests
 @pytest.mark.django_db
 class TestPhase3Handlers(TestCase):

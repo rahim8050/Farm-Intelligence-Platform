@@ -152,6 +152,8 @@ def execute_activity(
 
     import time
 
+    from django.db import transaction
+
     start_time = time.time()
     try:
         handler = _get_handler(activity.type)
@@ -177,19 +179,23 @@ def execute_activity(
             message,
         )
 
-        # Emit WebSocket event
-        async_to_sync(emit_activity_event)(
-            activity.owner_id,
-            {
-                "activity_id": activity.id,
-                "activity_type": activity.type,
-                "action": "completed",
-                "farm_id": activity.farm_id,
-                "message": message,
-                "metadata": metadata,
-                "timestamp": timezone.now().isoformat(),
-            },
-        )
+        # Emit WebSocket event after DB commit
+        def emit_event() -> None:
+            async_to_sync(emit_activity_event)(
+                activity.owner_id,
+                {
+                    "activity_id": activity.id,
+                    "activity_type": activity.type,
+                    "action": "completed",
+                    "farm_id": activity.farm_id,
+                    "message": message,
+                    "metadata": metadata,
+                    "timestamp": timezone.now().isoformat(),
+                    "schema_version": "1.0",
+                },
+            )
+
+        transaction.on_commit(emit_event)
 
         return {
             "status": "success",

@@ -17,16 +17,20 @@ from django.core.asgi import get_asgi_application
 
 from activities.consumers import ActivityConsumer
 
-application = ProtocolTypeRouter({
-    "http": get_asgi_application(),
-    "websocket": AuthMiddlewareStack(
-        URLRouter([
-            # WebSocket URL patterns
-            # Activity WebSocket
-            ActivityConsumer.as_asgi(),
-        ])
-    ),
-})
+application = ProtocolTypeRouter(
+    {
+        "http": get_asgi_application(),
+        "websocket": AuthMiddlewareStack(
+            URLRouter(
+                [
+                    # WebSocket URL patterns
+                    # Activity WebSocket
+                    ActivityConsumer.as_asgi(),
+                ]
+            )
+        ),
+    }
+)
 
 from .celery_metrics import register_celery_metrics  # noqa: E402
 

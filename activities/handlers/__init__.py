@@ -27,6 +27,7 @@ __all__ = [
     "HandlerResult",
 ]
 
+
 # Lazy import of handler modules to avoid circular imports
 def _import_handlers() -> None:
     """Import handler modules to register them."""
@@ -36,7 +37,5 @@ def _import_handlers() -> None:
         vaccination,
     )
 
+
 _import_handlers()
-
-
-

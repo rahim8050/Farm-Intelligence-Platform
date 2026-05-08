@@ -4,13 +4,19 @@ Provides real-time activity status updates via Django Channels.
 
 Auth: Uses AuthMiddlewareStack for user authentication.
 WebSocket URL: ws://domain/ws/activities/
+
+Semantics:
+- PostgreSQL = authoritative source of truth
+- Redis/WebSocket = best effort only (failures must not affect correctness)
 """
 
-import json
+import logging
 from typing import Any
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.layers import get_channel_layer
+
+logger = logging.getLogger("activities")
 
 
 class ActivityConsumer(AsyncWebsocketConsumer):
@@ -31,7 +37,8 @@ class ActivityConsumer(AsyncWebsocketConsumer):
             await self.close()
             return
 
-        # Join user-specific group
+        # Group assignment derives ONLY from server-side authenticated identity
+        # Client cannot spoof group membership
         self.group_name = f"user_{self.user.id}"
         await self.channel_layer.group_add(
             self.group_name,
@@ -51,17 +58,34 @@ class ActivityConsumer(AsyncWebsocketConsumer):
     async def activity_event(self, event: dict) -> None:
         """Handle activity events from worker.
 
+        Note: This is best-effort. WebSocket failures must not
+        affect activity execution correctness.
+
         Args:
             event: Dict containing the activity event data.
         """
-        await self.send(text_data=json.dumps({
-            "type": "activity_event",
-            "event": event["event"],
-        }))
+        try:
+            # Add schema version for forward compatibility
+            event_data = event["event"].copy()
+            event_data["schema_version"] = "1.0"
+            await self.send(
+                text_data=__import__("json").dumps(
+                    {
+                        "type": "activity_event",
+                        "event": event_data,
+                    }
+                )
+            )
+        except Exception:
+            # Best-effort: log and continue (PostgreSQL is authoritative)
+            logger.warning("websocket_send_failed: event=%s", event)
 
 
 async def emit_activity_event(user_id: int, event: dict) -> None:
     """Emit activity event to user's WebSocket.
+
+    Note: This is best-effort. Redis/WebSocket failures must not
+    affect activity execution correctness.
 
     Args:
         user_id: User ID to send event to.
@@ -69,10 +93,18 @@ async def emit_activity_event(user_id: int, event: dict) -> None:
     """
     channel_layer = get_channel_layer()
 
-    await channel_layer.group_send(
-        f"user_{user_id}",
-        {
-            "type": "activity_event",
-            "event": event,
-        },
-    )
+    try:
+        await channel_layer.group_send(
+            f"user_{user_id}",
+            {
+                "type": "activity_event",
+                "event": event,
+            },
+        )
+    except Exception:
+        # Best-effort: log and continue (PostgreSQL is authoritative)
+        logger.warning(
+            "websocket_emit_failed: user_id=%d event_type=%s",
+            user_id,
+            event.get("action", "unknown"),
+        )

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 HANDLER_REGISTRY: dict[str, type[ActivityHandler]] = {}
 
+
 def register_handler(
     handler_class: type[ActivityHandler],
 ) -> type[ActivityHandler]:
