@@ -10,7 +10,13 @@ from django.test import TestCase
 from activities.handlers.base import HandlerResult
 from activities.handlers.fertilizer import FertilizerHandler
 from activities.handlers.irrigation import IrrigationHandler
-from activities.handlers.ndvi_trigger import NdviTriggerHandler
+from activities.handlers.ndvi_trigger import (
+    ALLOWED_ACTIONS,
+    DEFAULT_STATE_ACTIONS,
+    FarmState,
+    NdviTriggerHandler,
+    RecommendedAction,
+)
 from activities.handlers.registry import get_handler, register_handler
 from activities.handlers.vaccination import VaccinationHandler
 
@@ -211,12 +217,11 @@ class TestNdviTriggerHandler(TestCase):
 
     def test_execute_with_farm_id_from_metadata(self) -> None:
         """Test execute uses farm_id from metadata."""
-        from unittest.mock import MagicMock
-
         from ndvi.farm_state import FarmStateResult
 
         handler = NdviTriggerHandler()
         activity = MagicMock()
+        activity.id = 1
         activity.metadata = {"farm_id": 123}
         activity.farm_id = None
 
@@ -231,11 +236,18 @@ class TestNdviTriggerHandler(TestCase):
             action="Continue monitoring",
         )
 
-        with patch("farms.models.Farm.objects.get", return_value=MagicMock()):
-            with patch(
-                "ndvi.farm_state.build_farm_state", return_value=mock_result
-            ):
-                result = handler.execute(activity)
+        with patch("django.core.cache.cache.get", return_value=None):
+            with patch("django.core.cache.cache.set"):
+                with patch("django.core.cache.cache.add", return_value=True):
+                    with patch(
+                        "farms.models.Farm.objects.get",
+                        return_value=MagicMock(),
+                    ):
+                        with patch(
+                            "ndvi.farm_state.build_farm_state",
+                            return_value=mock_result,
+                        ):
+                            result = handler.execute(activity)
 
         self.assertIsInstance(result, HandlerResult)
         self.assertTrue(result.success)
@@ -244,12 +256,11 @@ class TestNdviTriggerHandler(TestCase):
 
     def test_execute_with_custom_action_mapping(self) -> None:
         """Test execute uses custom action_on_state mapping."""
-        from unittest.mock import MagicMock
-
         from ndvi.farm_state import FarmStateResult
 
         handler = NdviTriggerHandler()
         activity = MagicMock()
+        activity.id = 2
         activity.metadata = {
             "farm_id": 456,
             "action_on_state": {"decline": ["irrigation"]},
@@ -267,37 +278,276 @@ class TestNdviTriggerHandler(TestCase):
             action="Check irrigation",
         )
 
-        with patch("farms.models.Farm.objects.get", return_value=MagicMock()):
-            with patch(
-                "ndvi.farm_state.build_farm_state", return_value=mock_result
-            ):
-                result = handler.execute(activity)
+        with patch("django.core.cache.cache.get", return_value=None):
+            with patch("django.core.cache.cache.set"):
+                with patch("django.core.cache.cache.add", return_value=True):
+                    with patch(
+                        "farms.models.Farm.objects.get",
+                        return_value=MagicMock(),
+                    ):
+                        with patch(
+                            "ndvi.farm_state.build_farm_state",
+                            return_value=mock_result,
+                        ):
+                            result = handler.execute(activity)
 
         self.assertTrue(result.success)
+        expected_actions = ["irrigation"]
         self.assertEqual(
-            result.metadata["recommended_actions"], ["irrigation"]
+            result.metadata["recommended_actions"], expected_actions
         )
 
     def test_state_action_mapping_defaults(self) -> None:
         """Test default state action mapping is used."""
-        from activities.handlers.ndvi_trigger import STATE_ACTION_MAPPING
+        self.assertIn("establishment", DEFAULT_STATE_ACTIONS)
+        self.assertIn("decline", DEFAULT_STATE_ACTIONS)
+        self.assertIsInstance(DEFAULT_STATE_ACTIONS["establishment"], list)
 
-        self.assertIn("establishment", STATE_ACTION_MAPPING)
-        self.assertIn("decline", STATE_ACTION_MAPPING)
-        self.assertIsInstance(STATE_ACTION_MAPPING["establishment"], list)
+    def test_execute_handles_farm_not_found(self) -> None:
+        """Test execute handles Farm.DoesNotExist gracefully."""
+        from farms.models import Farm
+
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.id = 3
+        activity.metadata = {"farm_id": 999}
+        activity.farm_id = None
+
+        with patch("django.core.cache.cache.get", return_value=None):
+            with patch("django.core.cache.cache.set"):
+                with patch("django.core.cache.cache.add", return_value=True):
+                    with patch(
+                        "farms.models.Farm.objects.get",
+                        side_effect=Farm.DoesNotExist(),
+                    ):
+                        result = handler.execute(activity)
+
+        self.assertFalse(result.success)
+        self.assertIn("farm_not_found", result.metadata.get("error", ""))
 
     def test_execute_handles_farm_state_error(self) -> None:
         """Test execute handles farm state errors gracefully."""
         handler = NdviTriggerHandler()
         activity = MagicMock()
+        activity.id = 4
+        activity.metadata = {"farm_id": 999}
+        activity.farm_id = None
+
+        with patch("django.core.cache.cache.get", return_value=None):
+            with patch("django.core.cache.cache.set"):
+                with patch("django.core.cache.cache.add", return_value=True):
+                    with patch(
+                        "farms.models.Farm.objects.get",
+                        return_value=MagicMock(),
+                    ):
+                        with patch(
+                            "ndvi.farm_state.build_farm_state",
+                            side_effect=Exception("Service error"),
+                        ):
+                            result = handler.execute(activity)
+
+        self.assertFalse(result.success)
+        self.assertIn("farm_state_error", result.metadata.get("error", ""))
+
+    def test_validate_actions_allowlist(self) -> None:
+        """Test action validation against allowlist."""
+        handler = NdviTriggerHandler()
+
+        valid_actions = ["fertilizer", "irrigation"]
+        result = handler._validate_actions(valid_actions)
+        self.assertEqual(result, valid_actions)
+
+        invalid_actions = ["fertilizer", "arbitrary_action"]
+        result = handler._validate_actions(invalid_actions)
+        self.assertEqual(result, ["fertilizer"])
+
+    def test_validate_actions_rejects_all_invalid(self) -> None:
+        """Test validation returns empty list when all actions invalid."""
+        handler = NdviTriggerHandler()
+
+        result = handler._validate_actions(["invalid_action", "another_one"])
+        self.assertEqual(result, [])
+
+    def test_execute_invalid_metadata_schema(self) -> None:
+        """Test execute rejects invalid metadata schema."""
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.metadata = {"action_on_state": "not_a_dict"}
+        activity.farm_id = None
+
+        result = handler.execute(activity)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.metadata.get("error"), "invalid_metadata")
+
+    def test_execute_invalid_action_on_state_not_list(self) -> None:
+        """Test execute rejects action_on_state with non-list values."""
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.metadata = {"action_on_state": {"decline": "irrigation"}}
+        activity.farm_id = None
+
+        result = handler.execute(activity)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.metadata.get("error"), "invalid_metadata")
+
+    def test_duplicate_execution_prevented(self) -> None:
+        """Test duplicate execution is prevented."""
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.id = 5
+        activity.metadata = {"farm_id": 789}
+        activity.farm_id = None
+
+        def cache_get_side_effect(key: str) -> str | None:
+            if key.startswith("ndvi_trigger:idempotency:"):
+                return '{"timestamp": 1234567890}'
+            if key.startswith("ndvi_trigger:prev_state:"):
+                return "growth"
+            return None
+
+        with patch(
+            "django.core.cache.cache.get", side_effect=cache_get_side_effect
+        ):
+            with patch("django.core.cache.cache.set"):
+                with patch("django.core.cache.cache.add", return_value=False):
+                    result = handler.execute(activity)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.metadata.get("error"), "duplicate_execution")
+
+    def test_no_transition_when_state_unchanged(self) -> None:
+        """Test no action triggered when state unchanged."""
+        from ndvi.farm_state import FarmStateResult
+
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.id = 6
+        activity.metadata = {"farm_id": 101}
+        activity.farm_id = None
+
+        mock_result = FarmStateResult(
+            farm_id=101,
+            state="establishment",
+            mean_ndvi=0.3,
+            max_ndvi=0.4,
+            coverage_pct=30.0,
+            trend=0.01,
+            interpretation="Establishment phase",
+            action="Apply fertilizer",
+        )
+
+        with patch(
+            "django.core.cache.cache.get", return_value="establishment"
+        ):
+            with patch("django.core.cache.cache.set"):
+                with patch("django.core.cache.cache.add", return_value=True):
+                    with patch(
+                        "farms.models.Farm.objects.get",
+                        return_value=MagicMock(),
+                    ):
+                        with patch(
+                            "ndvi.farm_state.build_farm_state",
+                            return_value=mock_result,
+                        ):
+                            result = handler.execute(activity)
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.metadata.get("no_transition"))
+        self.assertEqual(result.metadata["recommended_actions"], [])
+
+    def test_transition_triggers_actions(self) -> None:
+        """Test state transition triggers recommended actions."""
+        from ndvi.farm_state import FarmStateResult
+
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.id = 7
+        activity.metadata = {"farm_id": 102}
+        activity.farm_id = None
+
+        mock_result = FarmStateResult(
+            farm_id=102,
+            state="decline",
+            mean_ndvi=0.2,
+            max_ndvi=0.3,
+            coverage_pct=20.0,
+            trend=-0.02,
+            interpretation="Decline phase",
+            action="Check irrigation",
+        )
+
+        with patch("django.core.cache.cache.get", return_value="growth"):
+            with patch("django.core.cache.cache.set"):
+                with patch("django.core.cache.cache.add", return_value=True):
+                    with patch(
+                        "farms.models.Farm.objects.get",
+                        return_value=MagicMock(),
+                    ):
+                        with patch(
+                            "ndvi.farm_state.build_farm_state",
+                            return_value=mock_result,
+                        ):
+                            result = handler.execute(activity)
+
+        self.assertTrue(result.success)
+        self.assertFalse(result.metadata.get("no_transition"))
+        self.assertIn("irrigation", result.metadata["recommended_actions"])
+        self.assertIn("vaccination", result.metadata["recommended_actions"])
+
+    def test_close_old_connections_called_on_success(self) -> None:
+        """Test DB connections closed after successful execution."""
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.id = 8
+        activity.metadata = {}
+        activity.farm_id = None
+
+        with patch(
+            "activities.handlers.ndvi_trigger.close_old_connections"
+        ) as mock_close:
+            handler.execute(activity)
+            self.assertTrue(mock_close.called)
+
+    def test_close_old_connections_called_on_error(self) -> None:
+        """Test DB connections closed even on error."""
+        from farms.models import Farm
+
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.id = 9
         activity.metadata = {"farm_id": 999}
         activity.farm_id = None
 
         with patch(
-            "ndvi.farm_state.build_farm_state",
-            side_effect=Exception("Database error"),
-        ):
-            result = handler.execute(activity)
+            "activities.handlers.ndvi_trigger.close_old_connections"
+        ) as mock_close:
+            with patch("django.core.cache.cache.get", return_value=None):
+                with patch("django.core.cache.cache.set"):
+                    with patch(
+                        "django.core.cache.cache.add", return_value=True
+                    ):
+                        with patch(
+                            "farms.models.Farm.objects.get",
+                            side_effect=Farm.DoesNotExist(),
+                        ):
+                            handler.execute(activity)
+            self.assertTrue(mock_close.called)
 
-        self.assertFalse(result.success)
-        self.assertIn("farm_state_error", result.metadata.get("error", ""))
+    def test_enum_values(self) -> None:
+        """Test FarmState and RecommendedAction enum values."""
+        self.assertEqual(FarmState.ESTABLISHMENT.value, "establishment")
+        self.assertEqual(FarmState.FULL_CANOPY.value, "full_canopy")
+        self.assertEqual(FarmState.DECLINE.value, "decline")
+
+        self.assertEqual(RecommendedAction.FERTILIZER.value, "fertilizer")
+        self.assertEqual(RecommendedAction.IRRIGATION.value, "irrigation")
+        self.assertEqual(RecommendedAction.VACCINATION.value, "vaccination")
+
+    def test_allowed_actions_constant(self) -> None:
+        """Test ALLOWED_ACTIONS contains expected values."""
+        self.assertIn("fertilizer", ALLOWED_ACTIONS)
+        self.assertIn("irrigation", ALLOWED_ACTIONS)
+        self.assertIn("vaccination", ALLOWED_ACTIONS)
+        self.assertEqual(len(ALLOWED_ACTIONS), 3)

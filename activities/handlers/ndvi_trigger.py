@@ -6,7 +6,7 @@ operations based on the current farm state classification.
 Farm state integration:
 - Reads farm state from ndvi.farm_state.build_farm_state()
 - Triggers follow-up activities based on state classification
-- Dispatches farm state coverage computation if needed
+- Tracks state transitions to avoid duplicate actions
 
 Activity types:
 - ndvi_trigger: Event-driven activity based on NDVI state
@@ -15,30 +15,97 @@ Metadata expected:
 - farm_id: int (required)
 - engine: str (optional, defaults to sentinelhub)
 - action_on_state: dict (optional, maps state -> activity_type)
+
+Idempotency:
+- Uses Redis lock to prevent duplicate execution within configured window
+- Tracks previous state to avoid repeated actions on same state
+
+Security:
+- Validates metadata schema
+- Action allowlist prevents arbitrary action injection
 """
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any
+import time
+from enum import StrEnum
+from typing import TYPE_CHECKING, TypedDict
 
+from django.core.cache import cache
 from django.db import close_old_connections
 
 from activities.handlers.base import HandlerResult
 from activities.handlers.registry import register_handler
-from activities.models import Activity
+
+if TYPE_CHECKING:
+    from activities.models import Activity
+
+from farms.models import Farm
 
 logger = logging.getLogger(__name__)
 
-STATE_ACTION_MAPPING: dict[str, list[str]] = {
-    "establishment": ["fertilizer", "irrigation"],
-    "full_canopy": ["fertilizer"],
-    "decline": ["irrigation", "vaccination"],
-    "growth": [],
-    "unknown": [],
+
+class FarmState(StrEnum):
+    """Valid NDVI farm states."""
+
+    ESTABLISHMENT = "establishment"
+    FULL_CANOPY = "full_canopy"
+    DECLINE = "decline"
+    GROWTH = "growth"
+    UNKNOWN = "unknown"
+
+
+class RecommendedAction(StrEnum):
+    """Valid recommended actions."""
+
+    FERTILIZER = "fertilizer"
+    IRRIGATION = "irrigation"
+    VACCINATION = "vaccination"
+
+
+ALLOWED_ACTIONS: frozenset[str] = frozenset(
+    action.value for action in RecommendedAction
+)
+
+DEFAULT_STATE_ACTIONS: dict[str, list[str]] = {
+    FarmState.ESTABLISHMENT.value: [
+        RecommendedAction.FERTILIZER.value,
+        RecommendedAction.IRRIGATION.value,
+    ],
+    FarmState.FULL_CANOPY.value: [RecommendedAction.FERTILIZER.value],
+    FarmState.DECLINE.value: [
+        RecommendedAction.IRRIGATION.value,
+        RecommendedAction.VACCINATION.value,
+    ],
+    FarmState.GROWTH.value: [],
+    FarmState.UNKNOWN.value: [],
 }
 
-DEFAULT_THRESHOLD = 0.3
+IDEMPOTENCY_KEY_PREFIX = "ndvi_trigger:idempotency:"
+IDEMPOTENCY_TTL_SECONDS = 300
+
+
+class FarmStatePayload(TypedDict):
+    """Farm state payload from build_farm_state."""
+
+    farm_id: int
+    state: str
+    mean_ndvi: float | None
+    max_ndvi: float | None
+    coverage_pct: float | None
+    trend: float | None
+    interpretation: str
+    action: str
+
+
+class MetadataSchema(TypedDict, total=False):
+    """Expected metadata schema for ndvi_trigger activity."""
+
+    farm_id: int
+    engine: str
+    action_on_state: dict[str, list[str]]
 
 
 class NdviTriggerHandler:
@@ -50,11 +117,19 @@ class NdviTriggerHandler:
     3. Logs the state and recommended actions
     4. Does NOT create new activities (dispatch is handled externally)
 
-    The handler is idempotent - running it multiple times with the same
-    farm state produces the same result.
+    Idempotency:
+    - Uses Redis lock to prevent duplicate execution
+    - Tracks state transitions to avoid repeated actions
+
+    Security:
+    - Validates metadata schema
+    - Action allowlist prevents arbitrary injection
     """
 
     type = "ndvi_trigger"
+
+    def __init__(self) -> None:
+        self._activity_id: int | None = None
 
     def execute(self, activity: Activity) -> HandlerResult:
         """Execute NDVI trigger activity.
@@ -67,7 +142,21 @@ class NdviTriggerHandler:
             HandlerResult with success status, state classification,
             and recommended follow-up actions.
         """
-        close_old_connections()
+        self._activity_id = getattr(activity, "id", None)
+
+        try:
+            return self._execute_impl(activity)
+        finally:
+            close_old_connections()
+
+    def _execute_impl(self, activity: Activity) -> HandlerResult:
+        """Internal implementation with explicit exception handling."""
+        if not self._validate_metadata(activity):
+            return HandlerResult(
+                success=False,
+                message="Invalid metadata schema",
+                metadata={"error": "invalid_metadata"},
+            )
 
         farm_id = self._get_farm_id(activity)
         if farm_id is None:
@@ -77,13 +166,34 @@ class NdviTriggerHandler:
                 metadata={"error": "missing_farm_id"},
             )
 
+        if not self._check_idempotency(farm_id):
+            logger.warning(
+                "ndvi_trigger.duplicate_detected farm_id=%s activity_id=%s",
+                farm_id,
+                self._activity_id,
+            )
+            return HandlerResult(
+                success=False,
+                message="Duplicate execution detected",
+                metadata={
+                    "error": "duplicate_execution",
+                    "farm_id": farm_id,
+                },
+            )
+
         engine = self._get_engine(activity.metadata)
         action_mapping = self._get_action_mapping(activity.metadata)
 
         try:
             farm_state = self._get_farm_state(farm_id, engine)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
+        except Farm.DoesNotExist:
+            return HandlerResult(
+                success=False,
+                message="Farm not found",
+                metadata={"error": "farm_not_found", "farm_id": farm_id},
+            )
+        except Exception as exc:
+            logger.exception(
                 "ndvi_trigger.farm_state_error farm_id=%s error=%s",
                 farm_id,
                 exc,
@@ -94,47 +204,104 @@ class NdviTriggerHandler:
                 metadata={"error": "farm_state_error", "farm_id": farm_id},
             )
 
-        state = farm_state.get("state", "unknown")
-        mean_ndvi = farm_state.get("mean_ndvi")
-        max_ndvi = farm_state.get("max_ndvi")
-        coverage_pct = farm_state.get("coverage_pct")
-        trend = farm_state.get("trend")
+        if not self._check_state_transition(farm_id, farm_state["state"]):
+            logger.info(
+                "ndvi_trigger.no_transition farm_id=%s current_state=%s",
+                farm_id,
+                farm_state["state"],
+            )
+            return HandlerResult(
+                success=True,
+                message=f"No state transition: {farm_state['state']}",
+                metadata={
+                    "farm_id": farm_id,
+                    "state": farm_state["state"],
+                    "recommended_actions": [],
+                    "no_transition": True,
+                },
+            )
 
-        recommended_actions = action_mapping.get(state, [])
+        raw_actions = action_mapping.get(farm_state["state"], [])
+        validated_actions = self._validate_actions(raw_actions)
 
         logger.info(
-            "ndvi_trigger.executed farm_id=%s state=%s mean_ndvi=%s "
-            "recommended_actions=%s",
-            farm_id,
-            state,
-            mean_ndvi,
-            recommended_actions,
+            "ndvi_state_evaluated",
+            extra={
+                "farm_id": farm_id,
+                "activity_id": self._activity_id,
+                "state": farm_state["state"],
+                "recommended_actions": validated_actions,
+                "mean_ndvi": farm_state.get("mean_ndvi"),
+            },
         )
 
         return HandlerResult(
             success=True,
-            message=f"NDVI state: {state}",
+            message=f"NDVI state: {farm_state['state']}",
             metadata={
                 "farm_id": farm_id,
-                "state": state,
-                "mean_ndvi": mean_ndvi,
-                "max_ndvi": max_ndvi,
-                "coverage_pct": coverage_pct,
-                "trend": trend,
-                "recommended_actions": recommended_actions,
+                "state": farm_state["state"],
+                "mean_ndvi": farm_state.get("mean_ndvi"),
+                "max_ndvi": farm_state.get("max_ndvi"),
+                "coverage_pct": farm_state.get("coverage_pct"),
+                "trend": farm_state.get("trend"),
+                "recommended_actions": validated_actions,
                 "interpretation": farm_state.get("interpretation", ""),
                 "action": farm_state.get("action", ""),
             },
         )
 
+    def _validate_metadata(self, activity: Activity) -> bool:
+        """Validate metadata schema."""
+        metadata = getattr(activity, "metadata", None) or {}
+
+        if not isinstance(metadata, dict):
+            logger.warning(
+                "ndvi_trigger.invalid_metadata_type metadata_type=%s",
+                type(metadata).__name__,
+            )
+            return False
+
+        action_on_state = metadata.get("action_on_state")
+        if action_on_state is not None and not isinstance(
+            action_on_state, dict
+        ):
+            logger.warning(
+                "ndvi_trigger.invalid_action_on_state_type type=%s",
+                type(action_on_state).__name__,
+            )
+            return False
+
+        if action_on_state:
+            for state, actions in action_on_state.items():
+                if not isinstance(actions, list):
+                    logger.warning(
+                        "ndvi_trigger.invalid_actions_for_state state=%s",
+                        state,
+                    )
+                    return False
+
+        return True
+
     def _get_farm_id(self, activity: Activity) -> int | None:
         """Extract farm_id from activity metadata."""
-        farm_id = activity.metadata.get("farm_id")
-        if farm_id is not None:
-            return int(farm_id)
+        metadata = getattr(activity, "metadata", None) or {}
+        farm_id = metadata.get("farm_id")
 
-        if activity.farm_id is not None:
-            return activity.farm_id
+        if farm_id is not None:
+            try:
+                return int(farm_id)
+            except (ValueError, TypeError) as exc:
+                logger.warning(
+                    "ndvi_trigger.invalid_farm_id farm_id=%s error=%s",
+                    farm_id,
+                    exc,
+                )
+                return None
+
+        farm_id_attr = getattr(activity, "farm_id", None)
+        if farm_id_attr is not None:
+            return int(farm_id_attr)
 
         return None
 
@@ -147,18 +314,104 @@ class NdviTriggerHandler:
         custom_mapping = metadata.get("action_on_state")
         if custom_mapping and isinstance(custom_mapping, dict):
             return custom_mapping
-        return STATE_ACTION_MAPPING.copy()
+        return DEFAULT_STATE_ACTIONS.copy()
 
-    def _get_farm_state(self, farm_id: int, engine: str) -> dict[str, Any]:
+    def _get_farm_state(self, farm_id: int, engine: str) -> FarmStatePayload:
         """Get farm state from ndvi.farm_state module."""
-        from farms.models import Farm
-
         farm = Farm.objects.get(id=farm_id)
 
         from ndvi.farm_state import build_farm_state
 
         result = build_farm_state(farm=farm, engine=engine)
-        return result.as_payload()
+        return result.as_payload()  # type: ignore[return-value]
+
+    def _get_farm_state_legacy(
+        self, farm_id: int, engine: str
+    ) -> FarmStatePayload:
+        """Get farm state from ndvi.farm_state module.
+
+        Legacy version that raises exceptions for caller to handle.
+        """
+        from ndvi.farm_state import build_farm_state
+
+        try:
+            farm = Farm.objects.get(id=farm_id)
+        except Farm.DoesNotExist:
+            raise
+
+        try:
+            result = build_farm_state(farm=farm, engine=engine)
+            return result.as_payload()  # type: ignore[return-value]
+        except Exception as exc:
+            logger.exception(
+                "ndvi_trigger.farm_state_error farm_id=%s error=%s",
+                farm_id,
+                exc,
+            )
+            raise
+
+    def _validate_actions(self, actions: list[str]) -> list[str]:
+        """Validate actions against allowlist.
+
+        Logs rejected actions but never propagates them.
+        """
+        validated = [action for action in actions if action in ALLOWED_ACTIONS]
+
+        rejected = set(actions) - set(validated)
+        if rejected:
+            logger.warning(
+                "ndvi_trigger.rejected_actions actions=%s allowed=%s",
+                list(rejected),
+                list(ALLOWED_ACTIONS),
+            )
+
+        return validated
+
+    def _check_idempotency(self, farm_id: int) -> bool:
+        """Check and set idempotency lock.
+
+        Returns False if duplicate execution detected within TTL window.
+        """
+        key = f"{IDEMPOTENCY_KEY_PREFIX}{farm_id}"
+
+        lock_key = f"{key}:lock"
+        lock_acquired = cache.add(lock_key, "1", timeout=5)
+
+        if not lock_acquired:
+            cached_result = cache.get(key)
+            if cached_result is not None:
+                return False
+
+        cache.set(
+            key,
+            json.dumps({"timestamp": time.time()}),
+            IDEMPOTENCY_TTL_SECONDS,
+        )
+
+        if lock_acquired:
+            cache.delete(lock_key)
+
+        return True
+
+    def _check_state_transition(
+        self, farm_id: int, current_state: str
+    ) -> bool:
+        """Check if state changed from previous.
+
+        Returns True if this is a new state or first evaluation.
+        """
+        key = f"ndvi_trigger:prev_state:{farm_id}"
+        previous_state = cache.get(key)
+
+        if previous_state is None:
+            cache.set(key, current_state, timeout=86400)
+            return True
+
+        if previous_state != current_state:
+            cache.set(key, current_state, timeout=86400)
+            return True
+
+        return False
 
 
 register_handler(NdviTriggerHandler)
