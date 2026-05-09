@@ -1224,11 +1224,14 @@ For handler-specific failures:
 **Objective:** Event-driven triggers
 
 - [x] ndvi_trigger handler
+- [x] Handler hardening (enums, typed dicts, idempotency, state transitions)
+- [x] Metadata schema validation
+- [x] Action allowlist validation
 - [ ] NDVI event listener (future integration with NDVI job completion events)
 - [ ] Conditional recurrence (triggered based on state)
 - [ ] Activity chaining (create follow-up activities from recommendations)
 - [ ] Advanced recurrence (cron-based for NDVI monitoring)
-- [ ] Performance testing
+- [ ] Metrics/observability hooks (future)
 
 **Implemented:**
 - `NdviTriggerHandler` in `activities/handlers/ndvi_trigger.py`
@@ -1239,6 +1242,17 @@ For handler-specific failures:
   - establishment -> fertilizer, irrigation
   - full_canopy -> fertilizer
   - decline -> irrigation, vaccination
+
+**Hardening features:**
+- `FarmState` and `RecommendedAction` StrEnums for type safety
+- `FarmStatePayload` and `MetadataSchema` TypedDict for structured data
+- Idempotency via Django cache with 5-minute TTL
+- State transition awareness (triggers only on state change)
+- Metadata schema validation (rejects non-dict, invalid action_on_state)
+- Action allowlist validation (ALLOWED_ACTIONS frozenset)
+- Explicit exception handling (Farm.DoesNotExist, Exception) with structured error metadata
+- `close_old_connections()` in finally block for Celery compatibility
+- 35 tests covering all features
 
 ### Phase 5: Hardening (Week 9+)
 
@@ -1435,6 +1449,7 @@ ACTIVITY_RETRY_BACKOFF_MAX = 600
 | 1.1 | May 3, 2026 | opencode | Added cache strategy (Section 10B) for farm state caching |
 | 1.2 | May 5, 2026 | opencode | execution_id lifecycle, DISPATCHED state, atomic claim per prompts/harden.md |
 | 1.3 | May 9, 2026 | opencode | Updated implementation plan with actual completion status (Phases 1-3 complete, Phase 4 pending) |
+| 1.4 | May 9, 2026 | opencode | Phase 4 hardening complete: enums, typed dicts, idempotency, state transitions, metadata validation, action allowlist |
 
 ---
 

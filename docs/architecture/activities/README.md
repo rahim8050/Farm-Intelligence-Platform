@@ -128,7 +128,8 @@ Implemented:
 **Phase 4: NDVI Integration** - ✅ COMPLETE (May 9, 2026)
 
 Files created:
-- `activities/handlers/ndvi_trigger.py` - NdviTriggerHandler
+- `activities/handlers/ndvi_trigger.py` - NdviTriggerHandler (hardened)
+- `activities/handlers/__init__.py` - Updated exports
 
 Implemented:
 - `NdviTriggerHandler` - Handler that reads farm NDVI state and returns recommendations
@@ -136,6 +137,17 @@ Implemented:
 - Supports custom action_on_state mapping for state-based follow-up actions
 - Default state action mapping: establishment -> fertilizer/irrigation, decline -> irrigation/vaccination
 - Graceful error handling when farm state cannot be computed
+
+**Hardening (May 9, 2026):**
+- Enums: `FarmState`, `RecommendedAction` (StrEnum) for type safety
+- TypedDict: `FarmStatePayload`, `MetadataSchema` for structured data
+- Idempotency protection via Django cache (5-minute TTL)
+- State transition awareness (triggers only on state change)
+- Metadata schema validation (rejects invalid structure)
+- Action allowlist validation (filters arbitrary actions)
+- Explicit exception handling with structured error metadata
+- `close_old_connections()` in finally block for Celery compatibility
+- 35 tests covering all features
 
 ## WebSocket Details
 
@@ -194,3 +206,4 @@ Cache stampede protection is documented in TDD Section 10B:
 | 1.0 | May 3, 2026 | opencode | Initial architecture README |
 | 1.1 | May 9, 2026 | opencode | Updated implementation status: Phase 1-4 complete, hardening alignment |
 | 1.2 | May 9, 2026 | opencode | Phase 4 NDVI Integration complete |
+| 1.3 | May 9, 2026 | opencode | Phase 4 hardening complete: enums, idempotency, state transitions, validation |
