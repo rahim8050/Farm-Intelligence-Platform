@@ -3,13 +3,14 @@
 import secrets
 import time
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
 
 from activities.handlers.base import HandlerResult
 from activities.handlers.fertilizer import FertilizerHandler
 from activities.handlers.irrigation import IrrigationHandler
+from activities.handlers.ndvi_trigger import NdviTriggerHandler
 from activities.handlers.registry import get_handler, register_handler
 from activities.handlers.vaccination import VaccinationHandler
 
@@ -180,3 +181,123 @@ class TestHandlerRegistry(TestCase):
 
         handler = get_handler(class_name)
         self.assertIsInstance(handler, TestHandler)
+
+
+class TestNdviTriggerHandler(TestCase):
+    """Test NdviTriggerHandler."""
+
+    def test_handler_type(self) -> None:
+        """Test handler has correct type."""
+        handler = NdviTriggerHandler()
+        self.assertEqual(handler.type, "ndvi_trigger")
+
+    def test_get_handler_ndvi_trigger(self) -> None:
+        """Test get_handler returns NdviTriggerHandler."""
+        handler = get_handler("ndvi_trigger")
+        self.assertIsInstance(handler, NdviTriggerHandler)
+
+    def test_execute_missing_farm_id(self) -> None:
+        """Test execute fails gracefully when farm_id is missing."""
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.metadata = {}
+        activity.farm_id = None
+
+        result = handler.execute(activity)
+
+        self.assertIsInstance(result, HandlerResult)
+        self.assertFalse(result.success)
+        self.assertIn("farm_id", result.message.lower())
+
+    def test_execute_with_farm_id_from_metadata(self) -> None:
+        """Test execute uses farm_id from metadata."""
+        from unittest.mock import MagicMock
+
+        from ndvi.farm_state import FarmStateResult
+
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.metadata = {"farm_id": 123}
+        activity.farm_id = None
+
+        mock_result = FarmStateResult(
+            farm_id=123,
+            state="growth",
+            mean_ndvi=0.5,
+            max_ndvi=0.7,
+            coverage_pct=60.0,
+            trend=0.01,
+            interpretation="Good growth",
+            action="Continue monitoring",
+        )
+
+        with patch("farms.models.Farm.objects.get", return_value=MagicMock()):
+            with patch(
+                "ndvi.farm_state.build_farm_state", return_value=mock_result
+            ):
+                result = handler.execute(activity)
+
+        self.assertIsInstance(result, HandlerResult)
+        self.assertTrue(result.success)
+        self.assertEqual(result.metadata["farm_id"], 123)
+        self.assertEqual(result.metadata["state"], "growth")
+
+    def test_execute_with_custom_action_mapping(self) -> None:
+        """Test execute uses custom action_on_state mapping."""
+        from unittest.mock import MagicMock
+
+        from ndvi.farm_state import FarmStateResult
+
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.metadata = {
+            "farm_id": 456,
+            "action_on_state": {"decline": ["irrigation"]},
+        }
+        activity.farm_id = None
+
+        mock_result = FarmStateResult(
+            farm_id=456,
+            state="decline",
+            mean_ndvi=0.2,
+            max_ndvi=0.3,
+            coverage_pct=20.0,
+            trend=-0.02,
+            interpretation="NDVI declining",
+            action="Check irrigation",
+        )
+
+        with patch("farms.models.Farm.objects.get", return_value=MagicMock()):
+            with patch(
+                "ndvi.farm_state.build_farm_state", return_value=mock_result
+            ):
+                result = handler.execute(activity)
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            result.metadata["recommended_actions"], ["irrigation"]
+        )
+
+    def test_state_action_mapping_defaults(self) -> None:
+        """Test default state action mapping is used."""
+        from activities.handlers.ndvi_trigger import STATE_ACTION_MAPPING
+
+        self.assertIn("establishment", STATE_ACTION_MAPPING)
+        self.assertIn("decline", STATE_ACTION_MAPPING)
+        self.assertIsInstance(STATE_ACTION_MAPPING["establishment"], list)
+
+    def test_execute_handles_farm_state_error(self) -> None:
+        """Test execute handles farm state errors gracefully."""
+        handler = NdviTriggerHandler()
+        activity = MagicMock()
+        activity.metadata = {"farm_id": 999}
+        activity.farm_id = None
+
+        with patch(
+            "ndvi.farm_state.build_farm_state",
+            side_effect=Exception("Database error"),
+        ):
+            result = handler.execute(activity)
+
+        self.assertFalse(result.success)
+        self.assertIn("farm_state_error", result.metadata.get("error", ""))

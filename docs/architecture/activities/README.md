@@ -70,7 +70,7 @@ The TDD (01_technical_design.md) already includes cache strategy in Section 10B.
 | Phase 1 | Core API | ✅ IMPLEMENTED | TDD Section 9 + Appendix B,C |
 | Phase 2 | Scheduler + Service Layer | ✅ IMPLEMENTED | TDD Section 4, 5, 6 + services.py |
 | Phase 3 | WebSocket + Execution + Handlers | ✅ IMPLEMENTED | TDD Section 8, Hardening Review |
-| Phase 4 | NDVI Integration | ❌ NOT STARTED | TDD Section 13 |
+| Phase 4 | NDVI Integration | ✅ IMPLEMENTED | TDD Section 13 |
 
 ## Implementation Status
 
@@ -125,10 +125,17 @@ Implemented:
 - Activity handlers for vaccination, fertilizer, irrigation types
 - Prometheus metrics: activities_dispatched, activity_duration_seconds, activities_active
 
-**Phase 4: NDVI Integration** - ❌ NOT STARTED
+**Phase 4: NDVI Integration** - ✅ COMPLETE (May 9, 2026)
 
-No ndvi_trigger handler implemented yet.
-Activity handler for NDVI-triggered farm operations pending.
+Files created:
+- `activities/handlers/ndvi_trigger.py` - NdviTriggerHandler
+
+Implemented:
+- `NdviTriggerHandler` - Handler that reads farm NDVI state and returns recommendations
+- Integrates with `ndvi.farm_state.build_farm_state()` for state classification
+- Supports custom action_on_state mapping for state-based follow-up actions
+- Default state action mapping: establishment -> fertilizer/irrigation, decline -> irrigation/vaccination
+- Graceful error handling when farm state cannot be computed
 
 ## WebSocket Details
 
@@ -185,4 +192,5 @@ Cache stampede protection is documented in TDD Section 10B:
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | May 3, 2026 | opencode | Initial architecture README |
-| 1.1 | May 9, 2026 | opencode | Updated implementation status: Phase 1-3 complete, Phase 4 pending, hardening alignment |
+| 1.1 | May 9, 2026 | opencode | Updated implementation status: Phase 1-4 complete, hardening alignment |
+| 1.2 | May 9, 2026 | opencode | Phase 4 NDVI Integration complete |

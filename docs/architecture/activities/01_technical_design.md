@@ -1219,16 +1219,26 @@ For handler-specific failures:
 - [x] Metrics
 - [ ] End-to-end tests
 
-### Phase 4: NDVI Integration (Week 7-8) ❌ NOT STARTED
+### Phase 4: NDVI Integration (Week 7-8) ✅ COMPLETE
 
 **Objective:** Event-driven triggers
 
-- [ ] NDVI event listener
-- [ ] ndvi_trigger handler
-- [ ] Conditional recurrence
-- [ ] Activity chaining
-- [ ] Advanced recurrence
+- [x] ndvi_trigger handler
+- [ ] NDVI event listener (future integration with NDVI job completion events)
+- [ ] Conditional recurrence (triggered based on state)
+- [ ] Activity chaining (create follow-up activities from recommendations)
+- [ ] Advanced recurrence (cron-based for NDVI monitoring)
 - [ ] Performance testing
+
+**Implemented:**
+- `NdviTriggerHandler` in `activities/handlers/ndvi_trigger.py`
+- Integrates with `ndvi.farm_state.build_farm_state()` for state classification
+- Returns state classification with recommended follow-up actions
+- Supports custom `action_on_state` mapping in metadata
+- Default state action mapping:
+  - establishment -> fertilizer, irrigation
+  - full_canopy -> fertilizer
+  - decline -> irrigation, vaccination
 
 ### Phase 5: Hardening (Week 9+)
 

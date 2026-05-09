@@ -34,6 +34,7 @@ def _import_handlers() -> None:
     from . import (  # noqa: F401
         fertilizer,
         irrigation,
+        ndvi_trigger,
         vaccination,
     )
 
