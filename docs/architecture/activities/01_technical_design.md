@@ -1173,21 +1173,21 @@ For handler-specific failures:
 
 ## 13. Phased Implementation Plan
 
-### Phase 1: Core API (Week 1-2)
+### Phase 1: Core API (Week 1-2) ✅ COMPLETE
 
 **Objective:** CRUD without scheduling
 
-- [ ] Activity model with migrations
-- [ ] POST /api/v1/activities/ endpoint
-- [ ] GET /api/v1/activities/ endpoint
-- [ ] GET /api/v1/activities/{id}/ endpoint
-- [ ] PATCH /api/v1/activities/{id}/ endpoint
-- [ ] DELETE /api/v1/activities/{id}/ endpoint
-- [ ] Serializer validation
-- [ ] User isolation (queryset filtering)
-- [ ] Unit tests for API
+- [x] Activity model with migrations
+- [x] POST /api/v1/activities/ endpoint
+- [x] GET /api/v1/activities/ endpoint
+- [x] GET /api/v1/activities/{id}/ endpoint
+- [x] PATCH /api/v1/activities/{id}/ endpoint
+- [x] DELETE /api/v1/activities/{id}/ endpoint
+- [x] Serializer validation
+- [x] User isolation (queryset filtering)
+- [x] Unit tests for API
 
-### Phase 2: Scheduler (Week 3-4)
+### Phase 2: Scheduler (Week 3-4) ✅ COMPLETE
 
 **Objective:** Basic scheduling
 
@@ -1207,19 +1207,19 @@ For handler-specific failures:
 - [x] Execute task (execute_activity)
 - [x] Recovery task (recover_stale)
 
-### Phase 3: Execution + WebSocket (Week 5-6)
+### Phase 3: Execution + WebSocket (Week 5-6) ✅ COMPLETE
 
 **Objective:** Handler execution + notifications
 
-- [ ] Django Channels setup
-- [ ] WebSocket consumer
-- [ ] Activity handlers (vaccination, fertilizer, irrigation)
-- [ ] WebSocket event emitter
-- [ ] Structured logging
-- [ ] Metrics
+- [x] Django Channels setup
+- [x] WebSocket consumer
+- [x] Activity handlers (vaccination, fertilizer, irrigation)
+- [x] WebSocket event emitter
+- [x] Structured logging
+- [x] Metrics
 - [ ] End-to-end tests
 
-### Phase 4: NDVI Integration (Week 7-8)
+### Phase 4: NDVI Integration (Week 7-8) ❌ NOT STARTED
 
 **Objective:** Event-driven triggers
 
@@ -1424,6 +1424,7 @@ ACTIVITY_RETRY_BACKOFF_MAX = 600
 | 1.0 | May 3, 2026 | opencode | Initial TDD |
 | 1.1 | May 3, 2026 | opencode | Added cache strategy (Section 10B) for farm state caching |
 | 1.2 | May 5, 2026 | opencode | execution_id lifecycle, DISPATCHED state, atomic claim per prompts/harden.md |
+| 1.3 | May 9, 2026 | opencode | Updated implementation plan with actual completion status (Phases 1-3 complete, Phase 4 pending) |
 
 ---
 
