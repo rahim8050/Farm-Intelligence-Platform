@@ -44,7 +44,7 @@ All successful JSON responses use the project envelope produced by
 `config.api.responses.success_response`:
 
 ```json
-{ "success": 0, "message": "string", "data": {}, "errors": null }
+{ "status": 0, "message": "string", "data": {}, "errors": null }
 ```
 
 | Method | Path | Auth | Purpose | Key params |
@@ -95,7 +95,7 @@ Response:
 
 ```json
 {
-  "success": 0,
+  "status": 0,
   "message": "OK",
   "data": {
     "id": 1,
@@ -137,7 +137,7 @@ Response:
 
 ```json
 {
-  "success": 0,
+  "status": 0,
   "message": "OK",
   "data": [
     {
