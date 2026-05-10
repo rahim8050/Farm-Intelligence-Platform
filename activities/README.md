@@ -44,16 +44,20 @@ All successful JSON responses use the project envelope produced by
 `config.api.responses.success_response`:
 
 ```json
-{ "status": 0, "message": "string", "data": {}, "errors": null }
+{ "success": 0, "message": "string", "data": {}, "errors": null }
 ```
 
 | Method | Path | Auth | Purpose | Key params |
 |--------|------|------|--------|------------|
-| GET | `/api/v1/activities/` | JWT or `X-API-Key` | List activities (owner-scoped) | none |
-| POST | `/api/v1/activities/` | JWT or `X-API-Key` | Create an activity | body: `type`, `scheduled_at`, optional `recurrence_type`, `interval_days`, `farm`, `metadata` |
-| GET | `/api/v1/activities/<id>/` | JWT or `X-API-Key` | Retrieve an activity | path: `id` |
-| PATCH | `/api/v1/activities/<id>/` | JWT or `X-API-Key` | Update an activity | path: `id` |
-| DELETE | `/api/v1/activities/<id>/` | JWT or `X-API-Key` | Delete an activity | path: `id` |
+| GET | `/api/v1/activities/` | JWT, API key, or Integration JWT | List activities (owner/integration-scoped) | none |
+| POST | `/api/v1/activities/` | JWT, API key, or Integration JWT | Create an activity | body: `type`, `scheduled_at`, optional `recurrence_type`, `interval_days`, `farm`, `metadata` |
+| GET | `/api/v1/activities/<id>/` | JWT, API key, or Integration JWT | Retrieve an activity | path: `id` |
+| PATCH | `/api/v1/activities/<id>/` | JWT, API key, or Integration JWT | Update an activity | path: `id` |
+| DELETE | `/api/v1/activities/<id>/` | JWT, API key, or Integration JWT | Delete an activity | path: `id` |
+
+**Integration JWT scope requirements:**
+- GET requests require `read`, `write`, or `admin` scope
+- POST/PATCH/DELETE require `write` or `admin` scope
 
 ### Activity Types
 
@@ -91,7 +95,7 @@ Response:
 
 ```json
 {
-  "status": 0,
+  "success": 0,
   "message": "OK",
   "data": {
     "id": 1,
@@ -133,7 +137,7 @@ Response:
 
 ```json
 {
-  "status": 0,
+  "success": 0,
   "message": "OK",
   "data": [
     {
@@ -155,8 +159,10 @@ Response:
 
 ## AuthZ / permissions
 
-- Authentication: DRF defaults (JWT or API key)
-- Permissions: `IsAuthenticated` (from code: `activities/views.py`)
+- Authentication: API key, user JWT, or integration JWT (`FarmObservationAuthentication`)
+- Permissions: `IsAuthenticated` with owner/integration scoping
+- Integration scope enforcement: `read` scope for GET, `write` scope for POST/PATCH/DELETE
+- Integration access: allow-listed per farm via `FarmIntegrationAccess`
 
 ## Settings / env vars
 
@@ -164,13 +170,17 @@ None specific to this app.
 
 ## Background jobs
 
-- Phase 2: Celery Beat poll task (scheduled in phase 2)
-- Phase 2: Redis lock implementation (scheduled in phase 2)
-- Phase 3: Handler execution via Celery worker
+- `poll_activities`: Celery Beat task (every minute) for batch activity polling
+- `execute_activity`: Celery worker task (5min timeout) for handler execution
+- `recover_stale_activities`: Recovery task (every 5 min) for stuck activities
+- WebSocket notifications via Django Channels (`ActivityConsumer`)
 
 ## Metrics / monitoring
 
-None emitted directly by this app (phase 3+).
+Prometheus metrics (from `activities/metrics.py`):
+- `activities_dispatched`: Counter for dispatched activities
+- `activity_duration_seconds`: Histogram for execution duration
+- `activities_active`: Gauge for currently running activities
 
 ## Testing
 
@@ -182,9 +192,9 @@ None emitted directly by this app (phase 3+).
 | Phase | Focus | Status |
 |-------|-------|--------|
 | Phase 1 | Core API | ✅ Complete |
-| Phase 2 | Scheduler + Redis locks | Pending |
-| Phase 3 | Worker + WebSocket | Pending |
-| Phase 4 | NDVI Integration | Pending |
-| Phase 5 | Production hardening | Pending |
+| Phase 2 | Scheduler + Redis locks | ✅ Complete |
+| Phase 3 | Worker + WebSocket | ✅ Complete |
+| Phase 4 | NDVI Integration | ✅ Complete |
+| Phase 5 | Production hardening | ✅ Complete |
 
 See: `docs/architecture/activities/01_technical_design.md` for full design.
