@@ -2,14 +2,19 @@
 
 This module provides CRUD operations for Activity resources.
 
-Auth: IsAuthenticated (permission_classes enforced on ViewSet)
+Auth: API key, user JWT, or integration JWT (FarmObservationAuthentication).
+Integration access: allow-listed per farm via FarmIntegrationAccess.
+Integration scope: read for GET, write for POST/PATCH/DELETE.
 Response: All responses use success_response envelope.
 """
+
+from __future__ import annotations
 
 from typing import Any
 
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status, viewsets
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -20,6 +25,8 @@ from activities.serializers import (
     ActivitySerializer,
 )
 from config.api.responses import success_response
+from farms.authentication import FarmObservationAuthentication
+from integrations.authentication import IntegrationTokenUser
 
 
 class _ActivityListSerializer(serializers.Serializer):
@@ -68,16 +75,82 @@ NullEnvelope = inline_serializer(
 class ActivityViewSet(viewsets.ModelViewSet):
     """Activity CRUD operations.
 
-    Auth: IsAuthenticated
+    Auth: API key, user JWT, or integration JWT.
+    Permissions: IsAuthenticated; owner-only for user/API key requests.
+    Integration access: allow-listed per farm via FarmIntegrationAccess.
+    Integration scope: read for GET, write for POST/PATCH/DELETE.
     Response: envelope with `data` = ActivitySerializer output.
     """
 
     serializer_class = ActivitySerializer
-    permission_classes = [IsAuthenticated]
+    authentication_classes = (FarmObservationAuthentication,)
+    permission_classes = (IsAuthenticated,)
+
+    def _integration_scopes(self, request: Request) -> set[str]:
+        auth_obj: Any = getattr(request, "auth", None)
+
+        def _claim(key: str) -> str:
+            if isinstance(auth_obj, dict):
+                return str(auth_obj.get(key, "") or "")
+            getter = getattr(auth_obj, "get", None)
+            if callable(getter):
+                try:
+                    value = getter(key)
+                except Exception:
+                    value = None
+                else:
+                    if value is not None:
+                        return str(value or "")
+            try:
+                return str(auth_obj[key] or "")
+            except Exception:
+                return ""
+
+        scope = _claim("scope")
+        if not scope:
+            return set()
+        normalized = scope.replace(",", " ")
+        return {item for item in normalized.split() if item}
+
+    def _enforce_integration_scope(
+        self, request: Request, *, write: bool
+    ) -> None:
+        if not isinstance(request.user, IntegrationTokenUser):
+            return
+
+        scopes = self._integration_scopes(request)
+        if not scopes:
+            raise PermissionDenied("Integration token scope missing.")
+
+        read_scopes = {"read", "write", "admin"}
+        write_scopes = {"write", "admin"}
+        allowed = write_scopes if write else read_scopes
+        if not scopes.intersection(allowed):
+            raise PermissionDenied("Integration token scope not permitted.")
 
     def get_queryset(self) -> Any:
         user = self.request.user
-        return Activity.objects.filter(owner=user).select_related("farm")
+
+        if isinstance(user, IntegrationTokenUser):
+            return (
+                Activity.objects.filter(
+                    farm__is_active=True,
+                    farm__integration_access__client_id=user.client_id,
+                    farm__integration_access__is_active=True,
+                )
+                .select_related("farm", "owner")
+                .order_by("-next_due_at")
+            )
+
+        user_id = getattr(user, "id", None)
+        if user_id is None:
+            return Activity.objects.none()
+
+        return (
+            Activity.objects.filter(owner_id=user_id)
+            .select_related("farm")
+            .order_by("-next_due_at")
+        )
 
     @extend_schema(
         responses={200: ActivityListEnvelope},
@@ -85,10 +158,14 @@ class ActivityViewSet(viewsets.ModelViewSet):
     def list(
         self, request: Request, *args: object, **kwargs: object
     ) -> Response:
-        """List user's activities.
+        """List activities.
 
-        Returns all activities owned by the authenticated user.
+        Returns all activities accessible to the authenticated user.
+        Integration tokens require 'read' scope.
         """
+        if isinstance(request.user, IntegrationTokenUser):
+            self._enforce_integration_scope(request, write=False)
+
         queryset = self.filter_queryset(self.get_queryset())
         serializer = self.get_serializer(queryset, many=True)
         return success_response(list(serializer.data))
@@ -102,7 +179,11 @@ class ActivityViewSet(viewsets.ModelViewSet):
         """Retrieve a single activity by ID.
 
         Returns activity details for the authenticated user.
+        Integration tokens require 'read' scope.
         """
+        if isinstance(request.user, IntegrationTokenUser):
+            self._enforce_integration_scope(request, write=False)
+
         instance = self.get_object()
         serializer = self.get_serializer(instance)
         return success_response(serializer.data)
@@ -119,7 +200,11 @@ class ActivityViewSet(viewsets.ModelViewSet):
         Input: type, scheduled_at, optional recurrence_type,
                interval_days, farm, metadata.
         Output: Created activity with generated next_due_at.
+        Integration tokens require 'write' scope.
         """
+        if isinstance(request.user, IntegrationTokenUser):
+            self._enforce_integration_scope(request, write=True)
+
         serializer = ActivityCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         activity = serializer.save(owner=request.user)
@@ -139,9 +224,13 @@ class ActivityViewSet(viewsets.ModelViewSet):
 
         Input: Any subset of activity fields.
         Output: Updated activity.
+        Integration tokens require 'write' scope.
         """
+        if isinstance(request.user, IntegrationTokenUser):
+            self._enforce_integration_scope(request, write=True)
+
         instance = self.get_object()
-        serializer = ActivitySerializer(
+        serializer = self.get_serializer(
             instance, data=request.data, partial=True
         )
         serializer.is_valid(raise_exception=True)
@@ -157,7 +246,11 @@ class ActivityViewSet(viewsets.ModelViewSet):
         """Delete an activity.
 
         Output: 204 No Content on success.
+        Integration tokens require 'write' scope.
         """
+        if isinstance(request.user, IntegrationTokenUser):
+            self._enforce_integration_scope(request, write=True)
+
         instance = self.get_object()
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
