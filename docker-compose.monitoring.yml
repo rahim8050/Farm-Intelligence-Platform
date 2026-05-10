@@ -92,7 +92,7 @@ services:
     volumes:
       - ./monitoring/loki/loki.yml:/etc/loki/config.yml:ro
     ports:
-      - "127.0.0.1:3100:3100"
+      - "127.0.0.1:3101:3100"
 
   promtail:
     image: grafana/promtail:latest

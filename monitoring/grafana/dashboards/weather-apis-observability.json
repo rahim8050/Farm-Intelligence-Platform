@@ -995,7 +995,7 @@
       },
       "targets": [
         {
-          "expr": "ndvi_circuit_breaker_state{engine=\"stac\"}",
+          "expr": "max by (engine) (ndvi_circuit_breaker_state{engine=\"stac\"})",
           "legendFormat": "{{engine}}",
           "refId": "A"
         }
@@ -1045,15 +1045,15 @@
           "calcs": ["lastNotNull"],
           "fields": ""
         },
-        "orientation": "horizontal",
-        "textMode": "auto",
+        "orientation": "vertical",
+        "textMode": "value",
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto"
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 12,
         "x": 0,
         "y": 48
       }
@@ -1068,7 +1068,7 @@
       },
       "targets": [
         {
-          "expr": "ndvi_circuit_breaker_state{engine=\"sentinelhub\"}",
+          "expr": "max by (engine) (ndvi_circuit_breaker_state{engine=\"sentinelhub\"})",
           "legendFormat": "{{engine}}",
           "refId": "A"
         }
@@ -1118,17 +1118,17 @@
           "calcs": ["lastNotNull"],
           "fields": ""
         },
-        "orientation": "horizontal",
-        "textMode": "auto",
+        "orientation": "vertical",
+        "textMode": "value",
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto"
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 48
+        "w": 12,
+        "x": 0,
+        "y": 52
       }
     },
     {
@@ -1141,7 +1141,7 @@
       },
       "targets": [
         {
-          "expr": "ndvi_circuit_breaker_state{engine=\"sentinelhub_raster\"}",
+          "expr": "max by (engine) (ndvi_circuit_breaker_state{engine=\"sentinelhub_raster\"})",
           "legendFormat": "{{engine}}",
           "refId": "A"
         }
@@ -1191,17 +1191,17 @@
           "calcs": ["lastNotNull"],
           "fields": ""
         },
-        "orientation": "horizontal",
-        "textMode": "auto",
+        "orientation": "vertical",
+        "textMode": "value",
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto"
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 48
+        "w": 12,
+        "x": 0,
+        "y": 56
       }
     },
     {

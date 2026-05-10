@@ -57,6 +57,9 @@ def test_worker_metrics_server_starts_once() -> None:
         patch("django.conf.settings.NDVI_CELERY_METRICS_PORT", 8003),
         patch("config.celery.CollectorRegistry") as mock_registry,
         patch("config.celery.MultiProcessCollector") as mock_mp_collector,
+        patch(
+            "config.celery.CeleryMetricsCollector"
+        ) as mock_metrics_collector,
         patch("config.celery.start_http_server") as mock_start_http_server,
     ):
         celery_config._start_metrics_server()
@@ -73,6 +76,9 @@ def test_worker_metrics_server_starts_once() -> None:
     assert os.environ["PROMETHEUS_MULTIPROC_DIR"] == expected_dir
     mock_registry.assert_called_once_with()
     mock_mp_collector.assert_called_once_with(mock_registry.return_value)
+    mock_registry.return_value.register.assert_called_once_with(
+        mock_metrics_collector.return_value
+    )
     mock_start_http_server.assert_called_once_with(
         8003, registry=mock_registry.return_value
     )

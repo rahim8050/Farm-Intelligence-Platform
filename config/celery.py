@@ -56,7 +56,10 @@ app.conf.update(
     task_acks_late=True,  # Ack after task completion
 )
 
-from .celery_metrics import register_celery_metrics  # noqa: E402
+from .celery_metrics import (  # noqa: E402
+    CeleryMetricsCollector,
+    register_celery_metrics,
+)
 
 register_celery_metrics(register_collector=False, register_signals=True)
 
@@ -75,6 +78,7 @@ def _start_metrics_server() -> None:
 
     registry = CollectorRegistry()
     MultiProcessCollector(registry)
+    registry.register(CeleryMetricsCollector())
     start_http_server(metrics_port, registry=registry)
     _metrics_server_started = True
     logger.info("NDVI celery metrics available on :%s", metrics_port)
