@@ -195,6 +195,6 @@ Prometheus metrics (from `activities/metrics.py`):
 | Phase 2 | Scheduler + Redis locks | ✅ Complete |
 | Phase 3 | Worker + WebSocket | ✅ Complete |
 | Phase 4 | NDVI Integration | ✅ Complete |
-| Phase 5 | Production hardening | ✅ Complete |
+| Phase 5 | Production hardening | 🟡 Partial (circuit breaker ✅, dead letter ❌, load testing ❌) |
 
 See: `docs/architecture/activities/01_technical_design.md` for full design.
