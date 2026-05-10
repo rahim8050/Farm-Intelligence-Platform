@@ -776,7 +776,7 @@ class TestActivityAPI(TestCase):
     def test_activity_unauthorized(self) -> None:
         self.client.logout()
         response = self.client.get("/api/v1/activities/")
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 @pytest.mark.django_db
