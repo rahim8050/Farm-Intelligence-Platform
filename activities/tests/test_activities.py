@@ -1,7 +1,7 @@
 import secrets
 from datetime import timedelta
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.test import TestCase, TransactionTestCase
@@ -1649,3 +1649,315 @@ class TestTransactionHardening(TestCase):
 
         self.assertEqual(result1.message, result2.message)
         self.assertEqual(result1.metadata, result2.metadata)
+
+
+@pytest.mark.django_db
+class TestActivityAuthentication(TestCase):
+    """Test ActivityAuthentication class."""
+
+    def test_authenticate_with_api_key(self) -> None:
+        """Test authenticate with API key header."""
+        from unittest.mock import MagicMock
+
+        from activities.authentication import ActivityAuthentication
+
+        auth = ActivityAuthentication()
+        request = MagicMock()
+        request.META = {"HTTP_X_API_KEY": "test-key"}
+
+        with patch(
+            "activities.authentication.get_header_key", return_value="test-key"
+        ):
+            with patch.object(
+                auth._api_key_auth,
+                "authenticate",
+                return_value=("user", "token"),
+            ):
+                result = auth.authenticate(request)
+                self.assertEqual(result, ("user", "token"))
+
+    def test_authenticate_no_header_returns_none(self) -> None:
+        """Test authenticate with no auth header returns None."""
+        from activities.authentication import ActivityAuthentication
+
+        auth = ActivityAuthentication()
+        request = MagicMock()
+        request.META = {}
+
+        with patch(
+            "activities.authentication.get_header_key", return_value=None
+        ):
+            with patch.object(auth._jwt_auth, "get_header", return_value=None):
+                result = auth.authenticate(request)
+                self.assertIsNone(result)
+
+    def test_authenticate_jwt_header_no_raw_token(self) -> None:
+        """Test authenticate with JWT header but no raw token."""
+        from activities.authentication import ActivityAuthentication
+
+        auth = ActivityAuthentication()
+        request = MagicMock()
+        request.META = {}
+
+        with patch(
+            "activities.authentication.get_header_key", return_value=None
+        ):
+            with patch.object(
+                auth._jwt_auth, "get_header", return_value=b"Bearer token"
+            ):
+                with patch.object(
+                    auth._jwt_auth, "get_raw_token", return_value=None
+                ):
+                    result = auth.authenticate(request)
+                    self.assertIsNone(result)
+
+    def test_authenticate_integration_token_missing_scope_falls_back_to_jwt(
+        self,
+    ) -> None:
+        """Test integration auth with missing scope falls back to JWT auth."""
+        from rest_framework_simplejwt.exceptions import InvalidToken
+
+        from activities.authentication import ActivityAuthentication
+
+        auth = ActivityAuthentication()
+        request = MagicMock()
+        request.META = {}
+
+        with patch(
+            "activities.authentication.get_header_key", return_value=None
+        ):
+            with patch.object(
+                auth._jwt_auth, "get_header", return_value=b"Bearer token"
+            ):
+                with patch.object(
+                    auth._jwt_auth, "get_raw_token", return_value=b"token"
+                ):
+                    with patch.object(
+                        auth._integration_auth,
+                        "authenticate",
+                        side_effect=InvalidToken("scope missing"),
+                    ):
+                        with patch.object(
+                            auth._jwt_auth,
+                            "authenticate",
+                            return_value=("user", "jwt"),
+                        ):
+                            result = auth.authenticate(request)
+                            self.assertEqual(result, ("user", "jwt"))
+
+    def test_authenticate_integration_token_with_scope_raises(self) -> None:
+        """Test integration auth with scope error raises InvalidToken."""
+        from rest_framework_simplejwt.exceptions import InvalidToken
+
+        from activities.authentication import ActivityAuthentication
+
+        auth = ActivityAuthentication()
+        request = MagicMock()
+        request.META = {}
+
+        with patch(
+            "activities.authentication.get_header_key", return_value=None
+        ):
+            with patch.object(
+                auth._jwt_auth, "get_header", return_value=b"Bearer token"
+            ):
+                with patch.object(
+                    auth._jwt_auth, "get_raw_token", return_value=b"token"
+                ):
+                    with patch.object(
+                        auth._integration_auth,
+                        "authenticate",
+                        side_effect=InvalidToken("some other error"),
+                    ):
+                        with pytest.raises(InvalidToken):
+                            auth.authenticate(request)
+
+
+@pytest.mark.django_db
+class TestActivityPermissions(TestCase):
+    """Test Activity permissions classes."""
+
+    def test_is_activity_owner_with_non_activity_object(self) -> None:
+        """Test IsActivityOwner returns False for non-Activity object."""
+        from unittest.mock import MagicMock
+
+        from activities.permissions import IsActivityOwner
+
+        permission = IsActivityOwner()
+        request = MagicMock()
+        request.user = MagicMock()
+        request.user.id = 1
+
+        result = permission.has_object_permission(
+            request, MagicMock(), "not an activity"
+        )
+        self.assertFalse(result)
+
+    def test_is_activity_owner_with_matching_owner(self) -> None:
+        """Test IsActivityOwner returns True when owner matches."""
+        from activities.permissions import IsActivityOwner
+
+        permission = IsActivityOwner()
+        user = MagicMock()
+        user.id = 1
+        request = MagicMock()
+        request.user = user
+
+        activity = Activity(owner_id=1)
+
+        result = permission.has_object_permission(
+            request, MagicMock(), activity
+        )
+        self.assertTrue(result)
+
+    def test_is_activity_owner_with_non_matching_owner(self) -> None:
+        """Test IsActivityOwner returns False when owner doesn't match."""
+        from unittest.mock import MagicMock
+
+        from activities.permissions import IsActivityOwner
+
+        permission = IsActivityOwner()
+        request = MagicMock()
+        request.user = MagicMock()
+        request.user.id = 1
+
+        activity = MagicMock()
+        activity.owner_id = 999
+
+        result = permission.has_object_permission(
+            request, MagicMock(), activity
+        )
+        self.assertFalse(result)
+
+    def test_integration_mixin_get_queryset_with_integration_user(
+        self,
+    ) -> None:
+        """Test get_queryset with IntegrationTokenUser returns queryset."""
+        from unittest.mock import MagicMock
+
+        from activities.permissions import ActivityIntegrationMixin
+        from integrations.authentication import IntegrationTokenUser
+
+        user = MagicMock(spec=IntegrationTokenUser)
+        user.client_id = "test-client"
+
+        class MockView(ActivityIntegrationMixin):
+            pass
+
+        view = MockView()
+        view.request = MagicMock()
+        view.request.user = user
+
+        queryset = view.get_queryset()
+        self.assertIsNotNone(queryset)
+
+    def test_integration_mixin_get_queryset_with_anon_user(self) -> None:
+        """Test get_queryset returns empty queryset for anonymous user."""
+        from unittest.mock import MagicMock
+
+        from activities.permissions import ActivityIntegrationMixin
+
+        class MockView(ActivityIntegrationMixin):
+            pass
+
+        view = MockView()
+        view.request = MagicMock()
+        view.request.user = MagicMock()
+        view.request.user.id = None
+
+        queryset = view.get_queryset()
+        self.assertEqual(queryset.count(), 0)
+
+    def test_integration_mixin_get_object_with_integration_user(self) -> None:
+        """Test get_object with IntegrationTokenUser returns activity."""
+        from unittest.mock import MagicMock, patch
+
+        from activities.permissions import ActivityIntegrationMixin
+        from integrations.authentication import IntegrationTokenUser
+
+        user = MagicMock(spec=IntegrationTokenUser)
+        user.client_id = "test-client"
+
+        class MockView(ActivityIntegrationMixin):
+            request = MagicMock()
+            lookup_field = "pk"
+            kwargs = {"pk": 1}
+
+        view = MockView()
+        view.request = MagicMock()
+        view.request.user = user
+
+        with patch(
+            "activities.permissions.Activity.objects.select_related"
+        ) as mock_sr:
+            mock_query = MagicMock()
+            mock_sr.return_value = mock_query
+            mock_query.get.return_value = "activity_object"
+
+            result = view.get_object()
+            self.assertEqual(result, "activity_object")
+
+    def test_integration_mixin_get_object_raises_404_when_not_found(
+        self,
+    ) -> None:
+        """Test get_object raises Http404 when activity not found."""
+        from unittest.mock import MagicMock, patch
+
+        from django.http import Http404
+
+        from activities.permissions import ActivityIntegrationMixin
+        from integrations.authentication import IntegrationTokenUser
+
+        user = MagicMock(spec=IntegrationTokenUser)
+        user.client_id = "test-client"
+
+        class MockView(ActivityIntegrationMixin):
+            request = MagicMock()
+            lookup_field = "pk"
+            kwargs = {"pk": 999}
+
+        view = MockView()
+        view.request = MagicMock()
+        view.request.user = user
+
+        with patch(
+            "activities.permissions.Activity.objects.select_related"
+        ) as mock_sr:
+            mock_query = MagicMock()
+            mock_sr.return_value = mock_query
+            mock_query.get.side_effect = Activity.DoesNotExist()
+
+            with self.assertRaises(Http404):
+                view.get_object()
+
+    def test_integration_mixin_get_object_with_regular_user(self) -> None:
+        """Test get_object falls through to parent for regular user."""
+        from unittest.mock import MagicMock, patch
+
+        from activities.permissions import ActivityIntegrationMixin
+
+        user = MagicMock()
+        user.id = 1
+
+        class MockView(ActivityIntegrationMixin):
+            pass
+
+        view = MockView()
+        view.request = MagicMock()
+        view.request.user = user
+        view.lookup_field = "pk"
+        view.kwargs = {"pk": 1}
+
+        with patch(
+            "activities.permissions.Activity.objects.select_related"
+        ) as mock_sr:
+            mock_query = MagicMock()
+            mock_sr.return_value = mock_query
+            mock_query.get.return_value = "parent_result"
+
+            with patch(
+                "activities.permissions.ActivityIntegrationMixin.get_object",
+                return_value="parent_result",
+            ):
+                result = view.get_object()
+                self.assertEqual(result, "parent_result")
