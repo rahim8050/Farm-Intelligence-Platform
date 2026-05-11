@@ -13,7 +13,7 @@ first-party API keys (`X-API-Key`) for service-to-service calls.
   (`/api/v1/auth/`)
 - API keys: create/list/revoke/rotate (JWT-only) (`/api/v1/keys/`)
 - Farms: CRUD for user-owned farms (`/api/v1/farms/`)
-- Activities: scheduled and event-triggered farm operations (`/api/v1/activities/`)
+- Activities: scheduled and event-triggered farm operations ([README](activities/README.md), `/api/v1/activities/`)
 - NDVI: timeseries/latest, raster retrieval and queueing, job status (`/api/v1/…/ndvi/`)
 - Weather: current/daily/weekly with provider selection (`/api/v1/weather/…`)
 - Farm weather: current/hourly/daily by farm id (`/api/v1/farms/<id>/weather/…`)
