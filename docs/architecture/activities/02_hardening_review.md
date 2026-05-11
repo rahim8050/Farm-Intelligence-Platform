@@ -1,17 +1,17 @@
 # Production Hardening Review: Activity Scheduling Engine
 
-**Review Date:** May 3, 2026  
-**Reviewer:** opencode  
+**Review Date:** May 11, 2026  
+**Reviewer:** codex  
 **System:** Activity Scheduling + Notification Engine  
-**TDD Version:** 1.0
+**TDD Version:** 1.1
 
 ---
 
 ## Executive Summary
 
-This review identifies **critical hardening issues** in the TDD that must be addressed before production deployment. The original TDD is missing several distributed systems safeguards that will cause failures in production.
+This review documents the distributed systems gaps that were identified during implementation and the remaining hardening items that are still open.
 
-**OVERALL RISK: HIGH** - Multiple critical gaps identified.
+**OVERALL RISK: MEDIUM** - The core scheduler/worker path is implemented, but a few production-hardening items remain open.
 
 ---
 
@@ -30,9 +30,7 @@ Worker: do work → release_activity_lock(id)
 
 **Impact:** Duplicate execution possible.
 
-**Fix Required:** Use **single-phase locking** - either:
-- **Option A:** Acquire AND release in scheduler (stateless worker)
-- **Option B:** Acquire AND release in worker (ignore scheduler lock)
+**Status:** Fixed in code via atomic claim + worker execution ID validation.
 
 ### Issue 1.2: Check-Then-Act Race in Worker
 
@@ -48,29 +46,13 @@ if activity.status == RUNNING:
 
 **Problem:** Between check and save, another worker can read PENDING and also start.
 
-**Fix Required:** Use **atomic update with status check**:
-```python
-updated = Activity.objects.filter(
-    id=activity_id,
-    status=Activity.Status.PENDING
-).update(status=Activity.Status.RUNNING)
-
-if not updated:
-    return {"status": " contention}
-```
+**Status:** Fixed in code with atomic transitions in `activities/services.py`.
 
 ### Issue 1.3: Multiple Scheduler Instances
 
 **MEDIUM** - If multiple Celery Beat instances run, they will poll the same activities.
 
-**Fix Required:** Add **scheduler leader election** using Redis:
-```python
-# Only one scheduler should poll
-SCHEDULER_LOCK = "activities:scheduler:lock"
-
-def is_scheduler_leader():
-    return redis_client.set(SCHEDULER_LOCK, hostname, nx=True, ex=60)
-```
+**Status:** Not implemented. The deployment should run a single Celery Beat instance or add explicit leader election if multiple schedulers are introduced.
 
 ---
 
@@ -80,41 +62,19 @@ def is_scheduler_leader():
 
 **CRITICAL** - The TDD has no execution timeout. A handler that hangs will leave activity in RUNNING forever.
 
-**Fix Required:** Add **timeout enforcement**:
-```python
-# Celery task timeout
-@app.task(bind=True, time_limit=300, soft_time_limit=270)
-def dispatch_activity(self, activity_id: int):
-    # If exceeds 5 minutes, task is killed
-    # Must have separate recovery mechanism
-```
+**Status:** Fixed in code. `activities.execute` uses `time_limit=300` and `soft_time_limit=270`.
 
 ### Issue 2.2: Recovery Task Missing
 
 **MEDIUM** - Section 12.2 mentions stale recovery but doesn't schedule it.
 
-**Fix Required:** Add Celery Beat schedule:
-```python
-# Add to Celery Beat schedule
-CELERY_BEAT_SCHEDULE = {
-    "recover-stale-activities": {
-        "task": "activities.recover_stale",
-        "schedule": 300.0,  # Every 5 minutes
-    },
-}
-```
+**Status:** Fixed in code. `activities.recover_stale` is scheduled through Celery Beat.
 
 ### Issue 2.3: Lost Activity Detection
 
 **MEDIUM** - `updated_at` only tracks DB update, not execution start.
 
-**Fix Required:** Add **execution_started_at** field:
-```python
-execution_started_at = models.DateTimeField(null=True, blank=True)
-
-# Recovery check
-STALE_THRESHOLD = timedelta(minutes=5)  # Much shorter!
-```
+**Status:** Fixed in code. `execution_started_at` and `execution_completed_at` exist on the model.
 
 ---
 
@@ -132,33 +92,13 @@ async def emit_activity_event(user_id: int, event: dict):
 
 **Problem:** User offline = notification lost forever.
 
-**Fix Required:** Implement **notification store-and-forward**:
-```python
-# Store in DB
-class ActivityNotification(models.Model):
-    user_id = models.IntegerField()
-    activity_id = models.IntegerField()
-    payload = models.JSONField()
-    delivered = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-# On connect, deliver pending
-# On ack, mark delivered
-```
+**Status:** Open. WebSocket notifications are still best-effort; delivery is not persisted.
 
 ### Issue 3.2: No Acknowledgment Protocol
 
 **MEDIUM** - No way to know if client received notification.
 
-**Fix Required:** Add **message acknowledged** field:
-```python
-{
-    "type": "activity_event",
-    "event": {...},
-    "message_id": "uuid",
-    "ack_required": True
-}
-```
+**Status:** Open. No acknowledgment protocol is implemented.
 
 ---
 
@@ -168,41 +108,19 @@ class ActivityNotification(models.Model):
 
 **HIGH** - DONE activities accumulate forever.
 
-**Fix Required:** Add **auto-cleanup**:
-```python
-# Celery Beat task to archive old activities
-class ActivityArchiveTask:
-    run_every = 86400  # Daily
-    
-    def run(self):
-        # Archive DONE activities older than 90 days
-        Activity.objects.filter(
-            status=Activity.Status.DONE,
-            updated_at__lt=now() - timedelta(days=90)
-        ).update(archived=True)
-```
+**Status:** Open. Completed activity cleanup/archiving is not implemented.
 
 ### Issue 4.2: No Pagination in Schedule Query
 
 **MEDIUM** - The scheduler query has no ORDER BY or LIMIT guarantees.
 
-**Fix Required:** Add deterministic ordering:
-```python
-due_activities = Activity.objects.filter(
-    status=Activity.Status.PENDING,
-    next_due_at__lte=timezone.now()
-).order_by("next_due_at", "id")[:batch_size]
-```
+**Status:** Fixed in code. The scheduler orders by `next_due_at` and batches results.
 
 ### Issue 4.3: Recurring Activities Grow Unbounded
 
 **MEDIUM** - Daily recurring activity = 365 rows/year.
 
-**Fix Required:** Consider **activity consolidation**:
-```python
-# Keep only next N occurrences
-# Or use virtual recurrence (compute on read)
-```
+**Status:** Open. Recurring activities still create persisted rows for future occurrences.
 
 ---
 
@@ -214,27 +132,7 @@ due_activities = Activity.objects.filter(
 
 **Problem:** `scope["user"]` comes from sessions, not JWT.
 
-**Fix Required:** Implement **JWT WebSocket auth**:
-```python
-# activities/middleware.py
-class JWTAuthMiddleware:
-    async def __init__(self, app):
-        self.app = app
-    
-    async def __call__(self, scope, receive, send):
-        # Extract token from query string
-        query = dict.parse_qs(scope.get("query_string", b""))
-        token = query.get(b"token", [b""])[0]
-        
-        # Validate JWT
-        user = await validate_jwt(token)
-        if not user:
-            await self.close_connection(send, 401)
-            return
-        
-        scope["user"] = user
-        return await self.app(scope, receive, send)
-```
+**Status:** Partial. WebSocket auth uses the existing Channels middleware stack rather than a custom JWT WebSocket middleware.
 
 ### Issue 5.2: No Subscription Validation
 
@@ -246,16 +144,7 @@ self.group_name = f"user_{self.user.id}"  # Only own group
 
 **Problem:** Looks OK, but what if scope["user"] is spoofed?
 
-**Fix Required:** Force **explicit subscription**:
-```python
-async def subscribe_activities(self, event):
-    # Client requests: { type: "subscribe", user_id: 123 }
-    # MUST match authenticated user
-    requested = event.get("user_id")
-    if requested != self.user.id:
-        await self.send({"error": "unauthorized"})
-        return
-```
+**Status:** Handled by user-group scoping in the consumer rather than explicit client subscription.
 
 ---
 
@@ -265,48 +154,25 @@ async def subscribe_activities(self, event):
 
 **MEDIUM** - No way to trace activity across scheduler → queue → worker → WebSocket.
 
-**Fix Required:** Add **correlation IDs**:
-```python
-# Generate at scheduler
-correlation_id = uuid.uuid4().hex
-
-# Pass through entire chain
-dispatch_activity.delay(activity_id, correlation_id=correlation_id)
-
-# Include in all logs and events
-logger.info("activity_event", extra={"correlation_id": correlation_id})
-```
+**Status:** Open. Correlation IDs are still not propagated end-to-end.
 
 ### Issue 6.2: No Scheduler Metrics
 
 **MEDIUM** - Only worker metrics defined.
 
-**Fix Required:** Add scheduler metrics:
-```python
-activities_poll_total = Counter("activities_poll_total", "Polls", ["result"])
-activities_due_found = Counter("activities_due_found", "Due activities", ["found"])
-```
+**Status:** Open. Scheduler-specific metrics are not yet implemented.
 
 ### Issue 6.3: No WebSocket Metrics
 
 **MEDIUM** - No visibility into WebSocket health.
 
-**Fix Required:** Add:
-```python
-websocket_connections = Gauge("websocket_active_connections", "Active WS connections")
-websocket_messages_sent = Counter("websocket_messages_sent_total", "Messages sent")
-websocket_messages_acked = Counter("websocket_messages_acked_total", "Acks received")
-```
+**Status:** Open. WebSocket health metrics are not yet implemented.
 
 ### Issue 6.4: No Lock Contention Metrics
 
 **MEDIUM** - Can't see if locks are causing delays.
 
-**Fix Required:** Add:
-```python
-activity_lock_acquired = Counter("activity_lock_acquired_total", "Locks acquired", ["result"])
-activity_lock_wait_seconds = Histogram("activity_lock_wait_seconds", "Lock wait time")
-```
+**Status:** Open. Lock contention metrics are not yet implemented.
 
 ---
 
@@ -323,51 +189,13 @@ Worker A: UPDATE status=RUNNING → succeeds
 Worker B: UPDATE status=RUNNING → also succeeds (same value!)
 ```
 
-**Fix Required:** Use **atomic dispatch**:
-```python
-# In scheduler - single atomic operation
-dispatched = Activity.objects.filter(
-    id=activity_id,
-    status=Activity.Status.PENDING
-).update(
-    status=Activity.Status.RUNNING,
-    execution_started_at=timezone.now()
-)
-
-if not dispatched:
-    return {"status": " contention"}  # Already taken
-```
+**Status:** Fixed in code via atomic claim and execution ID validation.
 
 ### Issue 7.2: Recurrence Race - Double Reschedule
 
 **MEDIUM** - If handler completes while scheduler is also checking.
 
-**Fix Required:** Use **atomic recurrence**:
-```python
-# Create next occurrence AFTER marking current as done
-# Use transaction with select_for_update
-with transaction.atomic():
-    activity = Activity.objects.select_for_update().get(id=activity_id)
-    if activity.status != Activity.Status.RUNNING:
-        return
-    
-    activity.status = Activity.Status.DONE
-    activity.last_executed_at = timezone.now()
-    activity.save()
-    
-    if activity.recurrence_type == Activity.RecurrenceType.INTERVAL:
-        # Create in SAME transaction
-        Activity.objects.create(
-            owner=activity.owner,
-            farm=activity.farm,
-            type=activity.type,
-            scheduled_at=activity.next_due_at,
-            next_due_at=activity.next_due_at + timedelta(days=activity.interval_days),
-            recurrence_type=activity.recurrence_type,
-            interval_days=activity.interval_days,
-            metadata=activity.metadata,
-        )
-```
+**Status:** Open. Recurrence is implemented, but the doc’s original “same transaction” model is not how the current code is structured.
 
 ---
 
@@ -377,68 +205,25 @@ with transaction.atomic():
 
 **HIGH** - API endpoint has no rate limiting.
 
-**Fix Required:** Add throttle:
-```python
-from rest_framework.throttling import UserRateThrottle
-
-class ActivityThrottle(UserRateThrottle):
-    rate = "100/hour"
-```
+**Status:** Open. The app uses the repo’s existing DRF throttling defaults.
 
 ### Issue 8.2: No Input Validation on Metadata
 
 **MEDIUM** - Arbitrary JSON allowed in metadata.
 
-**Fix Required:** Add schema validation:
-```python
-METADATA_SCHEMAS = {
-    "vaccination": {
-        "required": ["cattle_id"],
-        "properties": {"cattle_id": {"type": "integer"}, "vaccine": {"type": "string"}}
-    },
-    # ...
-}
-
-def validate_metadata(activity_type, metadata):
-    schema = METADATA_SCHEMAS.get(activity_type)
-    if not schema:
-        return True  # No schema = allow all
-    
-    # Validate against JSON schema
-    return jsonschema.validate(metadata, schema)
-```
+**Status:** Partial. Metadata is validated by serializers and handler-specific logic, but there is no separate JSON Schema layer.
 
 ### Issue 8.3: No Health Check Endpoint
 
 **MEDIUM** - Can't monitor system health.
 
-**Fix Required:** Add:
-```python
-# /health/activities/
-def health_check(request):
-    # Check Redis connection
-    # Check DB connection
-    # Check scheduler last run
-    return Response({"status": "healthy"})
-```
+**Status:** Open. No dedicated activities health endpoint exists.
 
 ### Issue 8.4: Handler Error Classification Missing
 
 **MEDIUM** - All exceptions treated the same.
 
-**Fix Required:** Add handler exception hierarchy:
-```python
-class HandlerError(Exception):
-    pass
-
-class TemporaryError(HandlerError):
-    """Retryable"""
-    pass
-
-class PermanentError(HandlerError):
-    """Do not retry"""
-    pass
-```
+**Status:** Open. The current handlers raise normal exceptions and rely on the task-level retry policy.
 
 ---
 
@@ -454,7 +239,7 @@ class PermanentError(HandlerError):
 | HIGH | Lost activity recovery | 2.2 | ✅ FIXED | `recover_stale_activities` task with `select_for_update` |
 | HIGH | DB growth | 4.1 | ❌ NOT IMPLEMENTED | No auto-archive for old activities |
 | HIGH | No rate limiting | 8.1 | ⚠️ PARTIAL | Uses default DRF throttling only |
-| MEDIUM | Atomic recurrence | 7.2 | ⚠️ DOCUMENTED | Handler completes successfully, new activity created |
+| MEDIUM | Atomic recurrence | 7.2 | ⚠️ OPEN | Recurrence exists, but not as an atomic create-next-in-same-transaction flow |
 | MEDIUM | Check-then-act race | 1.2 | ✅ FIXED | Atomic UPDATE prevents race |
 | MEDIUM | Multiple schedulers | 1.3 | ⚠️ NOT ADDRESSED | No leader election for multiple Celery Beat instances |
 | MEDIUM | Tracing correlation | 6.1 | ⚠️ NOT IMPLEMENTED | No correlation_id through scheduler→worker→WebSocket |
@@ -465,7 +250,7 @@ class PermanentError(HandlerError):
 ### Fixed Issues (Phase 2-3)
 
 1. **Split-brain locking** - Resolved by single-phase locking:
-   - `claim_activity()` acquires lock and transitions to DISPATCHED atomically
+   - `claim_activity()` acquires and transitions atomically
    - Worker validates execution_id via `validate_execution()`
    - No separate lock acquisition/release needed
 

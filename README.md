@@ -1,8 +1,8 @@
 # Weather APIs
 
 Django + DRF service that provides authenticated APIs for user accounts, API key
-lifecycle management, farm resources, NDVI (Sentinel Hub) retrieval, and
-provider-backed weather data (Open-Meteo + NASA POWER).
+lifecycle management, farm resources, activity scheduling, NDVI (Sentinel Hub)
+retrieval, and provider-backed weather data (Open-Meteo + NASA POWER).
 
 This repo uses both JWT (for user sessions and API key management) and
 first-party API keys (`X-API-Key`) for service-to-service calls.
@@ -13,11 +13,12 @@ first-party API keys (`X-API-Key`) for service-to-service calls.
   (`/api/v1/auth/`)
 - API keys: create/list/revoke/rotate (JWT-only) (`/api/v1/keys/`)
 - Farms: CRUD for user-owned farms (`/api/v1/farms/`)
+- Activities: scheduled and event-triggered farm operations (`/api/v1/activities/`)
 - NDVI: timeseries/latest, raster retrieval and queueing, job status (`/api/v1/…/ndvi/`)
 - Weather: current/daily/weekly with provider selection (`/api/v1/weather/…`)
 - Farm weather: current/hourly/daily by farm id (`/api/v1/farms/<id>/weather/…`)
 - Caching: Redis (recommended/required in production) or local-memory cache
-- Background jobs: Celery tasks for NDVI refresh/backfill and raster rendering
+- Background jobs: Celery tasks for activities, NDVI refresh/backfill, and raster rendering
 - Observability: Prometheus metrics via `django-prometheus` at `/metrics`
 
 ## Architecture
@@ -420,6 +421,8 @@ bandit -c pyproject.toml -r .
 - `accounts/`: user authentication and profile endpoints ([README](accounts/README.md))
 - `api_keys/`: API key model + authentication + JWT-only lifecycle endpoints ([README](api_keys/README.md))
 - `farms/`: user-owned farm resources ([README](farms/README.md))
+- `activities/`: activity scheduling, execution, and NDVI-trigger handlers ([README](activities/README.md), [architecture](docs/architecture/activities/README.md))
 - `ndvi/`: NDVI retrieval (Sentinel Hub) + Celery tasks + raster support ([README](ndvi/README.md), [engine guide](docs/contributing_ndvi_engines.md))
 - `weather/`: provider-swappable weather subsystem (Open-Meteo + NASA POWER) ([README](weather/README.md), [engine guide](docs/contributing_weather_engines.md))
 - `config/`: Django settings/urls/celery wiring
+- `docs/`: architecture, status, runbooks, and audit notes for implemented subsystems

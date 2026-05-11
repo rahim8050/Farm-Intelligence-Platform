@@ -8,14 +8,14 @@ paths:
     get:
       operationId: v1_activities_list
       description: |-
-        List user's activities.
+        List activities.
 
-        Returns all activities owned by the authenticated user.
+        Returns all activities accessible to the authenticated user.
+        Integration tokens require 'read' scope.
       tags:
       - v1
       security:
-      - jwtAuth: []
-      - ApiKeyAuth: []
+      - FarmObservationAuth: []
       responses:
         '200':
           content:
@@ -33,6 +33,7 @@ paths:
         Input: type, scheduled_at, optional recurrence_type,
                interval_days, farm, metadata.
         Output: Created activity with generated next_due_at.
+        Integration tokens require 'write' scope.
       tags:
       - v1
       requestBody:
@@ -48,8 +49,7 @@ paths:
               $ref: '#/components/schemas/ActivityCreate'
         required: true
       security:
-      - jwtAuth: []
-      - ApiKeyAuth: []
+      - FarmObservationAuth: []
       responses:
         '201':
           content:
@@ -64,17 +64,18 @@ paths:
         Retrieve a single activity by ID.
 
         Returns activity details for the authenticated user.
+        Integration tokens require 'read' scope.
       parameters:
       - in: path
         name: id
         schema:
-          type: string
+          type: integer
+        description: A unique integer value identifying this activity.
         required: true
       tags:
       - v1
       security:
-      - jwtAuth: []
-      - ApiKeyAuth: []
+      - FarmObservationAuth: []
       responses:
         '200':
           content:
@@ -87,13 +88,17 @@ paths:
       description: |-
         Activity CRUD operations.
 
-        Auth: IsAuthenticated
+        Auth: API key, user JWT, or integration JWT.
+        Permissions: IsAuthenticated; owner-only for user/API key requests.
+        Integration access: allow-listed per farm via FarmIntegrationAccess.
+        Integration scope: read for GET, write for POST/PATCH/DELETE.
         Response: envelope with `data` = ActivitySerializer output.
       parameters:
       - in: path
         name: id
         schema:
-          type: string
+          type: integer
+        description: A unique integer value identifying this activity.
         required: true
       tags:
       - v1
@@ -110,8 +115,7 @@ paths:
               $ref: '#/components/schemas/Activity'
         required: true
       security:
-      - jwtAuth: []
-      - ApiKeyAuth: []
+      - FarmObservationAuth: []
       responses:
         '200':
           content:
@@ -126,11 +130,13 @@ paths:
 
         Input: Any subset of activity fields.
         Output: Updated activity.
+        Integration tokens require 'write' scope.
       parameters:
       - in: path
         name: id
         schema:
-          type: string
+          type: integer
+        description: A unique integer value identifying this activity.
         required: true
       tags:
       - v1
@@ -146,8 +152,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PatchedActivity'
       security:
-      - jwtAuth: []
-      - ApiKeyAuth: []
+      - FarmObservationAuth: []
       responses:
         '200':
           content:
@@ -161,17 +166,18 @@ paths:
         Delete an activity.
 
         Output: 204 No Content on success.
+        Integration tokens require 'write' scope.
       parameters:
       - in: path
         name: id
         schema:
-          type: string
+          type: integer
+        description: A unique integer value identifying this activity.
         required: true
       tags:
       - v1
       security:
-      - jwtAuth: []
-      - ApiKeyAuth: []
+      - FarmObservationAuth: []
       responses:
         '204':
           content:
@@ -4973,6 +4979,14 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    FarmObservationAuth:
+      oneOf:
+      - type: apiKey
+        in: header
+        name: X-API-Key
+      - type: http
+        scheme: bearer
+        bearerFormat: JWT
     jwtAuth:
       type: http
       scheme: bearer

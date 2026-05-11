@@ -1,8 +1,8 @@
 # Technical Design Document: Activity Scheduling + Notification Engine
 
-**Document Version:** 1.0  
-**Date:** May 3, 2026  
-**Status:** APPROVED FOR IMPLEMENTATION  
+**Document Version:** 1.1  
+**Date:** May 11, 2026  
+**Status:** IMPLEMENTED WITH SOME OPEN HARDENING ITEMS  
 **System:** Activity Scheduling + Notification Engine
 
 ---
@@ -19,7 +19,7 @@ The Activity Scheduling Engine is an event-driven subsystem for managing time-ba
 ├───────────────────────────────────────────────────────────────────────────┬──────────────────┤
 │                     API LAYER (Django + DRF)           │                  │
 │  POST /api/v1/activities/  GET /api/v1/activities/     │                  │
-│  POST /api/v1/activities/{id}/execute               │                  │
+│  PATCH /api/v1/activities/{id}/                        │                  │
 └───────────────────────────────────────────────────┴──────────────────┘
                                     │
                                     ▼
@@ -38,14 +38,15 @@ The Activity Scheduling Engine is an event-driven subsystem for managing time-ba
           │                                               │
           ▼                                               ▼
 ┌───────────────────────────────────────────────────────────────────────────┐
-│                       CELERY QUEUE (Redis)                         │
-│              activity_dispatch (transient tasks)                    │
-└─────────────────────────────────────────────────────────���─────────┬───────────┘
-                                                                ▼
+│                       CELERY QUEUE (Redis)                                │
+│                   activities.scheduler.poll / activities.execute          │
+└───────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
 ┌───────────────────────────────────────────────────────────────────────────┐
-│                    WORKER EXECUTION LAYER                             │
-│  ActivityHandlerRegistry → ActivityHandler.execute()                 │
-│  → WebSocket emit via Django Channels                           │
+│                    WORKER EXECUTION LAYER                                 │
+│  Activity handler registry → ActivityHandler.execute()                    │
+│  → WebSocket emit via Django Channels                                     │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -66,7 +67,7 @@ The Activity Scheduling Engine is an event-driven subsystem for managing time-ba
 |----------|----------|
 | API → DB | Database errors propagate to API (4xx/5xx) |
 | Scheduler → Queue | Queue failures retry via Celery backoff |
-| Worker → Handler | Handler failures go to retry or dead-letter |
+| Worker → Handler | Handler failures are recorded on the activity and surfaced to Celery retries where configured |
 | Worker → WebSocket | Connect failures logged, no blocking |
 
 ---
@@ -249,7 +250,7 @@ Handler.execute() complete
 |------|---------|-----------------|
 | vaccination | VaccinationHandler | interval |
 | fertilizer | FertilizerHandler | interval |
-| irrigation | IrrigationHandler | interval, conditional |
+| irrigation | IrrigationHandler | interval |
 | ndvi_trigger | NdviTriggerHandler | event-based |
 
 ---
@@ -258,28 +259,35 @@ Handler.execute() complete
 
 ### 4.1 Scheduler Loop (Celery Beat Task)
 
+Current implementation:
+
+- `activities.scheduler.poll` scans due activities in batches
+- each activity is atomically claimed before dispatch
+- dispatch is sent to `activities.execute`
+- `activities.recover_stale` handles stuck executions
+
 ```python
 # activities/tasks.py
-@app.task(name="activities.scheduler.poll")
+@shared_task(name="activities.scheduler.poll")
 def poll_activities():
     """Poll for due activities and dispatch to queue."""
     batch_size = settings.ACTIVITY_SCHEDULER_BATCH_SIZE
-    
+
     due_activities = Activity.objects.filter(
         status=Activity.Status.PENDING,
-        next_due_at__lte=timezone.now()
-    ).select_related("owner")[:batch_size]
-    
+        next_due_at__lte=timezone.now(),
+    ).order_by("next_due_at", "id")[:batch_size]
+
     dispatched = 0
     for activity in due_activities:
         try:
-            # Try to claim via Redis lock
-            if acquire_activity_lock(activity.id):
-                dispatch_activity.delay(activity.id)
+            claimed = claim_activity(activity.id)
+            if claimed[0] is not None:
+                dispatch_activity.delay(activity.id, claimed[1])
                 dispatched += 1
         except Exception as e:
             logger.warning("Failed to dispatch activity %d: %s", activity.id, e)
-    
+
     return {"dispatched": dispatched, "scanned": len(due_activities)}
 ```
 
@@ -295,7 +303,7 @@ def poll_activities():
 ### 4.3 Scheduler Rules
 
 - **Never** execute activity directly (always dispatch)
-- **Always** use Redis lock before dispatch
+- **Always** claim atomically before dispatch
 - **Never** block on lock acquisition (skip if lock held)
 - **Always** update status to RUNNING before dispatch
 - **Never** reschedule inside scheduler
@@ -308,41 +316,24 @@ def poll_activities():
 
 ```python
 # activities/tasks.py
-@app.task(
-    name="activities.dispatch",
+@shared_task(
+    name="activities.execute",
     bind=True,
     max_retries=3,
     default_retry_delay=60,
 )
-def dispatch_activity(self, activity_id: int):
+def execute_activity(self, activity_id: int, execution_id: str):
     """Execute activity via handler."""
+    activity = validate_execution(activity_id, execution_id)
+    transition_to_running(activity)
+
     try:
-        activity = Activity.objects.get(id=activity_id)
-    except Activity.DoesNotExist:
-        return {"status": "not_found"}
-    
-    # Check idempotency
-    if activity.status == Activity.Status.RUNNING:
-        # Check if stale (lock expired)
-        if is_activity_lock_stale(activity_id):
-            activity.status = Activity.Status.PENDING
-            activity.save(update_fields=["status"])
-        else:
-            return {"status": "already_running"}
-    
-    # Update status
-    activity.status = Activity.Status.RUNNING
-    activity.save(update_fields=["status"])
-    
-    # Get handler
-    handler = get_handler(activity.type)
-    
-    try:
+        handler = get_handler(activity.type)
         result = handler.execute(activity)
-        handle_success(activity, result)
+        transition_to_success(activity)
         return {"status": "success", "result": result}
     except Exception as e:
-        handle_failure(activity, e)
+        transition_to_failed(activity, str(e))
         raise self.retry(exc=e)
 ```
 
