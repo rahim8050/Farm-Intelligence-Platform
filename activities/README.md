@@ -8,6 +8,7 @@ This app provides activity scheduling for user-owned farms. It manages time-base
 
 It is responsible for:
 - Activity CRUD endpoints and response envelope
+- Activity health probe for readiness checks
 - Scheduler polling and dispatch
 - Worker execution and state transitions
 - WebSocket notifications for activity state changes
@@ -175,14 +176,25 @@ Response:
 
 ## Settings / env vars
 
-None specific to this app.
+- `ACTIVITY_SCHEDULER_LOCK_SECONDS`: scheduler leader-lock TTL in seconds
+- `ACTIVITY_RETENTION_DAYS`: terminal activity retention window
 
 ## Background jobs
 
 - `activities.scheduler.poll`: Celery Beat task (every minute) for batch activity polling
 - `activities.execute`: Celery worker task with 5 minute hard timeout and 4.5 minute soft timeout
 - `activities.recover_stale`: Recovery task (every 5 min) for stuck activities
+- `activities.cleanup_completed`: Retention task (daily) for old terminal activities
 - WebSocket notifications via Django Channels (`ActivityConsumer`)
+
+## Health / observability
+
+- `GET /api/v1/activities/health/`: authenticated health snapshot for the activity engine
+- `activities_scheduler_runs_total`: scheduler poll outcome counter
+- `activities_scheduler_dispatch_latency_seconds`: scheduler dispatch latency histogram
+- `activities_websocket_events_total`: WebSocket event counter
+- `activities_websocket_failures_total`: WebSocket delivery failure counter
+- `activities_lock_contention_total`: claim / execution contention counter
 
 ## Metrics / monitoring
 

@@ -94,6 +94,35 @@ def _runtime_bucket_key(task: str, bucket: float) -> str:
     return f"celery:metrics:runtime:bucket:{task}:{bucket_key}"
 
 
+def _scheduler_run_key(status: str) -> str:
+    return f"activities:metrics:scheduler:run:{status}"
+
+
+def _scheduler_latency_count_key(status: str) -> str:
+    return f"activities:metrics:scheduler:latency:count:{status}"
+
+
+def _scheduler_latency_sum_key(status: str) -> str:
+    return f"activities:metrics:scheduler:latency:sum_ms:{status}"
+
+
+def _scheduler_latency_bucket_key(status: str, bucket: float) -> str:
+    bucket_key = f"{bucket:.1f}".replace(".", "_")
+    return f"activities:metrics:scheduler:latency:bucket:{status}:{bucket_key}"
+
+
+def _websocket_event_key(status: str) -> str:
+    return f"activities:metrics:websocket:event:{status}"
+
+
+def _websocket_failure_key(stage: str) -> str:
+    return f"activities:metrics:websocket:failure:{stage}"
+
+
+def _lock_contention_key(stage: str) -> str:
+    return f"activities:metrics:lock:contention:{stage}"
+
+
 def _start_key(task_id: str) -> str:
     return f"celery:metrics:start:{task_id}"
 
@@ -206,6 +235,38 @@ def _task_name(task: object | None, sender: object | None) -> str:
     return "unknown"
 
 
+def record_scheduler_run(status: str) -> None:
+    """Record a scheduler poll run outcome."""
+    _incr(_scheduler_run_key(status), 1)
+
+
+def record_scheduler_dispatch_latency(
+    status: str, duration_seconds: float
+) -> None:
+    """Record scheduler dispatch latency."""
+    duration_ms = int(duration_seconds * 1000)
+    _incr(_scheduler_latency_count_key(status), 1)
+    _incr(_scheduler_latency_sum_key(status), duration_ms)
+    for bucket in RUNTIME_BUCKETS:
+        if duration_seconds <= bucket:
+            _incr(_scheduler_latency_bucket_key(status, bucket), 1)
+
+
+def record_websocket_event(status: str) -> None:
+    """Record a WebSocket event emission."""
+    _incr(_websocket_event_key(status), 1)
+
+
+def record_websocket_failure(stage: str) -> None:
+    """Record a WebSocket failure."""
+    _incr(_websocket_failure_key(stage), 1)
+
+
+def record_lock_contention(stage: str) -> None:
+    """Record lock or claim contention."""
+    _incr(_lock_contention_key(stage), 1)
+
+
 @task_received.connect
 def _on_task_received(**kwargs: object) -> None:
     task = kwargs.get("sender")
@@ -270,6 +331,31 @@ class CeleryMetricsCollector(Collector):
             "Celery task runtime in seconds",
             labels=["task"],
         )
+        scheduler_runs = CounterMetricFamily(
+            "activities_scheduler_runs_total",
+            "Activity scheduler polling runs",
+            labels=["status"],
+        )
+        scheduler_latency = HistogramMetricFamily(
+            "activities_scheduler_dispatch_latency_seconds",
+            "Activity scheduler dispatch latency",
+            labels=["status"],
+        )
+        websocket_events = CounterMetricFamily(
+            "activities_websocket_events_total",
+            "Activity WebSocket events emitted",
+            labels=["status"],
+        )
+        websocket_failures = CounterMetricFamily(
+            "activities_websocket_failures_total",
+            "Activity WebSocket delivery failures",
+            labels=["stage"],
+        )
+        lock_contention = CounterMetricFamily(
+            "activities_lock_contention_total",
+            "Activity claim or execution contention events",
+            labels=["stage"],
+        )
 
         for task in _tasks():
             for event in EVENTS:
@@ -295,7 +381,51 @@ class CeleryMetricsCollector(Collector):
                 sum_value=sum_ms / 1000.0,
             )
 
-        return [counter, in_progress, runtime]
+        for status in ("success", "failure"):
+            scheduler_runs.add_metric(
+                [status], _get_int(_scheduler_run_key(status))
+            )
+            count = _get_int(_scheduler_latency_count_key(status))
+            sum_ms = _get_int(_scheduler_latency_sum_key(status))
+            cumulative = 0
+            buckets_data = []
+            for bucket in RUNTIME_BUCKETS:
+                cumulative += _get_int(
+                    _scheduler_latency_bucket_key(status, bucket)
+                )
+                buckets_data.append((f"{bucket:.1f}", float(cumulative)))
+            buckets_data.append(("inf", float(count)))
+            scheduler_latency.add_metric(
+                [status],
+                buckets_data,
+                sum_value=sum_ms / 1000.0,
+            )
+
+        for status in ("sent", "failure"):
+            websocket_events.add_metric(
+                [status], _get_int(_websocket_event_key(status))
+            )
+
+        for stage in ("emit", "send"):
+            websocket_failures.add_metric(
+                [stage], _get_int(_websocket_failure_key(stage))
+            )
+
+        for stage in ("claim", "execute"):
+            lock_contention.add_metric(
+                [stage], _get_int(_lock_contention_key(stage))
+            )
+
+        return [
+            counter,
+            in_progress,
+            runtime,
+            scheduler_runs,
+            scheduler_latency,
+            websocket_events,
+            websocket_failures,
+            lock_contention,
+        ]
 
 
 def register_celery_metrics(

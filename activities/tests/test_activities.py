@@ -1,4 +1,6 @@
+import asyncio
 import secrets
+import uuid
 from datetime import timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -16,6 +18,7 @@ from activities.services import (
     InvalidTransitionError,
     StaleExecutionError,
     claim_activity,
+    cleanup_completed_activities,
     recover_stale_activity,
     transition_to_failed,
     transition_to_retry,
@@ -167,6 +170,25 @@ class TestActivityViews(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(
             response.data["data"]["metadata"]["cattle_id"], "C123"
+        )
+
+    def test_create_stores_correlation_id(self) -> None:
+        """Test create activity persists the correlation id."""
+        data = {
+            "type": "vaccination",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "farm": self.farm.id,
+            "metadata": {"cattle_id": "C123"},
+        }
+        response = self.client.post(
+            "/api/v1/activities/",
+            data,
+            format="json",
+            HTTP_X_CORRELATION_ID="trace-123",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.data["data"]["metadata"]["correlation_id"], "trace-123"
         )
 
     def test_create_with_recurrence(self) -> None:
@@ -715,6 +737,15 @@ class TestActivityAPI(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["data"]), 1)
 
+    def test_health_endpoint_returns_snapshot(self) -> None:
+        """Test activities health endpoint returns an envelope snapshot."""
+        response = self.client.get("/api/v1/activities/health/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["message"], "Activities health OK")
+        self.assertEqual(response.data["data"]["status"], "ok")
+        self.assertIn("timestamp", response.data["data"])
+        self.assertIn("total_activities", response.data["data"])
+
     def test_list_activities_user_isolation(self) -> None:
         Activity.objects.create(
             owner=self.user,
@@ -1081,6 +1112,59 @@ class TestActivityTasks(TestCase):
         self.assertIn("dispatched", result)
         self.assertIn("scanned", result)
 
+    @patch("activities.tasks.caches")
+    def test_poll_activities_skips_when_locked(self, mock_caches: Any) -> None:
+        """Test poll_activities exits early on lock contention."""
+        mock_cache = mock_caches.__getitem__.return_value
+        mock_cache.add.return_value = False
+
+        from activities.tasks import poll_activities
+
+        result = poll_activities()
+
+        self.assertTrue(result["locked"])
+        self.assertEqual(result["dispatched"], 0)
+        self.assertEqual(result["scanned"], 0)
+        mock_cache.delete.assert_not_called()
+
+    def test_cleanup_completed_activities_deletes_old_terminal_rows(
+        self,
+    ) -> None:
+        """Test cleanup removes old completed activities only."""
+        cutoff = timezone.now() - timedelta(days=40)
+        old_success = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.SUCCESS,
+            scheduled_at=cutoff,
+        )
+        old_failed = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.FAILED,
+            scheduled_at=cutoff,
+        )
+        Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.RUNNING,
+            scheduled_at=cutoff,
+        )
+        Activity.objects.filter(id__in=[old_success.id, old_failed.id]).update(
+            updated_at=cutoff,
+        )
+
+        deleted = cleanup_completed_activities(older_than_days=30)
+
+        self.assertEqual(deleted, 2)
+        self.assertFalse(Activity.objects.filter(id=old_success.id).exists())
+        self.assertTrue(
+            Activity.objects.filter(status=Activity.Status.RUNNING).exists()
+        )
+
     def test_claim_and_dispatch_returns_tuple(self) -> None:
         """Test _claim_and_dispatch returns tuple."""
         from activities.tasks import _claim_and_dispatch
@@ -1128,12 +1212,63 @@ class TestActivityTasks(TestCase):
         activity.refresh_from_db()
         self.assertEqual(activity.status, Activity.Status.SUCCESS)
 
+    def test_execute_activity_emits_correlation_id(self) -> None:
+        """Test execute_activity forwards correlation id into event payload."""
+        from activities.tasks import execute_activity
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.DISPATCHED,
+            execution_id=uuid.uuid4(),
+            metadata={"correlation_id": "trace-456"},
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        emitted_events: list[dict[str, Any]] = []
+
+        def _run_on_commit(callback: Any) -> None:
+            callback()
+
+        def _wrap_async(fn: Any) -> Any:
+            def _call(*args: Any, **kwargs: Any) -> Any:
+                if len(args) >= 2 and isinstance(args[1], dict):
+                    emitted_events.append(args[1])
+                return asyncio.run(fn(*args, **kwargs))
+
+            return _call
+
+        with (
+            patch(
+                "django.db.transaction.on_commit", side_effect=_run_on_commit
+            ),
+            patch(
+                "activities.tasks.async_to_sync",
+                side_effect=_wrap_async,
+            ),
+        ):
+            result = execute_activity(activity.id, str(activity.execution_id))
+
+        self.assertEqual(result["status"], "success")
+        self.assertTrue(emitted_events)
+        self.assertEqual(emitted_events[0]["correlation_id"], "trace-456")
+
     def test_recover_stale_activities(self) -> None:
         """Test recover_stale_activities function."""
         from activities.tasks import recover_stale_activities
 
         result = recover_stale_activities()
         self.assertIn("recovered", result)
+
+    def test_cleanup_completed_activities_task(self) -> None:
+        """Test cleanup_completed_activities_task returns deletion summary."""
+        from activities.tasks import cleanup_completed_activities_task
+
+        result = cleanup_completed_activities_task()
+
+        self.assertIn("deleted", result)
+        self.assertIn("retention_days", result)
 
     def test_get_handler_function(self) -> None:
         """Test _get_handler returns handler."""

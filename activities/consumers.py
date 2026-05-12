@@ -16,11 +16,17 @@ Backpressure Strategy:
 - No guaranteed delivery - client should poll REST API for state
 """
 
+import json
 import logging
 from typing import Any
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.layers import get_channel_layer
+
+from activities.metrics import (
+    activities_websocket_events,
+    activities_websocket_failures,
+)
 
 logger = logging.getLogger("activities")
 
@@ -75,15 +81,17 @@ class ActivityConsumer(AsyncWebsocketConsumer):
             event_data = event["event"].copy()
             event_data["schema_version"] = "1.0"
             await self.send(
-                text_data=__import__("json").dumps(
+                text_data=json.dumps(
                     {
                         "type": "activity_event",
                         "event": event_data,
                     }
                 )
             )
+            activities_websocket_events.labels(status="sent").inc()
         except Exception:
             # Best-effort: log and continue (PostgreSQL is authoritative)
+            activities_websocket_failures.labels(stage="send").inc()
             logger.warning("websocket_send_failed: event=%s", event)
 
 
@@ -107,8 +115,10 @@ async def emit_activity_event(user_id: int, event: dict) -> None:
                 "event": event,
             },
         )
+        activities_websocket_events.labels(status="queued").inc()
     except Exception:
         # Best-effort: log and continue (PostgreSQL is authoritative)
+        activities_websocket_failures.labels(stage="emit").inc()
         logger.warning(
             "websocket_emit_failed: user_id=%d event_type=%s",
             user_id,

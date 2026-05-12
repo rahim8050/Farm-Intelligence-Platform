@@ -73,6 +73,10 @@ API_KEY_AUTH_CACHE_TTL_SECONDS = env.int(
     "API_KEY_AUTH_CACHE_TTL_SECONDS", default=60
 )
 API_KEY_AUTH_CACHE_ALIAS = env("API_KEY_AUTH_CACHE_ALIAS", default="default")
+ACTIVITY_SCHEDULER_LOCK_SECONDS = env.int(
+    "ACTIVITY_SCHEDULER_LOCK_SECONDS", default=50
+)
+ACTIVITY_RETENTION_DAYS = env.int("ACTIVITY_RETENTION_DAYS", default=30)
 
 
 # Application definition
@@ -904,6 +908,10 @@ CELERY_BEAT_SCHEDULE = {
     "farm-state-daily-coverage": {
         "task": "ndvi.tasks.enqueue_daily_farm_state_coverage",
         "schedule": crontab(hour=3, minute=45),
+    },
+    "activities-cleanup-completed": {
+        "task": "activities.cleanup_completed",
+        "schedule": crontab(hour=4, minute=30),
     },
     "ndvi-weekly-gap-fill": {
         "task": "ndvi.tasks.enqueue_weekly_gap_fill",

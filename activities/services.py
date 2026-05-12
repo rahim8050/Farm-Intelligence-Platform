@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING
 from django.db import transaction
 from django.utils import timezone
 
+from config.celery_metrics import record_lock_contention
+
 logger = logging.getLogger("activities")
 
 if TYPE_CHECKING:
@@ -148,6 +150,7 @@ def claim_activity(
     )
 
     if not updated:
+        record_lock_contention("claim")
         logger.info(
             "activity_claim_skipped activity_id=%d reason=contention",
             activity_id,
@@ -187,14 +190,17 @@ def validate_execution(activity_id: int, execution_id: str) -> Activity:
         Activity.Status.DISPATCHED,
         Activity.Status.RUNNING,
     ]:
+        record_lock_contention("execute")
         raise InvalidTransitionError(
             f"Cannot execute: status is {activity.status}"
         )
 
     if activity.execution_id is None:
+        record_lock_contention("execute")
         raise StaleExecutionError("execution_id is None - not claimed")
 
     if str(activity.execution_id) != execution_id:
+        record_lock_contention("execute")
         raise StaleExecutionError(
             f"Stale execution - expected {activity.execution_id}, "
             f"got {execution_id}"
@@ -308,3 +314,32 @@ def recover_stale_activity(activity: Activity) -> Activity:
         ],
     )
     return activity
+
+
+def cleanup_completed_activities(
+    *, older_than_days: int = 30, batch_size: int = 500
+) -> int:
+    """Delete old terminal activities.
+
+    Removes completed SUCCESS or FAILED activities older than the
+    retention window. This is a storage-management task only; it does not
+    affect active scheduler or worker state.
+    """
+    from activities.models import Activity
+
+    cutoff = timezone.now() - timezone.timedelta(days=older_than_days)
+    eligible_ids = list(
+        Activity.objects.filter(
+            status__in=[Activity.Status.SUCCESS, Activity.Status.FAILED],
+            updated_at__lt=cutoff,
+        )
+        .order_by("updated_at")
+        .values_list("id", flat=True)[:batch_size]
+    )
+    if not eligible_ids:
+        return 0
+    deleted, _ = Activity.objects.filter(
+        status__in=[Activity.Status.SUCCESS, Activity.Status.FAILED],
+        id__in=eligible_ids,
+    ).delete()
+    return int(deleted)

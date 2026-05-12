@@ -34,6 +34,8 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from activities.views import ActivityHealthView
+
 from .views import CachedSpectacularAPIView, home
 
 urlpatterns = [
@@ -82,6 +84,11 @@ urlpatterns = [
     path("api/v1/", include("farms.urls")),
     path("api/v1/", include("ndvi.urls")),
     path("api/v1/", include("weather.urls")),
+    path(
+        "api/v1/activities/health/",
+        ActivityHealthView.as_view(),
+        name="activity-health",
+    ),
     path("api/v1/", include("activities.urls")),
     path("api/v1/", include("radio.urls")),
 ]

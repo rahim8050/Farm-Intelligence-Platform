@@ -11,11 +11,13 @@ Auth: Uses Django auth, Celery task isolation.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from asgiref.sync import async_to_sync
 from celery import shared_task
 from django.conf import settings
+from django.core.cache import caches
 from django.utils import timezone
 
 from activities.handlers import (  # noqa: F401
@@ -29,10 +31,23 @@ from activities.handlers.base import HandlerResult
 from activities.metrics import (  # noqa: F401
     activities_active,
     activities_dispatched,
+    activities_scheduler_dispatch_latency_seconds,
+    activities_scheduler_runs,
     activity_duration_seconds,
 )
 
 logger = logging.getLogger("activities")
+_SCHEDULER_LOCK_KEY = "activities:scheduler:poll:lock"
+
+
+def _correlation_id(activity: Any) -> str:
+    metadata = getattr(activity, "metadata", None)
+    if isinstance(metadata, dict):
+        correlation_id = metadata.get("correlation_id")
+        if correlation_id:
+            return str(correlation_id)
+    return ""
+
 
 # Import metrics
 
@@ -54,41 +69,70 @@ def poll_activities(self: Any) -> dict[str, Any]:
         Dict with dispatched count and scanned count.
     """
     from activities.models import Activity
+    from config.celery_metrics import record_scheduler_run
+
+    lock_ttl = int(getattr(settings, "ACTIVITY_SCHEDULER_LOCK_SECONDS", 50))
+    scheduler_lock = caches["default"].add(
+        _SCHEDULER_LOCK_KEY,
+        "1",
+        timeout=max(1, lock_ttl),
+    )
+    if not scheduler_lock:
+        record_scheduler_run("failure")
+        logger.info("scheduler_poll_skipped reason=lock_contention")
+        return {"dispatched": 0, "scanned": 0, "locked": True}
 
     batch_size = getattr(settings, "ACTIVITY_SCHEDULER_BATCH_SIZE", 100)
 
-    due_activities = Activity.objects.filter(
-        status=Activity.Status.PENDING, next_due_at__lte=timezone.now()
-    ).order_by("next_due_at")[:batch_size]
+    scheduler_start = time.monotonic()
+    try:
+        due_activities = Activity.objects.filter(
+            status=Activity.Status.PENDING, next_due_at__lte=timezone.now()
+        ).order_by("next_due_at")[:batch_size]
 
-    dispatched = 0
-    for activity in due_activities:
-        try:
-            activity, execution_id = _claim_and_dispatch(activity.id)
-            if activity:
-                dispatched += 1
+        dispatched = 0
+        for activity in due_activities:
+            try:
+                activity, execution_id = _claim_and_dispatch(activity.id)
+                if activity:
+                    dispatched += 1
+                    activities_dispatched.labels(
+                        type=activity.type, status="success"
+                    ).inc()
+                    logger.info(
+                        "dispatched activity_id=%d execution_id=%s "
+                        "correlation_id=%s",
+                        activity.id,
+                        execution_id,
+                        _correlation_id(activity) or "none",
+                    )
+            except Exception as e:
                 activities_dispatched.labels(
-                    type=activity.type, status="success"
+                    type=activity.type, status="failure"
                 ).inc()
-                logger.info(
-                    "dispatched activity_id=%d execution_id=%s",
+                logger.warning(
+                    "Failed to dispatch activity %d: %s",
                     activity.id,
-                    execution_id,
+                    e,
                 )
-        except Exception as e:
-            activities_dispatched.labels(
-                type=activity.type, status="failure"
-            ).inc()
-            logger.warning(
-                "Failed to dispatch activity %d: %s",
-                activity.id,
-                e,
-            )
 
-    return {
-        "dispatched": dispatched,
-        "scanned": len(due_activities),
-    }
+        activities_scheduler_runs.labels(status="success").inc()
+        activities_scheduler_dispatch_latency_seconds.labels(
+            status="success"
+        ).observe(time.monotonic() - scheduler_start)
+
+        return {
+            "dispatched": dispatched,
+            "scanned": len(due_activities),
+        }
+    except Exception:
+        activities_scheduler_runs.labels(status="failure").inc()
+        activities_scheduler_dispatch_latency_seconds.labels(
+            status="failure"
+        ).observe(time.monotonic() - scheduler_start)
+        raise
+    finally:
+        caches["default"].delete(_SCHEDULER_LOCK_KEY)
 
 
 def _claim_and_dispatch(
@@ -147,10 +191,9 @@ def execute_activity(
     )
 
     activity = validate_execution(activity_id, execution_id)
+    correlation_id = _correlation_id(activity)
 
     transition_to_running(activity)
-
-    import time
 
     from django.db import transaction
 
@@ -173,10 +216,12 @@ def execute_activity(
             metadata = {}
 
         logger.info(
-            "activity_executed activity_id=%d type=%s result=%s",
+            "activity_executed activity_id=%d type=%s result=%s "
+            "correlation_id=%s",
             activity.id,
             activity.type,
             message,
+            correlation_id or "none",
         )
 
         # Emit WebSocket event after DB commit
@@ -190,6 +235,7 @@ def execute_activity(
                     "farm_id": activity.farm_id,
                     "message": message,
                     "metadata": metadata,
+                    "correlation_id": correlation_id or None,
                     "timestamp": timezone.now().isoformat(),
                     "schema_version": "1.0",
                 },
@@ -206,10 +252,12 @@ def execute_activity(
     except Exception as e:
         transition_to_failed(activity, str(e))
         logger.error(
-            "activity_failed activity_id=%d type=%s error=%s",
+            "activity_failed activity_id=%d type=%s error=%s "
+            "correlation_id=%s",
             activity.id,
             activity.type,
             e,
+            correlation_id or "none",
         )
         raise
 
@@ -330,3 +378,24 @@ def recover_stale_activities(self: Any) -> dict[str, Any]:
         )
 
     return {"recovered": recovered}
+
+
+@shared_task(
+    bind=True,
+    name="activities.cleanup_completed",
+)
+def cleanup_completed_activities_task(self: Any) -> dict[str, Any]:
+    """Remove old terminal activities."""
+    from activities.services import cleanup_completed_activities
+
+    retention_days = getattr(settings, "ACTIVITY_RETENTION_DAYS", 30)
+    deleted = cleanup_completed_activities(older_than_days=retention_days)
+    logger.info(
+        "cleanup_completed_activities deleted=%d retention_days=%d",
+        deleted,
+        retention_days,
+    )
+    return {
+        "deleted": deleted,
+        "retention_days": retention_days,
+    }

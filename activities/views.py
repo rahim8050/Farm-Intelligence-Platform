@@ -12,12 +12,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from activities.models import Activity
 from activities.serializers import (
@@ -27,6 +29,20 @@ from activities.serializers import (
 from config.api.responses import success_response
 from farms.authentication import FarmObservationAuthentication
 from integrations.authentication import IntegrationTokenUser
+
+_CORRELATION_HEADER_NAMES = (
+    "X-Correlation-ID",
+    "X-Correlation-Id",
+    "x-correlation-id",
+)
+
+
+def _get_correlation_id(request: Request) -> str:
+    for header in _CORRELATION_HEADER_NAMES:
+        value = request.headers.get(header)
+        if value:
+            return str(value).strip()
+    return ""
 
 
 class _ActivityListSerializer(serializers.Serializer):
@@ -67,6 +83,28 @@ NullEnvelope = inline_serializer(
         "status": serializers.IntegerField(),
         "message": serializers.CharField(),
         "data": serializers.JSONField(allow_null=True),
+        "errors": serializers.JSONField(allow_null=True),
+    },
+)
+
+ActivityHealthData = inline_serializer(
+    name="ActivityHealthData",
+    fields={
+        "status": serializers.CharField(),
+        "timestamp": serializers.DateTimeField(),
+        "total_activities": serializers.IntegerField(),
+        "due_activities": serializers.IntegerField(),
+        "running_activities": serializers.IntegerField(),
+        "stale_candidates": serializers.IntegerField(),
+    },
+)
+
+ActivityHealthEnvelope = inline_serializer(
+    name="ActivityHealthEnvelope",
+    fields={
+        "status": serializers.IntegerField(),
+        "message": serializers.CharField(),
+        "data": ActivityHealthData,
         "errors": serializers.JSONField(allow_null=True),
     },
 )
@@ -207,7 +245,11 @@ class ActivityViewSet(viewsets.ModelViewSet):
 
         serializer = ActivityCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        activity = serializer.save(owner=request.user)
+        metadata = dict(serializer.validated_data.get("metadata") or {})
+        correlation_id = _get_correlation_id(request)
+        if correlation_id:
+            metadata["correlation_id"] = correlation_id
+        activity = serializer.save(owner=request.user, metadata=metadata)
         return success_response(
             ActivitySerializer(activity).data,
             status_code=status.HTTP_201_CREATED,
@@ -254,3 +296,44 @@ class ActivityViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ActivityHealthView(APIView):
+    """Health probe for the activities engine.
+
+    Auth: same as the rest of the activities API.
+    Permissions: IsAuthenticated.
+    Response: envelope with scheduler-facing health counters and timestamp.
+    """
+
+    permission_classes = (IsAuthenticated,)
+    authentication_classes = (FarmObservationAuthentication,)
+
+    @extend_schema(responses={200: ActivityHealthEnvelope})
+    def get(
+        self, request: Request, *args: object, **kwargs: object
+    ) -> Response:
+        """Return a lightweight health snapshot for activities."""
+        now = timezone.now()
+        viewset = ActivityViewSet()
+        viewset.request = request
+        base_queryset = viewset.get_queryset()
+        data = {
+            "status": "ok",
+            "timestamp": now,
+            "total_activities": base_queryset.count(),
+            "due_activities": base_queryset.filter(
+                status=Activity.Status.PENDING,
+                next_due_at__lte=now,
+            ).count(),
+            "running_activities": base_queryset.filter(
+                status=Activity.Status.RUNNING,
+            ).count(),
+            "stale_candidates": base_queryset.filter(
+                status__in=[
+                    Activity.Status.DISPATCHED,
+                    Activity.Status.RUNNING,
+                ]
+            ).count(),
+        }
+        return success_response(data, message="Activities health OK")
