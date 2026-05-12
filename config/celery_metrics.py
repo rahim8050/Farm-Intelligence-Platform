@@ -331,31 +331,6 @@ class CeleryMetricsCollector(Collector):
             "Celery task runtime in seconds",
             labels=["task"],
         )
-        scheduler_runs = CounterMetricFamily(
-            "activities_scheduler_runs_total",
-            "Activity scheduler polling runs",
-            labels=["status"],
-        )
-        scheduler_latency = HistogramMetricFamily(
-            "activities_scheduler_dispatch_latency_seconds",
-            "Activity scheduler dispatch latency",
-            labels=["status"],
-        )
-        websocket_events = CounterMetricFamily(
-            "activities_websocket_events_total",
-            "Activity WebSocket events emitted",
-            labels=["status"],
-        )
-        websocket_failures = CounterMetricFamily(
-            "activities_websocket_failures_total",
-            "Activity WebSocket delivery failures",
-            labels=["stage"],
-        )
-        lock_contention = CounterMetricFamily(
-            "activities_lock_contention_total",
-            "Activity claim or execution contention events",
-            labels=["stage"],
-        )
 
         for task in _tasks():
             for event in EVENTS:
@@ -381,50 +356,10 @@ class CeleryMetricsCollector(Collector):
                 sum_value=sum_ms / 1000.0,
             )
 
-        for status in ("success", "failure"):
-            scheduler_runs.add_metric(
-                [status], _get_int(_scheduler_run_key(status))
-            )
-            count = _get_int(_scheduler_latency_count_key(status))
-            sum_ms = _get_int(_scheduler_latency_sum_key(status))
-            cumulative = 0
-            buckets_data = []
-            for bucket in RUNTIME_BUCKETS:
-                cumulative += _get_int(
-                    _scheduler_latency_bucket_key(status, bucket)
-                )
-                buckets_data.append((f"{bucket:.1f}", float(cumulative)))
-            buckets_data.append(("inf", float(count)))
-            scheduler_latency.add_metric(
-                [status],
-                buckets_data,
-                sum_value=sum_ms / 1000.0,
-            )
-
-        for status in ("sent", "failure"):
-            websocket_events.add_metric(
-                [status], _get_int(_websocket_event_key(status))
-            )
-
-        for stage in ("emit", "send"):
-            websocket_failures.add_metric(
-                [stage], _get_int(_websocket_failure_key(stage))
-            )
-
-        for stage in ("claim", "execute"):
-            lock_contention.add_metric(
-                [stage], _get_int(_lock_contention_key(stage))
-            )
-
         return [
             counter,
             in_progress,
             runtime,
-            scheduler_runs,
-            scheduler_latency,
-            websocket_events,
-            websocket_failures,
-            lock_contention,
         ]
 
 
