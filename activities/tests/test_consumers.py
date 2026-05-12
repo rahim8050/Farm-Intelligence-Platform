@@ -1,7 +1,7 @@
 """Tests for WebSocket consumers - hardening tests."""
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.test import TestCase
 
@@ -35,7 +35,7 @@ class TestActivityConsumer(TestCase):
         with patch.object(consumer, "close") as mock_close:
             import asyncio
 
-            asyncio.get_event_loop().run_until_complete(consumer.connect())
+            asyncio.run(consumer.connect())
             mock_close.assert_called_once()
 
     def test_consumer_connect_accepts_authenticated(self) -> None:
@@ -53,7 +53,7 @@ class TestActivityConsumer(TestCase):
             import asyncio
 
             try:
-                asyncio.get_event_loop().run_until_complete(consumer.connect())
+                asyncio.run(consumer.connect())
             except Exception:  # noqa: BLE001, S110, S110
                 pass
 
@@ -83,9 +83,7 @@ class TestActivityConsumer(TestCase):
             import asyncio
 
             try:
-                asyncio.get_event_loop().run_until_complete(
-                    consumer.activity_event(event)
-                )
+                asyncio.run(consumer.activity_event(event))
             except Exception:  # noqa: BLE001, S110
                 pass
 
@@ -117,9 +115,7 @@ class TestActivityConsumer(TestCase):
             import asyncio
 
             try:
-                result = asyncio.get_event_loop().run_until_complete(
-                    consumer.activity_event(event)
-                )
+                result = asyncio.run(consumer.activity_event(event))
                 self.assertIsNone(result)
             except Exception:  # noqa: BLE001, S110
                 pass
@@ -140,14 +136,13 @@ class TestEmitActivityEvent(TestCase):
 
         with patch("activities.consumers.get_channel_layer") as mock_get:
             mock_layer = MagicMock()
+            mock_layer.group_send = AsyncMock()
             mock_get.return_value = mock_layer
 
             import asyncio
 
             try:
-                asyncio.get_event_loop().run_until_complete(
-                    emit_activity_event(123, event)
-                )
+                asyncio.run(emit_activity_event(123, event))
             except Exception:  # noqa: BLE001, S110
                 pass
 
@@ -168,9 +163,7 @@ class TestEmitActivityEvent(TestCase):
             import asyncio
 
             try:
-                result = asyncio.get_event_loop().run_until_complete(
-                    emit_activity_event(123, event)
-                )
+                result = asyncio.run(emit_activity_event(123, event))
                 self.assertIsNone(result)
             except Exception:  # noqa: BLE001, S110
                 pass
@@ -204,14 +197,13 @@ class TestWebSocketHardeningProperties(TestCase):
 
         with patch("activities.consumers.get_channel_layer") as mock_get:
             mock_layer = MagicMock()
+            mock_layer.group_send = AsyncMock()
             mock_get.return_value = mock_layer
 
             import asyncio
 
             try:
-                asyncio.get_event_loop().run_until_complete(
-                    emit_activity_event(999, event)
-                )
+                asyncio.run(emit_activity_event(999, event))
             except Exception:  # noqa: BLE001, S110
                 pass
 
