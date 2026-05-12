@@ -1,5 +1,7 @@
 # Operational Considerations
 
+> **Status**: ⏳ PARTIALLY IMPLEMENTED (No custom logging/metrics yet)
+
 ## Logging Strategy
 
 ### Log Levels
@@ -124,20 +126,22 @@ class StationStreamView(APIView):
         if not is_station_available(station):
             return Response(
                 {
-                    "success": 1,
+                    "status": 1,
                     "message": "Station currently unavailable",
-                    "data": None
+                    "data": None,
+                    "errors": None
                 },
                 status=503
             )
 
         return Response({
-            "success": 0,
+            "status": 0,
             "message": "Stream URL retrieved",
             "data": {
                 "stream_url": station.stream_url,
                 "format": station.format
-            }
+            },
+            "errors": None
         })
 ```
 

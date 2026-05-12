@@ -4,6 +4,8 @@
 
 Created production-grade architecture documentation for integrating internet radio streaming (BBC 1Xtra) into the Django + Nextcloud ecosystem.
 
+> **MVP Implementation Status**: ✅ COMPLETE
+
 ## Documents Created
 
 ### Core Documentation (docs/architecture/radio/)
@@ -62,7 +64,7 @@ docs/architecture/radio/
 ## Alignment with Existing Patterns
 
 - `/api/v1/` prefix consistency
-- Response envelope format (`success`, `message`, `data`)
+- Response envelope format (`status`, `message`, `data`, `errors`)
 - App structure matching `activities/`, `weather/`, `ndvi/`
 - DRF + drf-spectacular for OpenAPI docs
 

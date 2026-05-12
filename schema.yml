@@ -2232,6 +2232,90 @@ paths:
               schema:
                 $ref: '#/components/schemas/NdviErrorResponse'
           description: ''
+  /api/v1/radio/providers/:
+    get:
+      operationId: v1_radio_providers_retrieve
+      description: Returns all active radio providers.
+      summary: List providers
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderListEnvelope'
+          description: ''
+  /api/v1/radio/stations/:
+    get:
+      operationId: v1_radio_stations_retrieve
+      description: Returns all active radio stations.
+      summary: List radio stations
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StationListEnvelope'
+          description: ''
+  /api/v1/radio/stations/{station_id}/:
+    get:
+      operationId: v1_radio_stations_retrieve_2
+      description: Returns details for a specific radio station.
+      summary: Get station details
+      parameters:
+      - in: path
+        name: station_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StationDetailEnvelope'
+          description: ''
+  /api/v1/radio/stations/{station_id}/stream/:
+    get:
+      operationId: v1_radio_stations_stream_retrieve
+      description: Returns stream URL and metadata for playback.
+      summary: Get stream URL
+      parameters:
+      - in: path
+        name: station_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamUrlEnvelope'
+          description: ''
   /api/v1/weather/current/:
     get:
       operationId: v1_weather_current_retrieve
@@ -4705,6 +4789,48 @@ components:
           maxLength: 128
         is_active:
           type: boolean
+    Provider:
+      type: object
+      description: Serialize provider for API responses.
+      properties:
+        slug:
+          type: string
+          maxLength: 50
+          pattern: ^[-a-zA-Z0-9_]+$
+        name:
+          type: string
+          maxLength: 200
+        website_url:
+          type: string
+          format: uri
+          maxLength: 200
+        logo_url:
+          type: string
+          format: uri
+          maxLength: 200
+        is_active:
+          type: boolean
+      required:
+      - name
+      - slug
+    ProviderListEnvelope:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Provider'
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
     RasterPngRequest:
       type: object
       properties:
@@ -4739,6 +4865,165 @@ components:
       - password
       - password2
       - username
+    Station:
+      type: object
+      description: Serialize station metadata for API responses.
+      properties:
+        id:
+          type: string
+          maxLength: 50
+        name:
+          type: string
+          maxLength: 200
+        provider:
+          type: string
+        provider_name:
+          type: string
+          readOnly: true
+        genre:
+          type: string
+          maxLength: 100
+        country:
+          type: string
+          maxLength: 100
+        language:
+          type: string
+          maxLength: 100
+        logo_url:
+          type: string
+          format: uri
+          maxLength: 200
+        is_active:
+          type: boolean
+      required:
+      - country
+      - id
+      - language
+      - name
+      - provider
+      - provider_name
+    StationDetail:
+      type: object
+      description: Extended serializer with stream URL.
+      properties:
+        id:
+          type: string
+          maxLength: 50
+        name:
+          type: string
+          maxLength: 200
+        provider:
+          type: string
+        provider_name:
+          type: string
+          readOnly: true
+        genre:
+          type: string
+          maxLength: 100
+        country:
+          type: string
+          maxLength: 100
+        language:
+          type: string
+          maxLength: 100
+        logo_url:
+          type: string
+          format: uri
+          maxLength: 200
+        is_active:
+          type: boolean
+        stream_url:
+          type: string
+          format: uri
+          readOnly: true
+        format:
+          type: string
+          readOnly: true
+        bitrate:
+          type: integer
+          readOnly: true
+        website_url:
+          type: string
+          format: uri
+          readOnly: true
+      required:
+      - bitrate
+      - country
+      - format
+      - id
+      - language
+      - name
+      - provider
+      - provider_name
+      - stream_url
+      - website_url
+    StationDetailEnvelope:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/StationDetail'
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    StationListEnvelope:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Station'
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    StreamUrlData:
+      type: object
+      properties:
+        stream_url:
+          type: string
+          format: uri
+        format:
+          type: string
+        bitrate:
+          type: integer
+        station_name:
+          type: string
+      required:
+      - bitrate
+      - format
+      - station_name
+      - stream_url
+    StreamUrlEnvelope:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/StreamUrlData'
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
     TokenRefresh:
       type: object
       properties:

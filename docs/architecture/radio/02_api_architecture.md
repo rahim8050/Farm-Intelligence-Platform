@@ -1,5 +1,7 @@
 # API Architecture
 
+> **Status**: ✅ IMPLEMENTED
+
 ## Proposed Endpoint Structure
 
 All radio endpoints follow the `/api/v1/radio/` prefix, consistent with existing project conventions.
@@ -21,7 +23,7 @@ GET /api/v1/radio/stations/
 
 Response:
 {
-    "success": 0,
+    "status": 0,
     "message": "Stations retrieved successfully",
     "data": {
         "count": 1,
@@ -62,9 +64,10 @@ All responses use the standard envelope defined in `config.api.responses.success
 
 ```json
 {
-    "success": 0,
+    "status": 0,
     "message": "string",
-    "data": "object|null"
+    "data": "object|null",
+    "errors": null
 }
 ```
 
@@ -72,7 +75,7 @@ All responses use the standard envelope defined in `config.api.responses.success
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `success` | int | 0 for success (1 for error) |
+| `status` | int | 0 for success (1 for error) |
 | `message` | string | Human-readable status message |
 | `data` | object | Response payload |
 
@@ -80,9 +83,10 @@ All responses use the standard envelope defined in `config.api.responses.success
 
 ```json
 {
-    "success": 1,
+    "status": 1,
     "message": "Station not found",
-    "data": null
+    "data": null,
+    "errors": null
 }
 ```
 
@@ -94,7 +98,7 @@ All responses use the standard envelope defined in `config.api.responses.success
 | 404 | Provider not found | "Provider not found" |
 | 429 | Rate limit exceeded | "Rate limit exceeded. Try again later." |
 
-Error responses follow the envelope format with `success: 1`.
+Error responses follow the envelope format with `status: 1`.
 
 ## Authentication Strategy Options
 
@@ -158,9 +162,10 @@ from rest_framework import serializers
 StationEnvelope = inline_serializer(
     name="StationEnvelope",
     fields={
-        "success": serializers.IntegerField(),
+        "status": serializers.IntegerField(),
         "message": serializers.CharField(),
         "data": StationSerializer(),
+        "errors": serializers.JSONField(allow_null=True),
     },
 )
 

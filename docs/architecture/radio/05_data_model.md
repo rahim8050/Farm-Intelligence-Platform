@@ -1,5 +1,7 @@
 # Data Model Planning
 
+> **Status**: ✅ IMPLEMENTED (Station + Provider models)
+
 ## Station Metadata Schema
 
 ### Provider Model

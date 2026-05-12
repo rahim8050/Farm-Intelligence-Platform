@@ -33,7 +33,7 @@ Django serves metadata APIs only.
 
 ```json
 {
-  "success": 0,
+  "status": 0,
   "message": "Station retrieved",
   "data": {
     "id": "bbc_1xtra",
@@ -41,7 +41,8 @@ Django serves metadata APIs only.
     "stream_url": "http://stream.live.vc.bbcmedia.co.uk/bbc_1xtra",
     "format": "MP3",
     "bitrate": 128
-  }
+  },
+  "errors": null
 }
 ```
 

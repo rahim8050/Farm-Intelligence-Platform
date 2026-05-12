@@ -1,5 +1,7 @@
 # Security Architecture
 
+> **Status**: ✅ IMPLEMENTED (Public access, AllowAny permissions)
+
 ## HTTPS Requirements
 
 All radio endpoints must be served over HTTPS in production.

@@ -1,5 +1,7 @@
 # Future Expansion Planning
 
+> **Status**: ⏳ NOT IMPLEMENTED (Planned for future phases)
+
 ## Additional Radio Stations
 
 ### Phase 2: More BBC Stations

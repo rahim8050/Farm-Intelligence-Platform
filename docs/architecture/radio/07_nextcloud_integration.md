@@ -1,5 +1,7 @@
 # Nextcloud Integration Design
 
+> **Status**: ⏳ NOT IMPLEMENTED (Design only - frontend integration)
+
 ## Expected Frontend Consumption Flow
 
 ### 1. Load Station List
@@ -10,7 +12,7 @@ async function loadStations() {
     const response = await fetch('/api/v1/radio/stations/');
     const data = await response.json();
 
-    if (data.success === 0) {
+    if (data.status === 0) {
         return data.data.results;
     }
     throw new Error(data.message);
@@ -38,7 +40,7 @@ async function playStation(stationId) {
     const response = await fetch(`/api/v1/radio/stations/${stationId}/stream/`);
     const data = await response.json();
 
-    if (data.success === 0) {
+    if (data.status === 0) {
         playAudio(data.data.stream_url, data.data);
     }
 }

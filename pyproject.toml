@@ -97,6 +97,10 @@ module = ["activities.*"]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
+module = ["radio.*"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
 module = ["tests.*"]
 ignore_errors = true
 

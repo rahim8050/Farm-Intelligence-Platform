@@ -1,5 +1,7 @@
 # System Overview
 
+> **Status**: ✅ IMPLEMENTED (MVP)
+
 ## Purpose of the Radio Service
 
 The Radio service provides a standardized API for discovering and streaming internet radio stations within the existing Django + Nextcloud ecosystem. It exposes metadata about available stations and their streaming URLs, enabling Nextcloud frontend clients to play live audio content.

@@ -97,6 +97,7 @@ INSTALLED_APPS = [
     "ndvi",
     "weather",
     "activities",
+    "radio",
     "django_celery_beat",
 ]
 

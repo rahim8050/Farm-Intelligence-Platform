@@ -83,4 +83,5 @@ urlpatterns = [
     path("api/v1/", include("ndvi.urls")),
     path("api/v1/", include("weather.urls")),
     path("api/v1/", include("activities.urls")),
+    path("api/v1/", include("radio.urls")),
 ]
