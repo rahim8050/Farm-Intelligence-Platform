@@ -25,7 +25,7 @@ class LoadStationsCommandTestCase(TestCase):
         self.assertEqual(station.name, "BBC 1Xtra")
         self.assertEqual(
             station.stream_url,
-            "http://stream.live.vc.bbcmedia.co.uk/bbc_1xtra",
+            "http://as-hls-ww-live.akamaized.net/pool_92079267/live/ww/bbc_1xtra/bbc_1xtra.isml/bbc_1xtra-audio%3d96000.norewind.m3u8",
         )
 
     def test_load_stations_idempotent(self) -> None:
