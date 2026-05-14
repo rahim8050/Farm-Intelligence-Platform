@@ -3,11 +3,24 @@ from __future__ import annotations
 from django.db import models
 
 
+class ProviderType(models.TextChoices):
+    BROADCASTER = "broadcaster", "Direct Broadcaster"
+    AGGREGATOR = "aggregator", "Station Aggregator"
+    API_BASED = "api_based", "API-driven"
+
+
 class Provider(models.Model):
     """Radio streaming provider."""
 
     slug = models.SlugField(max_length=50, primary_key=True)
     name = models.CharField(max_length=200)
+    provider_type = models.CharField(
+        max_length=20,
+        choices=ProviderType.choices,
+        default=ProviderType.BROADCASTER,
+    )
+    api_endpoint = models.URLField(blank=True)
+    api_key = models.CharField(max_length=500, blank=True)
     website_url = models.URLField(blank=True)
     logo_url = models.URLField(blank=True)
     is_active = models.BooleanField(default=True)

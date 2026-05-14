@@ -1,25 +1,24 @@
 # Future Expansion Planning
 
-> **Status**: ⏳ NOT IMPLEMENTED (Planned for future phases)
+> **Status**: Phase 3 ✅ IMPLEMENTED (BBC, SomaFM, TuneIn providers)
 
 ## Additional Radio Stations
 
-### Phase 2: More BBC Stations
+### Phase 2: More BBC Stations ✅ DONE
 
 | Station | ID | Genre |
 |---------|-----|-------|
 | BBC Radio 1 | `bbc_radio1` | Pop, Chart |
 | BBC Radio 1Xtra | `bbc_1xtra` | Hip Hop, R&B |
 | BBC Radio 2 | `bbc_radio2` | Adult Contemporary |
-| BBC Radio 1 Extra | `bbc_1xtra` | (Already added) |
 
-### Phase 3: Other Providers
+### Phase 3: Other Providers ✅ DONE
 
-| Provider | Type | Integration |
-|----------|------|-------------|
-| TuneIn | Aggregator | API-based station list |
-| Radio Browser API | Open | Direct API integration |
-| SomaFM | Independent | Direct stream URLs |
+| Provider | Type | Integration | Stations |
+|----------|------|-------------|----------|
+| TuneIn | Aggregator | API-based station list | 1 (BBC WS) |
+| SomaFM | Independent | Direct stream URLs | 8 |
+| Radio Browser API | Open | Not implemented | - | |
 
 ### Provider Model Extension
 
