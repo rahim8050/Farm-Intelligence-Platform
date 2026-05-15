@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status, viewsets
@@ -242,6 +243,12 @@ class ActivityViewSet(viewsets.ModelViewSet):
         """
         if isinstance(request.user, IntegrationTokenUser):
             self._enforce_integration_scope(request, write=True)
+            user_model = get_user_model()
+            owner = user_model.objects.get(
+                pk=request.user.token.get("user_id")
+            )
+        else:
+            owner = request.user
 
         serializer = ActivityCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -249,7 +256,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
         correlation_id = _get_correlation_id(request)
         if correlation_id:
             metadata["correlation_id"] = correlation_id
-        activity = serializer.save(owner=request.user, metadata=metadata)
+        activity = serializer.save(owner=owner, metadata=metadata)
         return success_response(
             ActivitySerializer(activity).data,
             status_code=status.HTTP_201_CREATED,
