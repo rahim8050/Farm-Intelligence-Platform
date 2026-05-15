@@ -161,8 +161,12 @@ class BaseFarmActivityView(APIView):
             Farm, id=farm_id, owner_id=user_id, is_active=True
         )
 
-    def _resolve_owner(self, request: Request) -> Any:
+    def _resolve_owner(
+        self, request: Request, farm: Farm | None = None
+    ) -> Any:
         if isinstance(request.user, IntegrationTokenUser):
+            if farm is not None:
+                return farm.owner
             user_model = get_user_model()
             return user_model.objects.get(pk=request.user.token.get("user_id"))
         return request.user
@@ -242,7 +246,7 @@ class FarmActivityListCreateView(BaseFarmActivityView):
         farm = self._get_farm(request, farm_id)
         serializer = ActivityCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        owner = self._resolve_owner(request)
+        owner = self._resolve_owner(request, farm=farm)
         activity = serializer.save(
             farm=farm,
             owner=owner,
