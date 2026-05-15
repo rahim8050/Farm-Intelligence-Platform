@@ -256,7 +256,11 @@ def verify_nextcloud_hmac_request(
         nonce=headers.nonce,
         body_sha256=body_sha256,
     )
-    expected_sig = compute_hmac_signature_b64(
+    expected_sig_b64 = compute_hmac_signature_b64(
+        secret=secret,
+        canonical_string=canonical,
+    )
+    expected_sig_hex = compute_hmac_signature_hex(
         secret=secret,
         canonical_string=canonical,
     )
@@ -267,10 +271,13 @@ def verify_nextcloud_hmac_request(
         body_sha256=body_sha256,
         canonical=canonical,
         signature=headers.signature,
-        expected_signature=expected_sig,
+        expected_signature=expected_sig_b64,
         secret=secret,
     )
-    if not hmac.compare_digest(headers.signature, expected_sig):
+    sig_matches = hmac.compare_digest(
+        headers.signature, expected_sig_b64
+    ) or hmac.compare_digest(headers.signature.lower(), expected_sig_hex)
+    if not sig_matches:
         normalized_method = method.upper()
 
         if allowed_methods:
@@ -289,11 +296,19 @@ def verify_nextcloud_hmac_request(
                         body=request.body,
                     ),
                 )
-                candidate_sig = compute_hmac_signature_b64(
+                candidate_sig_b64 = compute_hmac_signature_b64(
                     secret=secret,
                     canonical_string=candidate_canonical,
                 )
-                if hmac.compare_digest(headers.signature, candidate_sig):
+                candidate_sig_hex = compute_hmac_signature_hex(
+                    secret=secret,
+                    canonical_string=candidate_canonical,
+                )
+                if hmac.compare_digest(
+                    headers.signature, candidate_sig_b64
+                ) or hmac.compare_digest(
+                    headers.signature.lower(), candidate_sig_hex
+                ):
                     raise NextcloudHMACVerificationError(
                         "Nextcloud signature mismatch (method).",
                         code="method_mismatch",
@@ -316,11 +331,19 @@ def verify_nextcloud_hmac_request(
                     body=request.body,
                 ),
             )
-            candidate_sig = compute_hmac_signature_b64(
+            candidate_sig_b64 = compute_hmac_signature_b64(
                 secret=secret,
                 canonical_string=candidate_canonical,
             )
-            if hmac.compare_digest(headers.signature, candidate_sig):
+            candidate_sig_hex = compute_hmac_signature_hex(
+                secret=secret,
+                canonical_string=candidate_canonical,
+            )
+            if hmac.compare_digest(
+                headers.signature, candidate_sig_b64
+            ) or hmac.compare_digest(
+                headers.signature.lower(), candidate_sig_hex
+            ):
                 raise NextcloudHMACVerificationError(
                     "Nextcloud signature mismatch (path).",
                     code="path_mismatch",
@@ -337,11 +360,19 @@ def verify_nextcloud_hmac_request(
                     nonce=headers.nonce,
                     body_sha256=body_hash,
                 )
-                candidate_sig = compute_hmac_signature_b64(
+                candidate_sig_b64 = compute_hmac_signature_b64(
                     secret=secret,
                     canonical_string=candidate_canonical,
                 )
-                if hmac.compare_digest(headers.signature, candidate_sig):
+                candidate_sig_hex = compute_hmac_signature_hex(
+                    secret=secret,
+                    canonical_string=candidate_canonical,
+                )
+                if hmac.compare_digest(
+                    headers.signature, candidate_sig_b64
+                ) or hmac.compare_digest(
+                    headers.signature.lower(), candidate_sig_hex
+                ):
                     raise NextcloudHMACVerificationError(
                         "Nextcloud signature mismatch (body hash).",
                         code="body_hash_mismatch",
@@ -356,11 +387,19 @@ def verify_nextcloud_hmac_request(
                 nonce=headers.nonce,
                 body_sha256=empty_body_hash,
             )
-            candidate_sig = compute_hmac_signature_b64(
+            candidate_sig_b64 = compute_hmac_signature_b64(
                 secret=secret,
                 canonical_string=candidate_canonical,
             )
-            if hmac.compare_digest(headers.signature, candidate_sig):
+            candidate_sig_hex = compute_hmac_signature_hex(
+                secret=secret,
+                canonical_string=candidate_canonical,
+            )
+            if hmac.compare_digest(
+                headers.signature, candidate_sig_b64
+            ) or hmac.compare_digest(
+                headers.signature.lower(), candidate_sig_hex
+            ):
                 raise NextcloudHMACVerificationError(
                     "Nextcloud signature mismatch (body hash).",
                     code="body_hash_mismatch",
