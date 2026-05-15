@@ -6,6 +6,7 @@ Nextcloud -> DRF calls using a shared-secret HMAC contract.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import logging
@@ -112,6 +113,17 @@ def compute_hmac_signature_hex(*, secret: bytes, canonical_string: str) -> str:
     return digest
 
 
+def compute_hmac_signature_b64(*, secret: bytes, canonical_string: str) -> str:
+    """Compute the expected base64 HMAC-SHA256 signature (Nextcloud format)."""
+
+    digest = hmac.new(
+        secret,
+        canonical_string.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    return base64.b64encode(digest).decode()
+
+
 def _log_hmac_debug(
     *,
     client_id: str,
@@ -173,7 +185,7 @@ def _get_required_headers(request: Request) -> NextcloudHMACHeaders:
         client_id=client_id,
         timestamp=timestamp,
         nonce=nonce,
-        signature=signature.lower(),
+        signature=signature,
     )
 
 
@@ -244,7 +256,7 @@ def verify_nextcloud_hmac_request(
         nonce=headers.nonce,
         body_sha256=body_sha256,
     )
-    expected_sig = compute_hmac_signature_hex(
+    expected_sig = compute_hmac_signature_b64(
         secret=secret,
         canonical_string=canonical,
     )
@@ -277,7 +289,7 @@ def verify_nextcloud_hmac_request(
                         body=request.body,
                     ),
                 )
-                candidate_sig = compute_hmac_signature_hex(
+                candidate_sig = compute_hmac_signature_b64(
                     secret=secret,
                     canonical_string=candidate_canonical,
                 )
@@ -304,7 +316,7 @@ def verify_nextcloud_hmac_request(
                     body=request.body,
                 ),
             )
-            candidate_sig = compute_hmac_signature_hex(
+            candidate_sig = compute_hmac_signature_b64(
                 secret=secret,
                 canonical_string=candidate_canonical,
             )
@@ -325,7 +337,7 @@ def verify_nextcloud_hmac_request(
                     nonce=headers.nonce,
                     body_sha256=body_hash,
                 )
-                candidate_sig = compute_hmac_signature_hex(
+                candidate_sig = compute_hmac_signature_b64(
                     secret=secret,
                     canonical_string=candidate_canonical,
                 )
@@ -344,7 +356,7 @@ def verify_nextcloud_hmac_request(
                 nonce=headers.nonce,
                 body_sha256=empty_body_hash,
             )
-            candidate_sig = compute_hmac_signature_hex(
+            candidate_sig = compute_hmac_signature_b64(
                 secret=secret,
                 canonical_string=candidate_canonical,
             )
