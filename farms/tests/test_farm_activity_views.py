@@ -350,7 +350,9 @@ class FarmActivityAPITests(APITestCase):
         self.assertEqual(body["status"], 0)
         self.assertEqual(body["data"]["type"], "irrigation")
         self.assertEqual(Activity.objects.count(), 1)
-        self.assertEqual(Activity.objects.first().farm_id, self.farm.id)
+        created = Activity.objects.first()
+        assert created is not None
+        self.assertEqual(created.farm_id, self.farm.id)
 
     def test_create_activity_denied_for_other_user(self) -> None:
         self.client.force_authenticate(user=self.other_user)
