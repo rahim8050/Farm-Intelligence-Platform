@@ -20,22 +20,26 @@ cd "${REPO_DIR}"
 
 echo "## Commits" >> "${REPORT_FILE}"
 echo "" >> "${REPORT_FILE}"
-git log --since="${DATE}T00:00:00" --until="${DATE}T23:59:59" --pretty=format:"- %h %s (%an, %cr)" --no-merges >> "${REPORT_FILE}" 2>/dev/null || echo "_No commits_" >> "${REPORT_FILE}"
+COMMITS=$(git log --since="${DATE}T00:00:00" --until="${DATE}T23:59:59" --pretty=format:"- %h %s (%an, %cr)" --no-merges 2>/dev/null || true)
+if [ -z "${COMMITS}" ]; then
+  echo "_No commits_" >> "${REPORT_FILE}"
+else
+  echo "${COMMITS}" >> "${REPORT_FILE}"
+fi
 echo "" >> "${REPORT_FILE}"
 echo "" >> "${REPORT_FILE}"
 
-echo "## Pre-commit / Lint Results" >> "${REPORT_FILE}"
+echo "## Lint Summary" >> "${REPORT_FILE}"
 echo "" >> "${REPORT_FILE}"
-echo '```' >> "${REPORT_FILE}"
-pre-commit run --all-files >> "${REPORT_FILE}" 2>&1 || true
-echo '```' >> "${REPORT_FILE}"
+echo "Run \`pre-commit run --all-files\` for full results (ruff + mypy + bandit)" >> "${REPORT_FILE}"
 echo "" >> "${REPORT_FILE}"
 
 echo "## Test Summary" >> "${REPORT_FILE}"
 echo "" >> "${REPORT_FILE}"
-echo '```' >> "${REPORT_FILE}"
-.venv/bin/python manage.py test radio --verbosity=2 2>&1 | tail -10 >> "${REPORT_FILE}" || true
-echo '```' >> "${REPORT_FILE}"
+TEST_OUTPUT=(.venv/bin/python manage.py test radio --verbosity=1 2>&1 | tail -5 || true)
+echo "\`\`\`" >> "${REPORT_FILE}"
+echo "${TEST_OUTPUT[*]}" >> "${REPORT_FILE}"
+echo "\`\`\`" >> "${REPORT_FILE}"
 echo "" >> "${REPORT_FILE}"
 
 echo "## File Changes" >> "${REPORT_FILE}"
