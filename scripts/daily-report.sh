@@ -36,7 +36,7 @@ echo "" >> "${REPORT_FILE}"
 
 echo "## Test Summary" >> "${REPORT_FILE}"
 echo "" >> "${REPORT_FILE}"
-TEST_OUTPUT=(.venv/bin/python manage.py test radio --verbosity=1 2>&1 | tail -5 || true)
+TEST_OUTPUT=$(.venv/bin/python manage.py test radio --verbosity=1 2>&1 | tail -5 || true)
 echo "\`\`\`" >> "${REPORT_FILE}"
 echo "${TEST_OUTPUT[*]}" >> "${REPORT_FILE}"
 echo "\`\`\`" >> "${REPORT_FILE}"
