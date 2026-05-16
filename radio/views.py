@@ -22,6 +22,7 @@ from radio.serializers import (
     ProviderSerializer,
     StationDetailSerializer,
     StationSerializer,
+    _upgrade_to_https,
 )
 
 StationListEnvelope = inline_serializer(
@@ -87,6 +88,7 @@ class StationListView(APIView):
         responses={200: StationListEnvelope},
         summary="List radio stations",
         description="Returns all active radio stations.",
+        operation_id="v1_radio_stations_list",
     )
     def get(self, request: Request) -> Response:
         """Get all active radio stations.
@@ -119,6 +121,7 @@ class StationDetailView(APIView):
         responses={200: StationDetailEnvelope},
         summary="Get station details",
         description="Returns details for a specific radio station.",
+        operation_id="v1_radio_stations_retrieve",
     )
     def get(self, request: Request, station_id: str) -> Response:
         """Get station by ID.
@@ -163,6 +166,7 @@ class StationStreamView(APIView):
         responses={200: StreamUrlEnvelope},
         summary="Get stream URL",
         description="Returns stream URL and metadata for playback.",
+        operation_id="v1_radio_stations_stream",
     )
     def get(self, request: Request, station_id: str) -> Response:
         """Get stream URL for a station.
@@ -189,7 +193,7 @@ class StationStreamView(APIView):
 
         return success_response(
             {
-                "stream_url": station.stream_url,
+                "stream_url": _upgrade_to_https(station.stream_url),
                 "format": station.format,
                 "bitrate": station.bitrate,
                 "station_name": station.name,
@@ -212,6 +216,7 @@ class ProviderListView(APIView):
         responses={200: ProviderListEnvelope},
         summary="List providers",
         description="Returns all active radio providers.",
+        operation_id="v1_radio_providers_list",
     )
     def get(self, request: Request) -> Response:
         """Get all active providers.

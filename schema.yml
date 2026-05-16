@@ -188,7 +188,7 @@ paths:
   /api/v1/activities/health/:
     get:
       operationId: v1_activities_health_retrieve
-      description: Return a lightweight health snapshot for the activities subsystem.
+      description: Return a lightweight health snapshot for activities.
       tags:
       - v1
       security:
@@ -522,6 +522,304 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Farm'
+          description: ''
+  /api/v1/farms/{farm_id}/activities/:
+    get:
+      operationId: v1_farms_activities_list
+      description: |-
+        List activities for the requested farm.
+
+        Inputs: optional query params status, type, limit, offset.
+        Output: success envelope with a list of activities.
+        Side effects: none.
+      parameters:
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      - in: query
+        name: limit
+        schema:
+          type: integer
+        description: Max activities to return (default 100, max 500).
+      - in: query
+        name: offset
+        schema:
+          type: integer
+        description: Number of activities to skip (default 0).
+      - in: query
+        name: status
+        schema:
+          type: string
+        description: Filter activities by status.
+      - in: query
+        name: type
+        schema:
+          type: string
+        description: Filter activities by type.
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityListSuccess'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+    post:
+      operationId: v1_farms_activities_create
+      description: |-
+        Create a new activity for the farm.
+
+        Inputs: ActivityCreateSerializer body.
+        Output: success envelope with the created activity.
+        Side effects: creates an Activity row.
+      parameters:
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivityCreate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ActivityCreate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ActivityCreate'
+        required: true
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivitySuccess'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+  /api/v1/farms/{farm_id}/activities/{activity_id}/:
+    get:
+      operationId: v1_farms_activities_retrieve
+      description: |-
+        Return the requested activity entry.
+
+        Inputs: path params farm_id, activity_id.
+        Output: success envelope with the activity.
+        Side effects: none.
+      parameters:
+      - in: path
+        name: activity_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivitySuccess'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+    patch:
+      operationId: v1_farms_activities_update
+      description: |-
+        Update fields on the activity entry.
+
+        Inputs: path params farm_id, activity_id; body fields to update.
+        Output: success envelope with the updated activity.
+        Side effects: updates the Activity row.
+      parameters:
+      - in: path
+        name: activity_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedActivityCreate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedActivityCreate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedActivityCreate'
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivitySuccess'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+    delete:
+      operationId: v1_farms_activities_delete
+      description: |-
+        Delete the activity entry.
+
+        Inputs: path params farm_id, activity_id.
+        Output: success envelope with data null.
+        Side effects: deletes the Activity row.
+      parameters:
+      - in: path
+        name: activity_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityDeleteSuccess'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FarmActivityErrorResponse'
           description: ''
   /api/v1/farms/{farm_id}/ndvi/latest/:
     get:
@@ -2249,7 +2547,7 @@ paths:
           description: ''
   /api/v1/radio/providers/:
     get:
-      operationId: v1_radio_providers_retrieve
+      operationId: v1_radio_providers_list
       description: Returns all active radio providers.
       summary: List providers
       tags:
@@ -2267,7 +2565,7 @@ paths:
           description: ''
   /api/v1/radio/stations/:
     get:
-      operationId: v1_radio_stations_retrieve
+      operationId: v1_radio_stations_list
       description: Returns all active radio stations.
       summary: List radio stations
       tags:
@@ -2285,7 +2583,7 @@ paths:
           description: ''
   /api/v1/radio/stations/{station_id}/:
     get:
-      operationId: v1_radio_stations_retrieve_2
+      operationId: v1_radio_stations_retrieve
       description: Returns details for a specific radio station.
       summary: Get station details
       parameters:
@@ -2309,7 +2607,7 @@ paths:
           description: ''
   /api/v1/radio/stations/{station_id}/stream/:
     get:
-      operationId: v1_radio_stations_stream_retrieve
+      operationId: v1_radio_stations_stream
       description: Returns stream URL and metadata for playback.
       summary: Get stream URL
       parameters:
@@ -3271,6 +3569,69 @@ components:
       - name
       - slug
       - updated_at
+    FarmActivityDeleteSuccess:
+      type: object
+      properties:
+        data:
+          nullable: true
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    FarmActivityErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - errors
+      - message
+      - status
+    FarmActivityListSuccess:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Activity'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    FarmActivitySuccess:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Activity'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
     FarmObservation:
       type: object
       properties:
@@ -4728,6 +5089,46 @@ components:
           type: string
           format: date-time
           readOnly: true
+    PatchedActivityCreate:
+      type: object
+      properties:
+        type:
+          enum:
+          - vaccination
+          - fertilizer
+          - irrigation
+          - ndvi_trigger
+          type: string
+          description: |-
+            * `vaccination` - Vaccination
+            * `fertilizer` - Fertilizer
+            * `irrigation` - Irrigation
+            * `ndvi_trigger` - NDVI Trigger
+          x-spec-enum-id: 1ce88b7606ecd946
+        scheduled_at:
+          type: string
+          format: date-time
+        recurrence_type:
+          enum:
+          - none
+          - interval
+          - cron
+          type: string
+          description: |-
+            * `none` - One-time
+            * `interval` - Interval
+            * `cron` - Cron (future)
+          x-spec-enum-id: 0558a0275e55b584
+        interval_days:
+          type: integer
+          maximum: 4294967295
+          minimum: 0
+          format: int64
+          nullable: true
+        farm:
+          type: integer
+          nullable: true
+        metadata: {}
     PatchedApiKeyCreate:
       type: object
       properties:

@@ -1,6 +1,15 @@
+from typing import Any
+
 from rest_framework import serializers
 
 from radio.models import Provider, Station
+
+
+def _upgrade_to_https(value: str) -> str:
+    """Upgrade HTTP URLs to HTTPS for mixed-content safety."""
+    if isinstance(value, str) and value.startswith("http://"):
+        return value.replace("http://", "https://", 1)
+    return value
 
 
 class ProviderSerializer(serializers.ModelSerializer):
@@ -15,6 +24,13 @@ class ProviderSerializer(serializers.ModelSerializer):
             "logo_url",
             "is_active",
         ]
+
+    def to_representation(self, instance: Any) -> dict:
+        data = super().to_representation(instance)
+        for field in ("website_url", "logo_url"):
+            if data.get(field):
+                data[field] = _upgrade_to_https(data[field])
+        return data
 
 
 class StationSerializer(serializers.ModelSerializer):
@@ -38,6 +54,13 @@ class StationSerializer(serializers.ModelSerializer):
             "is_active",
         ]
 
+    def to_representation(self, instance: Any) -> dict:
+        data = super().to_representation(instance)
+        for field in ("logo_url",):
+            if data.get(field):
+                data[field] = _upgrade_to_https(data[field])
+        return data
+
 
 class StationDetailSerializer(StationSerializer):
     """Extended serializer with stream URL."""
@@ -54,3 +77,10 @@ class StationDetailSerializer(StationSerializer):
             "bitrate",
             "website_url",
         ]
+
+    def to_representation(self, instance: Any) -> dict:
+        data = super().to_representation(instance)
+        for field in ("stream_url", "website_url"):
+            if data.get(field):
+                data[field] = _upgrade_to_https(data[field])
+        return data
