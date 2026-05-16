@@ -44,7 +44,7 @@ echo "" >> "${REPORT_FILE}"
 
 echo "## File Changes" >> "${REPORT_FILE}"
 echo "" >> "${REPORT_FILE}"
-git diff --stat --since="${DATE}T00:00:00" --until="${DATE}T23:59:59" >> "${REPORT_FILE}" 2>/dev/null || echo "_No changes_" >> "${REPORT_FILE}"
+git diff --stat --since="${DATE}T00:00:00" --until="${DATE}T23:59:59" -- radio/ >> "${REPORT_FILE}" 2>/dev/null || echo "_No changes_" >> "${REPORT_FILE}"
 echo "" >> "${REPORT_FILE}"
 
 echo "Report saved to: ${REPORT_FILE}"
