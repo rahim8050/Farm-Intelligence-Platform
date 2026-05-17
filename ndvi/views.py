@@ -18,6 +18,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.core.cache import caches
+from django.db.models import Q
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
@@ -47,7 +48,10 @@ from config.api.openapi import (
 from config.api.responses import JSONValue, error_response, success_response
 from farms.authentication import FarmObservationAuthentication
 from farms.models import Farm
-from integrations.authentication import IntegrationTokenUser
+from integrations.authentication import (
+    IntegrationJWTAuthentication,
+    IntegrationTokenUser,
+)
 
 from .farm_state import build_farm_state
 from .metrics import ndvi_farms_stale_total
@@ -340,6 +344,10 @@ class BaseFarmView(APIView):
     Response envelope: `success_response`.
     """
 
+    authentication_classes = (
+        FarmObservationAuthentication,
+        IntegrationJWTAuthentication,
+    )
     permission_classes = [IsAuthenticated]
 
     def finalize_response(
@@ -367,9 +375,48 @@ class BaseFarmView(APIView):
         return response
 
     def _get_farm(self, farm_id: int, user_id: int) -> Farm:
+        from integrations.authentication import IntegrationTokenUser
+
+        user = self.request.user
+        logger.info(
+            "ndvi._get_farm farm_id=%s user_type=%s user_id=%s",
+            farm_id,
+            type(user).__name__,
+            getattr(user, "id", None),
+        )
+        if isinstance(user, IntegrationTokenUser):
+            client_id = user.client_id
+            logger.info(
+                "ndvi._get_farm integration client_id=%s",
+                client_id,
+            )
+            try:
+                return get_object_or_404(
+                    Farm,
+                    id=farm_id,
+                    integration_access__client_id=client_id,
+                    integration_access__is_active=True,
+                    is_active=True,
+                )
+            except Http404:
+                logger.debug(
+                    "ndvi.farm.not_found farm_id=%s client_id=%s auth=%s path=%s",
+                    farm_id,
+                    client_id,
+                    _auth_type(self.request),
+                    getattr(self.request, "path", ""),
+                )
+                raise
+
         try:
             return get_object_or_404(
-                Farm, id=farm_id, owner_id=user_id, is_active=True
+                Farm,
+                Q(id=farm_id, owner_id=user_id, is_active=True)
+                | Q(
+                    id=farm_id,
+                    integration_access__is_active=True,
+                    is_active=True,
+                ),
             )
         except Http404:
             logger.debug(

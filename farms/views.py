@@ -87,8 +87,15 @@ class FarmViewSet(ModelViewSet):
         user_id = getattr(user, "id", None)
         if user_id is None:
             return Farm.objects.none()
-        return Farm.objects.filter(owner_id=cast(int, user_id)).order_by(
-            "-created_at"
+        return (
+            Farm.objects.filter(
+                Q(owner_id=cast(int, user_id))
+                | Q(
+                    integration_access__is_active=True,
+                )
+            )
+            .distinct()
+            .order_by("-created_at")
         )
 
     def get_object(self) -> Farm:
