@@ -39,6 +39,7 @@ class StationSerializer(serializers.ModelSerializer):
     provider_name = serializers.CharField(
         source="provider.name", read_only=True
     )
+    provider_logo_url = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Station
@@ -47,12 +48,19 @@ class StationSerializer(serializers.ModelSerializer):
             "name",
             "provider",
             "provider_name",
+            "provider_logo_url",
             "genre",
             "country",
             "language",
             "logo_url",
             "is_active",
         ]
+
+    def get_provider_logo_url(self, instance: Any) -> str | None:
+        logo = getattr(instance.provider, "logo_url", None)
+        if logo:
+            return _upgrade_to_https(logo)
+        return None
 
     def to_representation(self, instance: Any) -> dict:
         data = super().to_representation(instance)
