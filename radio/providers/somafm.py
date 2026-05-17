@@ -75,18 +75,6 @@ SOMAFM_STATIONS: list[StationData] = [
         "website_url": "https://somafm.com/defcon",
     },
     {
-        "id": "somafm_lounge",
-        "name": "SomaFM Lounge",
-        "genre": "Lounge, Jazz",
-        "country": "USA",
-        "language": "English",
-        "stream_url": "https://ice.somafm.com/lounge",
-        "format": "MP3",
-        "bitrate": 128,
-        "logo_url": "https://somafm.com/img3/lounge-200.jpg",
-        "website_url": "https://somafm.com/lounge",
-    },
-    {
         "id": "somafm_beatblender",
         "name": "SomaFM Beat Blender",
         "genre": "House, Electronica",
