@@ -161,7 +161,11 @@ class BaseFarmActivityView(APIView):
         return get_object_or_404(
             Farm,
             Q(id=farm_id, owner_id=user_id, is_active=True)
-            | Q(id=farm_id, integration_access__is_active=True, is_active=True),
+            | Q(
+                id=farm_id,
+                integration_access__is_active=True,
+                is_active=True,
+            ),
         )
 
     def _resolve_owner(

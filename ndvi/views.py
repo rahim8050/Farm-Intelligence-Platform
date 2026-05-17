@@ -400,7 +400,8 @@ class BaseFarmView(APIView):
                 )
             except Http404:
                 logger.debug(
-                    "ndvi.farm.not_found farm_id=%s client_id=%s auth=%s path=%s",
+                    "ndvi.farm.not_found farm_id=%s client_id=%s"
+                    " auth=%s path=%s",
                     farm_id,
                     client_id,
                     _auth_type(self.request),
