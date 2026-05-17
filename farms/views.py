@@ -3,13 +3,17 @@ from __future__ import annotations
 import logging
 from typing import Any, cast
 
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 from django.http import Http404
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import BaseSerializer
 from rest_framework.viewsets import ModelViewSet
+from rest_framework_simplejwt.authentication import JWTAuthentication
+
+from api_keys.authentication import ApiKeyAuthentication
+from integrations.authentication import IntegrationJWTAuthentication
 
 from .models import Farm
 from .permissions import IsFarmOwner
@@ -35,6 +39,11 @@ def _auth_type(request: Request) -> str:
 class FarmViewSet(ModelViewSet):
     serializer_class = FarmSerializer
     permission_classes = [IsAuthenticated, IsFarmOwner]
+    authentication_classes = [
+        IntegrationJWTAuthentication,
+        JWTAuthentication,
+        ApiKeyAuthentication,
+    ]
 
     def finalize_response(
         self,
@@ -61,8 +70,21 @@ class FarmViewSet(ModelViewSet):
         return response
 
     def get_queryset(self) -> QuerySet[Farm]:
-        # Owner-only visibility
-        user_id = getattr(self.request.user, "id", None)
+        from integrations.authentication import IntegrationTokenUser
+
+        user = self.request.user
+        if isinstance(user, IntegrationTokenUser):
+            client_id = user.client_id
+            return (
+                Farm.objects.filter(
+                    Q(integration_access__client_id=client_id)
+                    & Q(integration_access__is_active=True)
+                )
+                .distinct()
+                .order_by("-created_at")
+            )
+
+        user_id = getattr(user, "id", None)
         if user_id is None:
             return Farm.objects.none()
         return Farm.objects.filter(owner_id=cast(int, user_id)).order_by(

@@ -13,7 +13,9 @@ class IntegrationTokenUser(TokenUser):
 
     @property
     def client_id(self) -> str:
-        return str(self.token.get("sub", ""))
+        return str(
+            self.token.get("client_id", "") or self.token.get("sub", "")
+        )
 
     @property
     def id(self) -> str:

@@ -500,10 +500,14 @@ class IntegrationTokenView(APIView):
         auth_obj = request.auth
         user_id = str(getattr(request.user, "pk", ""))
         scope = str(getattr(auth_obj, "scope", ""))
+        client_id = request.headers.get(
+            "X-Client-Id", ""
+        ) or request.headers.get("X-NC-CLIENT-ID", "")
 
         access, expires_in = mint_integration_access_token(
             user_id=user_id,
             scope=scope,
+            client_id=client_id,
         )
         data: dict[str, Any] = {
             "access": access,
