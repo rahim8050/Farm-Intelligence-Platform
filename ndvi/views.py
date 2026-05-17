@@ -29,6 +29,7 @@ from drf_spectacular.utils import (
     inline_serializer,
 )
 from rest_framework import serializers, status
+from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import (
     PermissionDenied,
     Throttled,
@@ -344,7 +345,7 @@ class BaseFarmView(APIView):
     Response envelope: `success_response`.
     """
 
-    authentication_classes = (
+    authentication_classes: tuple[type[BaseAuthentication], ...] = (
         FarmObservationAuthentication,
         IntegrationJWTAuthentication,
     )
