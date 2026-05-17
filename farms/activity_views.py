@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
@@ -158,7 +159,9 @@ class BaseFarmActivityView(APIView):
             raise Http404
 
         return get_object_or_404(
-            Farm, id=farm_id, owner_id=user_id, is_active=True
+            Farm,
+            Q(id=farm_id, owner_id=user_id, is_active=True)
+            | Q(id=farm_id, integration_access__is_active=True, is_active=True),
         )
 
     def _resolve_owner(
