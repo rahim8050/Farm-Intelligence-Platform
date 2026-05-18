@@ -1171,7 +1171,7 @@ def test_is_analytically_valid_rejects_null_mean() -> None:
         farm_id=1,
         engine="stac",
         bucket_date=date(2025, 1, 1),
-        mean=None,  # type: ignore[arg-type]
+        mean=None,  # type: ignore[misc]
         is_latest=True,
         state="FINAL",
     )
@@ -1219,7 +1219,9 @@ def test_get_valid_observations_qs_excludes_invalid(
 
     qs = get_valid_observations_qs(farm=farm, engine="sentinelhub")
     assert qs.count() == 1
-    assert qs.first().bucket_date == date(2025, 3, 1)
+    first_obs = qs.first()
+    assert first_obs is not None
+    assert first_obs.bucket_date == date(2025, 3, 1)
 
 
 @pytest.mark.django_db

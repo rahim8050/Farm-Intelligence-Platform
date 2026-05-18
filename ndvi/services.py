@@ -42,42 +42,157 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_ENGINES = ("sentinelhub", "stac")
 
-_upsert_failure_counts: dict[str, list[float]] = {}
+_CB_STATES = ("closed", "open", "half_open")
+
+
+def _cb_cache_key(engine: str) -> str:
+    return f"ndvi:cb:{engine}"
 
 
 def _check_retry_circuit_breaker(engine: str) -> bool:
     """Check if the circuit breaker is open for upsert retries.
 
+    Uses Django cache (Redis in production) for global coordination
+    across all workers. States: closed, open, half_open.
+
     Returns True if retries should be suppressed (circuit open).
-    Tracks failures within a sliding time window.
+    In half_open state, allows limited retries to test recovery.
     """
+    from django.core.cache import caches
+
     window = get_ndvi_retry_circuit_breaker_window()
     max_failures = get_ndvi_retry_circuit_breaker_max_failures()
+    half_open_max = get_ndvi_retry_circuit_breaker_half_open_max()
+    cache = caches["default"]
+    key = _cb_cache_key(engine)
     now = time.monotonic()
 
-    failures = _upsert_failure_counts.get(engine, [])
-    cutoff = now - window
-    recent = [t for t in failures if t > cutoff]
-    _upsert_failure_counts[engine] = recent
+    state_data = cache.get(key)
+    if state_data is None:
+        state_data = {
+            "state": "closed",
+            "failures": [],
+            "half_open_attempts": 0,
+            "last_failure": 0,
+        }
+        cache.set(key, state_data, timeout=window * 2)
 
-    if len(recent) >= max_failures:
-        logger.warning(
-            "ndvi.upsert.circuit_breaker_open engine=%s "
-            "failures=%d window=%ds",
-            engine,
-            len(recent),
-            window,
-        )
+    cutoff = now - window
+    recent = [t for t in state_data["failures"] if t > cutoff]
+    state_data["failures"] = recent
+
+    current_state = state_data["state"]
+
+    if current_state == "closed":
+        if len(recent) >= max_failures:
+            state_data["state"] = "open"
+            state_data["half_open_attempts"] = 0
+            state_data["last_failure"] = now
+            cache.set(key, state_data, timeout=window * 2)
+            logger.warning(
+                "ndvi.upsert.circuit_breaker_open engine=%s "
+                "failures=%d window=%ds",
+                engine,
+                len(recent),
+                window,
+            )
+        return False
+
+    if current_state == "open":
+        if state_data["last_failure"] < cutoff:
+            state_data["state"] = "half_open"
+            state_data["half_open_attempts"] = 0
+            cache.set(key, state_data, timeout=window * 2)
+            logger.info(
+                "ndvi.upsert.circuit_breaker_half_open engine=%s",
+                engine,
+            )
+            return False
         return True
+
+    if current_state == "half_open":
+        if state_data["half_open_attempts"] >= half_open_max:
+            state_data["state"] = "open"
+            state_data["last_failure"] = now
+            cache.set(key, state_data, timeout=window * 2)
+            logger.warning(
+                "ndvi.upsert.circuit_breaker_reopened engine=%s "
+                "half_open_attempts=%d",
+                engine,
+                half_open_max,
+            )
+            return True
+        return False
+
     return False
 
 
 def _record_upsert_failure(engine: str) -> None:
-    """Record an upsert failure for circuit breaker tracking."""
+    """Record an upsert failure for circuit breaker tracking.
+
+    Uses Django cache for global coordination across workers.
+    """
+    from django.core.cache import caches
+
     now = time.monotonic()
-    if engine not in _upsert_failure_counts:
-        _upsert_failure_counts[engine] = []
-    _upsert_failure_counts[engine].append(now)
+    cache = caches["default"]
+    key = _cb_cache_key(engine)
+    window = get_ndvi_retry_circuit_breaker_window()
+
+    state_data = cache.get(key)
+    if state_data is None:
+        state_data = {
+            "state": "closed",
+            "failures": [],
+            "half_open_attempts": 0,
+            "last_failure": 0,
+        }
+
+    state_data["failures"].append(now)
+    state_data["last_failure"] = now
+
+    if state_data["state"] == "half_open":
+        state_data["half_open_attempts"] += 1
+        state_data["state"] = "open"
+        logger.warning(
+            "ndvi.upsert.circuit_breaker_half_open_failed engine=%s",
+            engine,
+        )
+
+    cache.set(key, state_data, timeout=window * 2)
+
+
+def _record_upsert_success(engine: str) -> None:
+    """Record an upsert success to reset circuit breaker.
+
+    If in half_open state, a success closes the circuit.
+    """
+    from django.core.cache import caches
+
+    cache = caches["default"]
+    key = _cb_cache_key(engine)
+    window = get_ndvi_retry_circuit_breaker_window()
+
+    state_data = cache.get(key)
+    if state_data is None:
+        return
+
+    if state_data["state"] == "half_open":
+        state_data["state"] = "closed"
+        state_data["failures"] = []
+        state_data["half_open_attempts"] = 0
+        cache.set(key, state_data, timeout=window * 2)
+        logger.info(
+            "ndvi.upsert.circuit_breaker_closed engine=%s",
+            engine,
+        )
+
+
+def get_ndvi_retry_circuit_breaker_half_open_max() -> int:
+    return _get_int_setting(
+        "NDVI_RETRY_CIRCUIT_BREAKER_HALF_OPEN_MAX",
+        DEFAULT_NDVI_RETRY_CIRCUIT_BREAKER_HALF_OPEN_MAX,
+    )
 
 
 DEFAULT_NDVI_ENGINE_NAME = "sentinelhub"
@@ -93,9 +208,11 @@ DEFAULT_NDVI_UPSERT_RETRY_DELAY = 0.1
 DEFAULT_NDVI_UPSERT_RETRY_JITTER = 0.05
 DEFAULT_NDVI_RETRY_CIRCUIT_BREAKER_WINDOW = 300
 DEFAULT_NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES = 10
+DEFAULT_NDVI_RETRY_CIRCUIT_BREAKER_HALF_OPEN_MAX = 3
 DEFAULT_NDVI_QUEUE_INGESTION = "ndvi_ingestion"
 DEFAULT_NDVI_QUEUE_RECOMPUTE = "ndvi_recompute"
 DEFAULT_NDVI_QUEUE_ANALYSIS = "ndvi_analysis"
+DEFAULT_NDVI_ENFORCE_QUEUE_ISOLATION = False
 DEFAULT_MAX_AREA_KM2 = 5000.0
 DEFAULT_MAX_DATERANGE_DAYS = 370
 DEFAULT_STEP_DAYS = 7
@@ -233,6 +350,57 @@ def get_ndvi_queue_name(queue_type: str) -> str:
             default_map.get(queue_type, DEFAULT_NDVI_QUEUE_INGESTION),
         )
     )
+
+
+def get_ndvi_enforce_queue_isolation() -> bool:
+    return bool(
+        getattr(
+            settings,
+            "NDVI_ENFORCE_QUEUE_ISOLATION",
+            DEFAULT_NDVI_ENFORCE_QUEUE_ISOLATION,
+        )
+    )
+
+
+def validate_queue_isolation(expected_queues: list[str] | None = None) -> bool:
+    """Validate that the current worker only consumes from expected queues.
+
+    When NDVI_ENFORCE_QUEUE_ISOLATION=True, this function checks that
+    the Celery worker's configured queues match the expected set.
+    Returns True if isolation is valid, False otherwise.
+
+    Should be called at worker startup to prevent accidental
+    multi-queue workers from processing mixed workloads.
+    """
+    if not get_ndvi_enforce_queue_isolation():
+        return True
+
+    if expected_queues is None:
+        expected_queues = [
+            get_ndvi_queue_name("ingestion"),
+            get_ndvi_queue_name("recompute"),
+            get_ndvi_queue_name("analysis"),
+        ]
+
+    try:
+        from celery import current_app
+
+        configured = set(current_app.conf.task_queues.keys())
+        expected = set(expected_queues)
+        if not expected.issubset(configured):
+            logger.error(
+                "ndvi.queue_isolation_violation expected=%s configured=%s",
+                sorted(expected),
+                sorted(configured),
+            )
+            return False
+        return True
+    except Exception as exc:
+        logger.warning(
+            "ndvi.queue_isolation_check_failed error=%s",
+            exc,
+        )
+        return True
 
 
 def get_max_area_km2() -> float:
@@ -919,11 +1087,14 @@ def upsert_observations(
                 total_delay = delay + jitter
                 logger.warning(
                     "ndvi.upsert.constraint_collision attempt=%d/%d "
-                    "farm_id=%s engine=%s delay=%.3f",
+                    "farm_id=%s engine=%s base_delay=%.3f "
+                    "jitter=%.3f total_delay=%.3f",
                     attempt + 1,
                     max_retries,
                     farm.id,
                     engine,
+                    delay,
+                    jitter,
                     total_delay,
                 )
                 ndvi_constraint_collision_total.labels(
@@ -1091,14 +1262,20 @@ def is_stale(observation: NdviObservation | None, lookback_days: int) -> bool:
     return (today - observation.bucket_date).days > lookback_days
 
 
-def is_analytically_valid(observation: NdviObservation) -> bool:
+def is_analytically_valid(
+    observation: NdviObservation,
+    *,
+    min_version: str | None = None,
+    allowed_engines: list[str] | None = None,
+) -> bool:
     """Determine if an observation is analytically valid for computation.
 
     Canonical rule: an observation is valid if and only if:
     - state is FINAL (not RAW, SUPERSEDED, INVALIDATED, or REJECTED)
     - is_latest is True
     - mean is not None
-    - cloud_fraction is within the configured max_cloud limit
+    - version >= min_version (if specified)
+    - engine in allowed_engines (if specified)
 
     This is the single source of truth for what counts as valid NDVI
     data across all read paths, recomputation, and chaining.
@@ -1108,6 +1285,10 @@ def is_analytically_valid(observation: NdviObservation) -> bool:
     if not observation.is_latest:
         return False
     if observation.mean is None:
+        return False
+    if min_version and observation.version < min_version:
+        return False
+    if allowed_engines and observation.engine not in allowed_engines:
         return False
     return True
 
@@ -1119,13 +1300,18 @@ def get_valid_observations_qs(
     start: date | None = None,
     end: date | None = None,
     max_cloud: int | None = None,
+    min_version: str | None = None,
+    allowed_engines: list[str] | None = None,
 ) -> QuerySet[NdviObservation]:
     """Get a queryset of analytically valid observations.
 
+    Centralized read path — all NDVI consumers MUST use this function
+    instead of building their own observation queries. This prevents
+    filter drift across services and ensures consistent validity rules.
+
     Excludes INVALIDATED, REJECTED, SUPERSEDED, and RAW rows.
     Only returns is_latest=True, state=FINAL rows with non-null mean.
-
-    This is the canonical read path for all NDVI consumers.
+    Optionally filters by min_version and allowed_engines.
     """
     qs = (
         NdviObservation.objects.filter(
@@ -1149,6 +1335,10 @@ def get_valid_observations_qs(
             models.Q(cloud_fraction__isnull=True)
             | models.Q(cloud_fraction__lte=max_cloud / 100.0)
         )
+    if min_version:
+        qs = qs.filter(version__gte=min_version)
+    if allowed_engines:
+        qs = qs.filter(engine__in=allowed_engines)
     return qs
 
 
@@ -1258,11 +1448,53 @@ def _get_global_recompute_queue_depth() -> int:
 
 
 def _get_db_recompute_queue_depth() -> int:
-    """Fallback: count queued/recompute jobs from the database."""
+    """Count queued/recompute jobs from the database.
+
+    Returns total of QUEUED + RUNNING backfill jobs.
+    For detailed breakdown, use get_recompute_queue_breakdown().
+    """
     return NdviJob.objects.filter(
         status__in=[NdviJob.JobStatus.QUEUED, NdviJob.JobStatus.RUNNING],
         job_type=NdviJob.JobType.BACKFILL,
     ).count()
+
+
+def get_recompute_queue_breakdown() -> dict[str, int]:
+    """Get a detailed breakdown of recompute queue state.
+
+    Returns dict with:
+    - queued: jobs waiting to be picked up
+    - running: jobs currently executing
+    - stuck: running jobs past their time limit
+    - total: queued + running
+
+    Stuck detection uses task_time_limit (300s default) as threshold.
+    """
+    from django.utils import timezone
+
+    time_limit = int(getattr(settings, "CELERY_TASK_TIME_LIMIT", 300))
+    stuck_threshold = timezone.now() - timedelta(seconds=time_limit)
+
+    queued = NdviJob.objects.filter(
+        status=NdviJob.JobStatus.QUEUED,
+        job_type=NdviJob.JobType.BACKFILL,
+    ).count()
+    running = NdviJob.objects.filter(
+        status=NdviJob.JobStatus.RUNNING,
+        job_type=NdviJob.JobType.BACKFILL,
+    ).count()
+    stuck = NdviJob.objects.filter(
+        status=NdviJob.JobStatus.RUNNING,
+        job_type=NdviJob.JobType.BACKFILL,
+        started_at__lt=stuck_threshold,
+    ).count()
+
+    return {
+        "queued": queued,
+        "running": running,
+        "stuck": stuck,
+        "total": queued + running,
+    }
 
 
 def recompute_stale_observations(
@@ -1272,6 +1504,7 @@ def recompute_stale_observations(
     end_date: date,
     chunk_size: int | None = None,
     max_window_days: int | None = None,
+    target_version: str | None = None,
 ) -> list[dict[str, Any]]:
     """Find observations that need recomputation.
 
@@ -1282,10 +1515,13 @@ def recompute_stale_observations(
     Backpressure uses DB-level query (not Celery inspect) as the
     authoritative source.
 
-    Idempotency: each result includes a deterministic dispatch_key
-    based on (farm_id, bucket_date, engine). Dispatching the same
-    key twice will hit the existing NdviJob unique constraint and
-    return the existing job without creating duplicates.
+    Idempotency model:
+    - Intent identity: (farm_id, engine, bucket_date, target_version)
+      defines WHAT should be computed. Same intent = same result.
+    - Execution identity: dispatch_key is derived from intent identity.
+      Same dispatch_key → same NdviJob.request_hash → no duplicates.
+    - Execution parameters (chunk_size, max_window_days) do NOT affect
+      identity — they only control HOW the recompute is performed.
     """
     max_days = max_window_days or get_ndvi_recompute_max_window_days()
     if (end_date - start_date).days > max_days:
@@ -1295,7 +1531,7 @@ def recompute_stale_observations(
         )
 
     chunk = chunk_size or get_ndvi_recompute_chunk_size()
-    current_version = get_ndvi_version()
+    target_ver = target_version or get_ndvi_version()
 
     stale_qs = (
         NdviObservation.objects.filter(
@@ -1304,7 +1540,7 @@ def recompute_stale_observations(
             bucket_date__lte=end_date,
             is_latest=True,
         )
-        .exclude(version=current_version)
+        .exclude(version=target_ver)
         .values("farm_id", "bucket_date", "version", "id")
         .order_by("bucket_date", "farm_id")[: chunk * 10]
     )
@@ -1323,13 +1559,15 @@ def recompute_stale_observations(
     results: list[dict[str, Any]] = []
     for row in stale_qs[:chunk]:
         dispatch_key = hashlib.sha256(
-            f"recompute:{row['farm_id']}:{engine}:{row['bucket_date']}".encode()
+            f"recompute:{row['farm_id']}:{engine}:"
+            f"{row['bucket_date']}:{target_ver}".encode()
         ).hexdigest()[:16]
         results.append(
             {
                 "farm_id": row["farm_id"],
                 "bucket_date": row["bucket_date"],
                 "current_version": row["version"],
+                "target_version": target_ver,
                 "observation_id": row["id"],
                 "dispatch_key": dispatch_key,
             }
