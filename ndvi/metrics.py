@@ -78,3 +78,52 @@ ndvi_circuit_breaker_transitions_total = Counter(
     "Total number of circuit breaker state transitions",
     labelnames=["engine", "from_state", "to_state"],
 )
+
+# Integrity: version drift
+ndvi_version_mismatch_total = Counter(
+    "ndvi_version_mismatch_total",
+    "Count of observations not at current version",
+    labelnames=["engine", "old_version"],
+)
+
+# Integrity: observation freshness
+ndvi_observation_latest_age_seconds = Gauge(
+    "ndvi_observation_latest_age_seconds",
+    "Age in seconds of the latest observation per farm/engine",
+    labelnames=["engine"],
+)
+
+# Integrity: recompute activity
+ndvi_recompute_trigger_total = Counter(
+    "ndvi_recompute_trigger_total",
+    "Count of recompute operations triggered",
+    labelnames=["engine", "reason"],
+)
+
+# Integrity: state distribution
+ndvi_observation_state_total = Gauge(
+    "ndvi_observation_state_total",
+    "Count of observations by lifecycle state",
+    labelnames=["engine", "state"],
+)
+
+# Integrity: anomaly detection
+ndvi_anomaly_detected_total = Counter(
+    "ndvi_anomaly_detected_total",
+    "Count of NDVI anomalies detected",
+    labelnames=["engine", "type"],
+)
+
+# Integrity: append-only write tracking
+ndvi_append_only_writes_total = Counter(
+    "ndvi_append_only_writes_total",
+    "Count of append-only observation writes",
+    labelnames=["engine"],
+)
+
+# Integrity: idempotent hit tracking
+ndvi_idempotent_hit_total = Counter(
+    "ndvi_idempotent_hit_total",
+    "Count of idempotent observation hits (no write needed)",
+    labelnames=["engine"],
+)

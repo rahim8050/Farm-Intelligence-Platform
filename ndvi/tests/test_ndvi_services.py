@@ -21,6 +21,7 @@ from ndvi.services import (
     TimeseriesParams,
     _determine_observation_state,
     cache_latest_response,
+    detect_anomalies,
     dispatch_farm_state_coverage,
     dispatch_ndvi_job,
     enforce_quota,
@@ -28,13 +29,20 @@ from ndvi.services import (
     get_cached_latest_response,
     get_default_ndvi_engine_name,
     get_engine,
+    get_latest_observations,
     get_max_daterange_days,
+    get_ndvi_anomaly_threshold,
     get_ndvi_append_only,
     get_ndvi_queue_backend,
+    get_ndvi_recompute_backpressure_threshold,
+    get_ndvi_recompute_chunk_size,
+    get_ndvi_recompute_max_window_days,
     get_ndvi_version,
+    get_ndvi_version_registry,
     is_stale,
     normalize_latest_params,
     normalize_timeseries_params,
+    recompute_stale_observations,
     resolve_ndvi_engine_name,
     upsert_observations,
 )
@@ -590,3 +598,323 @@ def test_upsert_observations_skips_overly_cloudy(
         points=points,
     )
     assert len(saved) == 0
+
+
+def test_get_ndvi_recompute_max_window_days_default() -> None:
+    assert get_ndvi_recompute_max_window_days() == 90
+
+
+def test_get_ndvi_recompute_chunk_size_default() -> None:
+    assert get_ndvi_recompute_chunk_size() == 50
+
+
+def test_get_ndvi_recompute_backpressure_threshold_default() -> None:
+    assert get_ndvi_recompute_backpressure_threshold() == 1000
+
+
+def test_get_ndvi_anomaly_threshold_default() -> None:
+    assert get_ndvi_anomaly_threshold() == 0.30
+
+
+def test_get_ndvi_version_registry_default() -> None:
+    registry = get_ndvi_version_registry()
+    assert len(registry) >= 1
+    assert "version" in registry[0]
+    assert "description" in registry[0]
+
+
+def test_get_ndvi_version_registry_from_settings(settings: Any) -> None:
+    settings.NDVI_VERSION_REGISTRY = [
+        {
+            "version": "v2.1",
+            "description": "Cloud mask v2",
+            "release_date": "2026-05-01",
+            "author": "team",
+        },
+    ]
+    registry = get_ndvi_version_registry()
+    assert registry[0]["version"] == "v2.1"
+    assert registry[0]["author"] == "team"
+
+
+def test_observation_state_transitions() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="stac",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        state="RAW",
+    )
+    assert obs.can_transition_to("FINAL") is True
+    assert obs.can_transition_to("SUPERSEDED") is True
+    assert obs.can_transition_to("RAW") is False
+
+    obs.state = "FINAL"
+    assert obs.can_transition_to("SUPERSEDED") is True
+    assert obs.can_transition_to("RAW") is False
+
+    obs.state = "SUPERSEDED"
+    assert obs.can_transition_to("FINAL") is False
+    assert obs.can_transition_to("RAW") is False
+
+
+def test_observation_transition_state_raises_on_invalid() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="stac",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        state="FINAL",
+    )
+    with pytest.raises(ValueError, match="Cannot transition"):
+        obs.transition_state("RAW")
+
+
+@pytest.mark.django_db
+def test_get_latest_observations_filters_and_orders(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    user = get_user_model().objects.create_user(
+        username="latest-owner",
+        email="latest-owner@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-latest")
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 2),
+        mean=0.6,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 3),
+        mean=0.7,
+        is_latest=False,
+        state="FINAL",
+        version="v1",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 4),
+        mean=0.8,
+        is_latest=True,
+        state="RAW",
+        version="v1",
+    )
+
+    results = get_latest_observations(farm=farm, engine="sentinelhub")
+    assert len(results) == 2
+    assert results[0].bucket_date == date(2025, 3, 1)
+    assert results[1].bucket_date == date(2025, 3, 2)
+
+
+def test_detect_anomalies_identifies_spikes() -> None:
+    obs = [
+        NdviObservation(
+            farm_id=1,
+            engine="stac",
+            bucket_date=date(2025, 1, d),
+            mean=0.5,
+        )
+        for d in range(1, 6)
+    ]
+    obs[2].mean = 0.95
+
+    anomalies = detect_anomalies(obs, threshold=0.30)
+    assert len(anomalies) == 1
+    assert anomalies[0][1] == "spike"
+    assert abs(anomalies[0][2] - 0.45) < 0.01
+
+
+def test_detect_anomalies_identifies_drops() -> None:
+    obs = [
+        NdviObservation(
+            farm_id=1,
+            engine="stac",
+            bucket_date=date(2025, 1, d),
+            mean=0.5,
+        )
+        for d in range(1, 6)
+    ]
+    obs[3].mean = 0.10
+
+    anomalies = detect_anomalies(obs, threshold=0.30)
+    assert len(anomalies) == 1
+    assert anomalies[0][1] == "drop"
+
+
+def test_detect_anomalies_empty_when_few_observations() -> None:
+    obs = [
+        NdviObservation(
+            farm_id=1,
+            engine="stac",
+            bucket_date=date(2025, 1, 1),
+            mean=0.5,
+        ),
+    ]
+    assert detect_anomalies(obs) == []
+
+
+@pytest.mark.django_db
+def test_recompute_stale_observations_finds_mismatched(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    settings.NDVI_VERSION = "v2.0-current"
+    user = get_user_model().objects.create_user(
+        username="recompute-owner",
+        email="recompute-owner@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-recompute")
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1-legacy",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 2),
+        mean=0.6,
+        is_latest=True,
+        state="FINAL",
+        version="v2.0-current",
+    )
+
+    results = recompute_stale_observations(
+        engine="sentinelhub",
+        start_date=date(2025, 3, 1),
+        end_date=date(2025, 3, 31),
+    )
+    assert len(results) == 1
+    assert results[0]["farm_id"] == farm.id
+    assert results[0]["current_version"] == "v1-legacy"
+
+
+@pytest.mark.django_db
+def test_recompute_stale_observations_respects_max_window(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    settings.NDVI_RECOMPUTE_MAX_WINDOW_DAYS = 30
+    with pytest.raises(ValueError, match="exceeds"):
+        recompute_stale_observations(
+            engine="sentinelhub",
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 6, 1),
+        )
+
+
+@pytest.mark.django_db
+def test_upsert_observations_with_source_scene_id(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    settings.NDVI_VERSION = "v2.0-test"
+    settings.NDVI_APPEND_ONLY = True
+    user = get_user_model().objects.create_user(
+        username="scene-owner",
+        email="scene-owner@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-scene")
+    from ndvi.engines.base import NdviPoint
+
+    points = [
+        NdviPoint(
+            date=date(2025, 3, 1),
+            mean=0.5,
+            min=0.3,
+            max=0.7,
+            sample_count=100,
+            cloud_fraction=0.10,
+        ),
+    ]
+    saved = upsert_observations(
+        farm=farm,
+        engine="sentinelhub",
+        max_cloud=30,
+        points=points,
+        source_scene_ids={date(2025, 3, 1): "S2A_20250301_T32TLS"},
+        provenance={"scl_mask": True, "engine_version": "2.0"},
+    )
+    assert len(saved) == 1
+    assert saved[0].source_scene_id == "S2A_20250301_T32TLS"
+    assert saved[0].provenance == {"scl_mask": True, "engine_version": "2.0"}
+    assert saved[0].acquired_at is not None
+    assert saved[0].computed_at is not None
+    assert saved[0].ingested_at is not None
+
+
+@pytest.mark.django_db
+def test_upsert_observations_scene_idempotent(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    settings.NDVI_APPEND_ONLY = True
+    user = get_user_model().objects.create_user(
+        username="scene-idem",
+        email="scene-idem@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-scene-idem")
+    from ndvi.engines.base import NdviPoint
+
+    points = [
+        NdviPoint(
+            date=date(2025, 3, 1),
+            mean=0.5,
+            min=0.3,
+            max=0.7,
+            sample_count=100,
+            cloud_fraction=0.10,
+        ),
+    ]
+    scene_id = "S2B_20250301_T32TLS"
+    first = upsert_observations(
+        farm=farm,
+        engine="sentinelhub",
+        max_cloud=30,
+        points=points,
+        source_scene_ids={date(2025, 3, 1): scene_id},
+    )
+    points2 = [
+        NdviPoint(
+            date=date(2025, 3, 1),
+            mean=0.9,
+            min=0.7,
+            max=0.99,
+            sample_count=200,
+            cloud_fraction=0.01,
+        ),
+    ]
+    second = upsert_observations(
+        farm=farm,
+        engine="sentinelhub",
+        max_cloud=30,
+        points=points2,
+        source_scene_ids={date(2025, 3, 1): scene_id},
+    )
+    assert first[0].id == second[0].id
+    assert second[0].mean == 0.5

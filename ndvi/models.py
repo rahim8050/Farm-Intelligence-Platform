@@ -19,6 +19,16 @@ class NdviObservation(models.Model):
     class ObservationState(models.TextChoices):
         RAW = "RAW", "Raw engine output before final acceptance"
         FINAL = "FINAL", "Data that passed cloud and quality checks"
+        SUPERSEDED = "SUPERSEDED", "Replaced by a newer observation"
+
+    VALID_TRANSITIONS: dict[str, list[str]] = {
+        ObservationState.RAW: [
+            ObservationState.FINAL,
+            ObservationState.SUPERSEDED,
+        ],
+        ObservationState.FINAL: [ObservationState.SUPERSEDED],
+        ObservationState.SUPERSEDED: [],
+    }
 
     farm = models.ForeignKey(
         Farm, on_delete=models.CASCADE, related_name="ndvi_observations"
@@ -37,7 +47,32 @@ class NdviObservation(models.Model):
         default=ObservationState.FINAL,
     )
     is_latest = models.BooleanField(default=True)
-    computed_at = models.DateTimeField(null=True, blank=True)
+    acquired_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the satellite acquired the source scene",
+    )
+    computed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When NDVI was computed for this observation",
+    )
+    ingested_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this row was persisted to the database",
+    )
+    source_scene_id = models.CharField(
+        max_length=256,
+        null=True,
+        blank=True,
+        help_text="Provider scene identifier for deduplication and provenance",
+    )
+    provenance = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Processing inputs: engine version, SCL mask params, etc.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -46,6 +81,16 @@ class NdviObservation(models.Model):
             models.UniqueConstraint(
                 fields=["farm", "engine", "bucket_date", "version"],
                 name="uniq_ndvi_observation_farm_engine_bucket_version",
+            ),
+            models.UniqueConstraint(
+                fields=["farm", "engine", "bucket_date"],
+                condition=models.Q(is_latest=True),
+                name="uniq_ndvi_latest_observation",
+            ),
+            models.UniqueConstraint(
+                fields=["farm", "engine", "source_scene_id"],
+                condition=models.Q(source_scene_id__isnull=False),
+                name="uniq_ndvi_scene_per_farm_engine",
             ),
         ]
         indexes = [
@@ -56,6 +101,8 @@ class NdviObservation(models.Model):
             ),
             models.Index(fields=["version", "engine"]),
             models.Index(fields=["state", "engine"]),
+            models.Index(fields=["acquired_at", "engine"]),
+            models.Index(fields=["source_scene_id", "engine"]),
         ]
 
     def __str__(self) -> str:
@@ -63,6 +110,25 @@ class NdviObservation(models.Model):
             f"NDVI {self.bucket_date} farm={self.farm_id} engine={self.engine}"
             f" v={self.version} state={self.state} latest={self.is_latest}"
         )
+
+    def can_transition_to(self, new_state: str) -> bool:
+        """Check if the observation can transition to the given state."""
+        allowed = self.VALID_TRANSITIONS.get(self.state, [])
+        return new_state in allowed
+
+    def transition_state(self, new_state: str) -> None:
+        """Transition to a new state with validation.
+
+        Raises:
+            ValueError: If the transition is not allowed.
+        """
+        if not self.can_transition_to(new_state):
+            raise ValueError(
+                f"Cannot transition from {self.state} to {new_state}. "
+                f"Allowed: {self.VALID_TRANSITIONS.get(self.state, [])}"
+            )
+        self.state = new_state
+        self.save(update_fields=["state", "updated_at"])
 
 
 class NdviJob(models.Model):

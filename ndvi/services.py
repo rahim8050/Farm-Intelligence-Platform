@@ -35,6 +35,10 @@ DEFAULT_NDVI_ENGINE_NAME = "sentinelhub"
 DEFAULT_NDVI_QUEUE_BACKEND = "celery"
 DEFAULT_NDVI_VERSION = "v1-legacy"
 DEFAULT_NDVI_APPEND_ONLY = False
+DEFAULT_NDVI_RECOMPUTE_MAX_WINDOW_DAYS = 90
+DEFAULT_NDVI_RECOMPUTE_CHUNK_SIZE = 50
+DEFAULT_NDVI_RECOMPUTE_BACKPRESSURE_THRESHOLD = 1000
+DEFAULT_NDVI_ANOMALY_THRESHOLD = 0.30
 DEFAULT_MAX_AREA_KM2 = 5000.0
 DEFAULT_MAX_DATERANGE_DAYS = 370
 DEFAULT_STEP_DAYS = 7
@@ -75,6 +79,37 @@ def get_ndvi_version() -> str:
 def get_ndvi_append_only() -> bool:
     return bool(
         getattr(settings, "NDVI_APPEND_ONLY", DEFAULT_NDVI_APPEND_ONLY)
+    )
+
+
+def get_ndvi_recompute_max_window_days() -> int:
+    return _get_int_setting(
+        "NDVI_RECOMPUTE_MAX_WINDOW_DAYS",
+        DEFAULT_NDVI_RECOMPUTE_MAX_WINDOW_DAYS,
+    )
+
+
+def get_ndvi_recompute_chunk_size() -> int:
+    return _get_int_setting(
+        "NDVI_RECOMPUTE_CHUNK_SIZE",
+        DEFAULT_NDVI_RECOMPUTE_CHUNK_SIZE,
+    )
+
+
+def get_ndvi_recompute_backpressure_threshold() -> int:
+    return _get_int_setting(
+        "NDVI_RECOMPUTE_BACKPRESSURE_THRESHOLD",
+        DEFAULT_NDVI_RECOMPUTE_BACKPRESSURE_THRESHOLD,
+    )
+
+
+def get_ndvi_anomaly_threshold() -> float:
+    return float(
+        getattr(
+            settings,
+            "NDVI_ANOMALY_THRESHOLD",
+            DEFAULT_NDVI_ANOMALY_THRESHOLD,
+        )
     )
 
 
@@ -506,10 +541,13 @@ def upsert_observations(
     engine: str,
     max_cloud: int,
     points: Iterable[NdviPoint],
+    source_scene_ids: dict[date, str] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> list[NdviObservation]:
     saved: list[NdviObservation] = []
     version = get_ndvi_version()
     append_only = get_ndvi_append_only()
+    now = timezone.now()
 
     with transaction.atomic():
         for point in points:
@@ -532,29 +570,51 @@ def upsert_observations(
                 point.cloud_fraction,
                 max_cloud=max_cloud,
             )
+            scene_id = (
+                source_scene_ids.get(point.date) if source_scene_ids else None
+            )
 
             if append_only:
-                existing_latest = NdviObservation.objects.filter(
-                    farm=farm,
-                    engine=engine,
-                    bucket_date=point.date,
-                    is_latest=True,
-                ).first()
+                existing_latest = list(
+                    NdviObservation.objects.filter(
+                        farm=farm,
+                        engine=engine,
+                        bucket_date=point.date,
+                        is_latest=True,
+                    ).select_for_update()
+                )
 
-                idempotent = NdviObservation.objects.filter(
-                    farm=farm,
-                    engine=engine,
-                    bucket_date=point.date,
-                    version=version,
-                ).first()
+                if scene_id:
+                    idempotent = NdviObservation.objects.filter(
+                        farm=farm,
+                        engine=engine,
+                        source_scene_id=scene_id,
+                    ).first()
+                else:
+                    idempotent = NdviObservation.objects.filter(
+                        farm=farm,
+                        engine=engine,
+                        bucket_date=point.date,
+                        version=version,
+                    ).first()
 
                 if idempotent:
                     saved.append(idempotent)
                     continue
 
-                if existing_latest:
-                    existing_latest.is_latest = False
-                    existing_latest.save(update_fields=["is_latest"])
+                for row in existing_latest:
+                    if row.can_transition_to(
+                        NdviObservation.ObservationState.SUPERSEDED
+                    ):
+                        row.is_latest = False
+                        row.state = NdviObservation.ObservationState.SUPERSEDED
+                        row.save(
+                            update_fields=[
+                                "is_latest",
+                                "state",
+                                "updated_at",
+                            ]
+                        )
 
                 obj = NdviObservation.objects.create(
                     farm=farm,
@@ -568,24 +628,36 @@ def upsert_observations(
                     version=version,
                     state=state,
                     is_latest=True,
-                    computed_at=timezone.now(),
+                    acquired_at=now,
+                    computed_at=now,
+                    ingested_at=now,
+                    source_scene_id=scene_id,
+                    provenance=provenance or {},
                 )
             else:
+                defaults: dict[str, Any] = {
+                    "mean": point.mean,
+                    "min": point.min,
+                    "max": point.max,
+                    "sample_count": point.sample_count,
+                    "cloud_fraction": point.cloud_fraction,
+                    "version": version,
+                    "state": state,
+                    "is_latest": True,
+                    "acquired_at": now,
+                    "computed_at": now,
+                    "ingested_at": now,
+                }
+                if scene_id:
+                    defaults["source_scene_id"] = scene_id
+                if provenance:
+                    defaults["provenance"] = provenance
+
                 obj, _ = NdviObservation.objects.update_or_create(
                     farm=farm,
                     engine=engine,
                     bucket_date=point.date,
-                    defaults={
-                        "mean": point.mean,
-                        "min": point.min,
-                        "max": point.max,
-                        "sample_count": point.sample_count,
-                        "cloud_fraction": point.cloud_fraction,
-                        "version": version,
-                        "state": state,
-                        "is_latest": True,
-                        "computed_at": timezone.now(),
-                    },
+                    defaults=defaults,
                 )
             saved.append(obj)
     return saved
@@ -734,3 +806,156 @@ def is_stale(observation: NdviObservation | None, lookback_days: int) -> bool:
         return True
     today = date.today()
     return (today - observation.bucket_date).days > lookback_days
+
+
+def get_latest_observations(
+    *,
+    farm: Farm,
+    engine: str,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[NdviObservation]:
+    """Get latest FINAL observations with deterministic ordering.
+
+    Orders by bucket_date ascending, then by computed_at descending
+    for same-date tie-breaking.
+    """
+    from ndvi.models import NdviObservation
+
+    qs = NdviObservation.objects.filter(
+        farm=farm,
+        engine=engine,
+        is_latest=True,
+        state=NdviObservation.ObservationState.FINAL,
+    ).order_by("bucket_date", "-computed_at")
+
+    if start:
+        qs = qs.filter(bucket_date__gte=start)
+    if end:
+        qs = qs.filter(bucket_date__lte=end)
+
+    return list(qs)
+
+
+def detect_anomalies(
+    observations: list[NdviObservation],
+    *,
+    threshold: float | None = None,
+) -> list[tuple[NdviObservation, str, float]]:
+    """Detect NDVI anomalies using rolling median deviation.
+
+    Returns list of (observation, reason, deviation) tuples.
+    """
+    if threshold is None:
+        threshold = get_ndvi_anomaly_threshold()
+
+    anomalies: list[tuple[NdviObservation, str, float]] = []
+    values = [obs.mean for obs in observations if obs.mean is not None]
+
+    if len(values) < 3:
+        return anomalies
+
+    sorted_vals = sorted(values)
+    mid = len(sorted_vals) // 2
+    rolling_median = float(sorted_vals[mid])
+
+    for obs in observations:
+        if obs.mean is None:
+            continue
+        deviation = abs(obs.mean - rolling_median)
+        if deviation >= threshold:
+            reason = "spike" if obs.mean > rolling_median else "drop"
+            anomalies.append((obs, reason, deviation))
+
+    return anomalies
+
+
+def get_ndvi_version_registry() -> list[dict[str, str]]:
+    """Return the structured version registry from settings.
+
+    Each entry has: version, description, release_date, author.
+    Falls back to deriving from NDVI_VERSION if registry not configured.
+    """
+    registry = getattr(settings, "NDVI_VERSION_REGISTRY", None)
+    if registry:
+        return registry
+    return [
+        {
+            "version": get_ndvi_version(),
+            "description": "Current NDVI computation version",
+            "release_date": date.today().isoformat(),
+            "author": "system",
+        },
+    ]
+
+
+def recompute_stale_observations(
+    *,
+    engine: str,
+    start_date: date,
+    end_date: date,
+    chunk_size: int | None = None,
+    max_window_days: int | None = None,
+) -> list[dict[str, Any]]:
+    """Find observations that need recomputation.
+
+    Returns list of dicts with farm_id, bucket_date, current_version,
+    ready for dispatch via dispatch_ndvi_job().
+
+    Implements bounded windows, chunking, and backpressure controls.
+    """
+    max_days = max_window_days or get_ndvi_recompute_max_window_days()
+    if (end_date - start_date).days > max_days:
+        raise ValueError(
+            f"Recompute window {start_date}..{end_date} exceeds "
+            f"max {max_days} days"
+        )
+
+    chunk = chunk_size or get_ndvi_recompute_chunk_size()
+    current_version = get_ndvi_version()
+
+    stale_qs = (
+        NdviObservation.objects.filter(
+            engine=engine,
+            bucket_date__gte=start_date,
+            bucket_date__lte=end_date,
+            is_latest=True,
+        )
+        .exclude(version=current_version)
+        .values("farm_id", "bucket_date", "version", "id")
+        .order_by("bucket_date", "farm_id")[: chunk * 10]
+    )
+
+    queued_jobs = NdviJob.objects.filter(
+        status__in=[NdviJob.JobStatus.QUEUED, NdviJob.JobStatus.RUNNING],
+        job_type=NdviJob.JobType.BACKFILL,
+    ).count()
+
+    backpressure_limit = get_ndvi_recompute_backpressure_threshold()
+    if queued_jobs >= backpressure_limit:
+        logger.warning(
+            "ndvi.recompute.backpressure queued=%d limit=%d",
+            queued_jobs,
+            backpressure_limit,
+        )
+        return []
+
+    results: list[dict[str, Any]] = []
+    for row in stale_qs[:chunk]:
+        results.append(
+            {
+                "farm_id": row["farm_id"],
+                "bucket_date": row["bucket_date"],
+                "current_version": row["version"],
+                "observation_id": row["id"],
+            }
+        )
+
+    logger.info(
+        "ndvi.recompute.stale_found engine=%s window=%s..%s count=%d",
+        engine,
+        start_date,
+        end_date,
+        len(results),
+    )
+    return results
