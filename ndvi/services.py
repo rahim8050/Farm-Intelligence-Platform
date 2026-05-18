@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+import time
 import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from typing import Any
 
 from django.conf import settings
 from django.core.cache import caches
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -22,7 +23,14 @@ from farms.models import Farm
 
 from .engines.base import BBox, NDVIEngine, NdviPoint
 from .engines.sentinelhub import SentinelHubEngine
-from .metrics import ndvi_cache_hit_total, ndvi_jobs_total
+from .metrics import (
+    ndvi_append_only_writes_total,
+    ndvi_cache_hit_total,
+    ndvi_constraint_collision_total,
+    ndvi_idempotent_hit_total,
+    ndvi_jobs_total,
+    ndvi_supersession_total,
+)
 from .models import NdviJob, NdviObservation
 from .raster.base import ColormapNormalization
 from .raster.registry import resolve_raster_engine_name
@@ -39,6 +47,11 @@ DEFAULT_NDVI_RECOMPUTE_MAX_WINDOW_DAYS = 90
 DEFAULT_NDVI_RECOMPUTE_CHUNK_SIZE = 50
 DEFAULT_NDVI_RECOMPUTE_BACKPRESSURE_THRESHOLD = 1000
 DEFAULT_NDVI_ANOMALY_THRESHOLD = 0.30
+DEFAULT_NDVI_UPSERT_MAX_RETRIES = 3
+DEFAULT_NDVI_UPSERT_RETRY_DELAY = 0.1
+DEFAULT_NDVI_QUEUE_INGESTION = "ndvi_ingestion"
+DEFAULT_NDVI_QUEUE_RECOMPUTE = "ndvi_recompute"
+DEFAULT_NDVI_QUEUE_ANALYSIS = "ndvi_analysis"
 DEFAULT_MAX_AREA_KM2 = 5000.0
 DEFAULT_MAX_DATERANGE_DAYS = 370
 DEFAULT_STEP_DAYS = 7
@@ -109,6 +122,47 @@ def get_ndvi_anomaly_threshold() -> float:
             settings,
             "NDVI_ANOMALY_THRESHOLD",
             DEFAULT_NDVI_ANOMALY_THRESHOLD,
+        )
+    )
+
+
+def get_ndvi_upsert_max_retries() -> int:
+    return _get_int_setting(
+        "NDVI_UPSERT_MAX_RETRIES",
+        DEFAULT_NDVI_UPSERT_MAX_RETRIES,
+    )
+
+
+def get_ndvi_upsert_retry_delay() -> float:
+    return float(
+        getattr(
+            settings,
+            "NDVI_UPSERT_RETRY_DELAY",
+            DEFAULT_NDVI_UPSERT_RETRY_DELAY,
+        )
+    )
+
+
+def get_ndvi_queue_name(queue_type: str) -> str:
+    """Get the Celery queue name for a given NDVI queue type.
+
+    Queue types: ingestion, recompute, analysis.
+    """
+    setting_map = {
+        "ingestion": "NDVI_QUEUE_INGESTION",
+        "recompute": "NDVI_QUEUE_RECOMPUTE",
+        "analysis": "NDVI_QUEUE_ANALYSIS",
+    }
+    default_map = {
+        "ingestion": DEFAULT_NDVI_QUEUE_INGESTION,
+        "recompute": DEFAULT_NDVI_QUEUE_RECOMPUTE,
+        "analysis": DEFAULT_NDVI_QUEUE_ANALYSIS,
+    }
+    return str(
+        getattr(
+            settings,
+            setting_map.get(queue_type, "NDVI_QUEUE_INGESTION"),
+            default_map.get(queue_type, DEFAULT_NDVI_QUEUE_INGESTION),
         )
     )
 
@@ -514,6 +568,51 @@ def enforce_quota(farm: Farm, bbox: BBox) -> None:
         raise ValidationError("Requested area exceeds NDVI_MAX_AREA_KM2.")
 
 
+VALID_PROVENANCE_KEYS = frozenset(
+    {
+        "engine_version",
+        "scl_mask",
+        "cloud_mask",
+        "resolution",
+        "quality_profile",
+        "fusion_mode",
+        "schema_version",
+    }
+)
+
+
+def compute_provenance_hash(provenance: dict[str, Any]) -> str:
+    """Compute a deterministic hash of provenance data for idempotency."""
+    normalized = json.dumps(provenance, sort_keys=True, default=str)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def validate_provenance(provenance: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize provenance data.
+
+    Raises:
+        ValueError: If provenance contains unrecognized keys
+            or invalid schema_version.
+    """
+    if not provenance:
+        return {}
+
+    unknown = set(provenance.keys()) - VALID_PROVENANCE_KEYS
+    if unknown:
+        raise ValueError(
+            f"Unrecognized provenance keys: {sorted(unknown)}. "
+            f"Allowed: {sorted(VALID_PROVENANCE_KEYS)}"
+        )
+
+    schema_version = provenance.get("schema_version", "1")
+    if schema_version != "1":
+        raise ValueError(
+            f"Unsupported provenance schema_version: {schema_version}"
+        )
+
+    return dict(provenance)
+
+
 def _determine_observation_state(
     cloud_fraction: float | None,
     *,
@@ -544,122 +643,203 @@ def upsert_observations(
     source_scene_ids: dict[date, str] | None = None,
     provenance: dict[str, Any] | None = None,
 ) -> list[NdviObservation]:
+    """Upsert NDVI observations with full transactional guarantees.
+
+    Transaction scope (all inside one atomic block):
+        1. select_for_update on existing latest rows
+        2. Idempotency check (scene_id + provenance_hash)
+        3. Supersession of previous latest rows
+        4. New observation creation
+        5. State transition validation
+
+    On IntegrityError from concurrent inserts, retries with
+    exponential backoff up to NDVI_UPSERT_MAX_RETRIES.
+    """
     saved: list[NdviObservation] = []
     version = get_ndvi_version()
     append_only = get_ndvi_append_only()
     now = timezone.now()
+    max_retries = get_ndvi_upsert_max_retries()
+    base_delay = get_ndvi_upsert_retry_delay()
 
-    with transaction.atomic():
-        for point in points:
-            if not cloud_fraction_is_within_limit(
-                point.cloud_fraction,
-                max_cloud,
-            ):
-                logger.info(
-                    "ndvi.observation.skipped_cloudy farm_id=%s engine=%s "
-                    "date=%s cloud_fraction=%s max_cloud=%s",
-                    farm.id,
-                    engine,
-                    point.date,
-                    point.cloud_fraction,
-                    max_cloud,
-                )
-                continue
+    validated_provenance = validate_provenance(provenance or {})
+    prov_hash = (
+        compute_provenance_hash(validated_provenance)
+        if validated_provenance
+        else None
+    )
 
-            state = _determine_observation_state(
-                point.cloud_fraction,
-                max_cloud=max_cloud,
-            )
-            scene_id = (
-                source_scene_ids.get(point.date) if source_scene_ids else None
-            )
-
-            if append_only:
-                existing_latest = list(
-                    NdviObservation.objects.filter(
-                        farm=farm,
-                        engine=engine,
-                        bucket_date=point.date,
-                        is_latest=True,
-                    ).select_for_update()
-                )
-
-                if scene_id:
-                    idempotent = NdviObservation.objects.filter(
-                        farm=farm,
-                        engine=engine,
-                        source_scene_id=scene_id,
-                    ).first()
-                else:
-                    idempotent = NdviObservation.objects.filter(
-                        farm=farm,
-                        engine=engine,
-                        bucket_date=point.date,
-                        version=version,
-                    ).first()
-
-                if idempotent:
-                    saved.append(idempotent)
-                    continue
-
-                for row in existing_latest:
-                    if row.can_transition_to(
-                        NdviObservation.ObservationState.SUPERSEDED
+    for attempt in range(max_retries):
+        try:
+            with transaction.atomic():
+                for point in points:
+                    if not cloud_fraction_is_within_limit(
+                        point.cloud_fraction,
+                        max_cloud,
                     ):
-                        row.is_latest = False
-                        row.state = NdviObservation.ObservationState.SUPERSEDED
-                        row.save(
-                            update_fields=[
-                                "is_latest",
-                                "state",
-                                "updated_at",
-                            ]
+                        logger.info(
+                            "ndvi.observation.skipped_cloudy "
+                            "farm_id=%s engine=%s date=%s "
+                            "cloud_fraction=%s max_cloud=%s",
+                            farm.id,
+                            engine,
+                            point.date,
+                            point.cloud_fraction,
+                            max_cloud,
+                        )
+                        continue
+
+                    state = _determine_observation_state(
+                        point.cloud_fraction,
+                        max_cloud=max_cloud,
+                    )
+                    scene_id = (
+                        source_scene_ids.get(point.date)
+                        if source_scene_ids
+                        else None
+                    )
+
+                    if append_only:
+                        existing_latest = list(
+                            NdviObservation.objects.filter(
+                                farm=farm,
+                                engine=engine,
+                                bucket_date=point.date,
+                                is_latest=True,
+                            ).select_for_update()
                         )
 
-                obj = NdviObservation.objects.create(
-                    farm=farm,
-                    engine=engine,
-                    bucket_date=point.date,
-                    mean=point.mean,
-                    min=point.min,
-                    max=point.max,
-                    sample_count=point.sample_count,
-                    cloud_fraction=point.cloud_fraction,
-                    version=version,
-                    state=state,
-                    is_latest=True,
-                    acquired_at=now,
-                    computed_at=now,
-                    ingested_at=now,
-                    source_scene_id=scene_id,
-                    provenance=provenance or {},
-                )
-            else:
-                defaults: dict[str, Any] = {
-                    "mean": point.mean,
-                    "min": point.min,
-                    "max": point.max,
-                    "sample_count": point.sample_count,
-                    "cloud_fraction": point.cloud_fraction,
-                    "version": version,
-                    "state": state,
-                    "is_latest": True,
-                    "acquired_at": now,
-                    "computed_at": now,
-                    "ingested_at": now,
-                }
-                if scene_id:
-                    defaults["source_scene_id"] = scene_id
-                if provenance:
-                    defaults["provenance"] = provenance
+                        if scene_id and prov_hash:
+                            idempotent = NdviObservation.objects.filter(
+                                farm=farm,
+                                engine=engine,
+                                source_scene_id=scene_id,
+                                provenance_hash=prov_hash,
+                            ).first()
+                        elif scene_id:
+                            idempotent = NdviObservation.objects.filter(
+                                farm=farm,
+                                engine=engine,
+                                source_scene_id=scene_id,
+                            ).first()
+                        else:
+                            idempotent = NdviObservation.objects.filter(
+                                farm=farm,
+                                engine=engine,
+                                bucket_date=point.date,
+                                version=version,
+                            ).first()
 
-                obj, _ = NdviObservation.objects.update_or_create(
-                    farm=farm,
-                    engine=engine,
-                    bucket_date=point.date,
-                    defaults=defaults,
+                        if idempotent:
+                            ndvi_idempotent_hit_total.labels(
+                                engine=engine
+                            ).inc()
+                            saved.append(idempotent)
+                            continue
+
+                        for row in existing_latest:
+                            if row.can_transition_to(
+                                NdviObservation.ObservationState.SUPERSEDED
+                            ):
+                                row.is_latest = False
+                                row.state = (
+                                    NdviObservation.ObservationState.SUPERSEDED
+                                )
+                                row.save(
+                                    update_fields=[
+                                        "is_latest",
+                                        "state",
+                                        "updated_at",
+                                    ]
+                                )
+                                ndvi_supersession_total.labels(
+                                    engine=engine
+                                ).inc()
+
+                        obj = NdviObservation.objects.create(
+                            farm=farm,
+                            engine=engine,
+                            bucket_date=point.date,
+                            mean=point.mean,
+                            min=point.min,
+                            max=point.max,
+                            sample_count=point.sample_count,
+                            cloud_fraction=point.cloud_fraction,
+                            version=version,
+                            state=state,
+                            is_latest=True,
+                            acquired_at=now,
+                            computed_at=now,
+                            ingested_at=now,
+                            source_scene_id=scene_id,
+                            provenance=validated_provenance,
+                            provenance_hash=prov_hash,
+                        )
+                        ndvi_append_only_writes_total.labels(
+                            engine=engine
+                        ).inc()
+                    else:
+                        defaults: dict[str, Any] = {
+                            "mean": point.mean,
+                            "min": point.min,
+                            "max": point.max,
+                            "sample_count": point.sample_count,
+                            "cloud_fraction": point.cloud_fraction,
+                            "version": version,
+                            "state": state,
+                            "is_latest": True,
+                            "acquired_at": now,
+                            "computed_at": now,
+                            "ingested_at": now,
+                        }
+                        if scene_id:
+                            defaults["source_scene_id"] = scene_id
+                        if validated_provenance:
+                            defaults["provenance"] = validated_provenance
+                        if prov_hash:
+                            defaults["provenance_hash"] = prov_hash
+
+                        obj, _ = NdviObservation.objects.update_or_create(
+                            farm=farm,
+                            engine=engine,
+                            bucket_date=point.date,
+                            defaults=defaults,
+                        )
+                    saved.append(obj)
+            return saved
+
+        except IntegrityError as exc:
+            if "unique constraint" not in str(exc).lower():
+                raise
+            if attempt < max_retries - 1:
+                delay = base_delay * (2**attempt)
+                logger.warning(
+                    "ndvi.upsert.constraint_collision attempt=%d/%d "
+                    "farm_id=%s engine=%s delay=%.2f",
+                    attempt + 1,
+                    max_retries,
+                    farm.id,
+                    engine,
+                    delay,
                 )
-            saved.append(obj)
+                ndvi_constraint_collision_total.labels(
+                    engine=engine,
+                    constraint="upsert",
+                ).inc()
+                time.sleep(delay)
+            else:
+                logger.error(
+                    "ndvi.upsert.constraint_collision_exhausted "
+                    "farm_id=%s engine=%s",
+                    farm.id,
+                    engine,
+                )
+                ndvi_constraint_collision_total.labels(
+                    engine=engine,
+                    constraint="upsert",
+                ).inc()
+                raise
+
     return saved
 
 
@@ -724,17 +904,16 @@ def enqueue_job(
     return job
 
 
-def dispatch_ndvi_job(job: NdviJob | int) -> None:
+def dispatch_ndvi_job(job: NdviJob | int, *, queue: str | None = None) -> None:
     """Dispatch an NDVI job to the configured queue backend.
 
     When NDVI_QUEUE_BACKEND="stream", publishes to Redis stream.
-    When NDVI_QUEUE_BACKEND="celery" (default), enqueues directly to Celery.
+    When NDVI_QUEUE_BACKEND="celery" (default), enqueues to Celery.
 
     Args:
         job: NdviJob instance or job ID to dispatch.
-
-    Raises:
-        redis.ConnectionError: If stream backend and Redis is unavailable.
+        queue: Optional Celery queue override. Defaults to
+            ndvi_ingestion for normal jobs.
     """
     backend = get_ndvi_queue_backend()
 
@@ -749,11 +928,11 @@ def dispatch_ndvi_job(job: NdviJob | int) -> None:
         publish_ndvi_job(job_obj)
         return
 
-    # Celery backend (default)
     from .tasks import run_ndvi_job
 
     job_id = job.id if isinstance(job, NdviJob) else int(job)
-    run_ndvi_job.delay(job_id)
+    target_queue = queue or get_ndvi_queue_name("ingestion")
+    run_ndvi_job.apply_async(args=[job_id], queue=target_queue)
 
 
 def dispatch_farm_state_coverage(
@@ -762,20 +941,17 @@ def dispatch_farm_state_coverage(
     engine: str | None = None,
     target_date: date,
     threshold: float,
+    queue: str | None = None,
 ) -> None:
     """Dispatch a farm state coverage job to the configured queue backend.
-
-    When NDVI_QUEUE_BACKEND="stream", publishes to Redis stream.
-    When NDVI_QUEUE_BACKEND="celery" (default), enqueues directly to Celery.
 
     Args:
         farm_id: ID of the farm to compute coverage for.
         engine: NDVI engine to use (default from settings).
         target_date: Target date for coverage computation.
         threshold: Coverage threshold for state classification.
-
-    Raises:
-        redis.ConnectionError: If stream backend and Redis is unavailable.
+        queue: Optional Celery queue override. Defaults to
+            ndvi_analysis for coverage jobs.
     """
     backend = get_ndvi_queue_backend()
 
@@ -790,14 +966,17 @@ def dispatch_farm_state_coverage(
         )
         return
 
-    # Celery backend (default)
     from .tasks import compute_farm_state_coverage
 
-    compute_farm_state_coverage.delay(
-        farm_id=farm_id,
-        engine=engine,
-        target_date=target_date.isoformat(),
-        threshold=threshold,
+    target_queue = queue or get_ndvi_queue_name("analysis")
+    compute_farm_state_coverage.apply_async(
+        kwargs={
+            "farm_id": farm_id,
+            "engine": engine,
+            "target_date": target_date.isoformat(),
+            "threshold": threshold,
+        },
+        queue=target_queue,
     )
 
 
@@ -844,6 +1023,16 @@ def detect_anomalies(
 ) -> list[tuple[NdviObservation, str, float]]:
     """Detect NDVI anomalies using rolling median deviation.
 
+    OPERATIONAL TELEMETRY ONLY — not user-facing agronomic logic.
+
+    NDVI naturally shifts due to rainfall, harvesting, seasonal cycles,
+    crop rotation, and drought. Static thresholds will generate false
+    positives. For production agronomic use, this function needs:
+    - seasonal baselines
+    - crop-aware thresholds
+    - historical trend windows
+    - confidence scoring
+
     Returns list of (observation, reason, deviation) tuples.
     """
     if threshold is None:
@@ -889,6 +1078,43 @@ def get_ndvi_version_registry() -> list[dict[str, str]]:
     ]
 
 
+def _get_global_recompute_queue_depth() -> int:
+    """Get the total queued recompute jobs across all Celery workers.
+
+    Uses Celery inspect to query all workers for their reserved and
+    scheduled tasks, providing a globally authoritative queue depth.
+    Falls back to DB query if inspect is unavailable.
+    """
+    try:
+        from celery import current_app
+
+        inspect = current_app.control.inspect()
+        if inspect is None:
+            return _get_db_recompute_queue_depth()
+
+        active = inspect.active() or {}
+        reserved = inspect.reserved() or {}
+        scheduled = inspect.scheduled() or {}
+
+        total = 0
+        for worker_tasks in [active, reserved, scheduled]:
+            for tasks in worker_tasks.values():
+                for task in tasks:
+                    if task.get("name") == "ndvi.tasks.run_ndvi_job":
+                        total += 1
+        return total
+    except Exception:
+        return _get_db_recompute_queue_depth()
+
+
+def _get_db_recompute_queue_depth() -> int:
+    """Fallback: count queued/recompute jobs from the database."""
+    return NdviJob.objects.filter(
+        status__in=[NdviJob.JobStatus.QUEUED, NdviJob.JobStatus.RUNNING],
+        job_type=NdviJob.JobType.BACKFILL,
+    ).count()
+
+
 def recompute_stale_observations(
     *,
     engine: str,
@@ -903,6 +1129,8 @@ def recompute_stale_observations(
     ready for dispatch via dispatch_ndvi_job().
 
     Implements bounded windows, chunking, and backpressure controls.
+    Backpressure uses Celery inspect for globally authoritative queue
+    depth across all workers.
     """
     max_days = max_window_days or get_ndvi_recompute_max_window_days()
     if (end_date - start_date).days > max_days:
@@ -926,10 +1154,7 @@ def recompute_stale_observations(
         .order_by("bucket_date", "farm_id")[: chunk * 10]
     )
 
-    queued_jobs = NdviJob.objects.filter(
-        status__in=[NdviJob.JobStatus.QUEUED, NdviJob.JobStatus.RUNNING],
-        job_type=NdviJob.JobType.BACKFILL,
-    ).count()
+    queued_jobs = _get_global_recompute_queue_depth()
 
     backpressure_limit = get_ndvi_recompute_backpressure_threshold()
     if queued_jobs >= backpressure_limit:

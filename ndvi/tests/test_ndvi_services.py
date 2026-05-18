@@ -21,6 +21,7 @@ from ndvi.services import (
     TimeseriesParams,
     _determine_observation_state,
     cache_latest_response,
+    compute_provenance_hash,
     detect_anomalies,
     dispatch_farm_state_coverage,
     dispatch_ndvi_job,
@@ -34,9 +35,12 @@ from ndvi.services import (
     get_ndvi_anomaly_threshold,
     get_ndvi_append_only,
     get_ndvi_queue_backend,
+    get_ndvi_queue_name,
     get_ndvi_recompute_backpressure_threshold,
     get_ndvi_recompute_chunk_size,
     get_ndvi_recompute_max_window_days,
+    get_ndvi_upsert_max_retries,
+    get_ndvi_upsert_retry_delay,
     get_ndvi_version,
     get_ndvi_version_registry,
     is_stale,
@@ -45,6 +49,7 @@ from ndvi.services import (
     recompute_stale_observations,
     resolve_ndvi_engine_name,
     upsert_observations,
+    validate_provenance,
 )
 
 
@@ -918,3 +923,149 @@ def test_upsert_observations_scene_idempotent(
     )
     assert first[0].id == second[0].id
     assert second[0].mean == 0.5
+
+
+def test_compute_provenance_hash_deterministic() -> None:
+    prov = {"engine_version": "2.0", "scl_mask": True}
+    h1 = compute_provenance_hash(prov)
+    h2 = compute_provenance_hash(prov)
+    assert h1 == h2
+    assert len(h1) == 16
+
+
+def test_compute_provenance_hash_order_independent() -> None:
+    prov_a = {"engine_version": "2.0", "scl_mask": True}
+    prov_b = {"scl_mask": True, "engine_version": "2.0"}
+    assert compute_provenance_hash(prov_a) == compute_provenance_hash(prov_b)
+
+
+def test_validate_provenance_accepts_valid_keys() -> None:
+    prov = {
+        "engine_version": "2.0",
+        "scl_mask": True,
+        "schema_version": "1",
+    }
+    result = validate_provenance(prov)
+    assert result == prov
+
+
+def test_validate_provenance_rejects_unknown_keys() -> None:
+    with pytest.raises(ValueError, match="Unrecognized provenance keys"):
+        validate_provenance({"unknown_key": "value"})
+
+
+def test_validate_provenance_rejects_bad_schema_version() -> None:
+    with pytest.raises(ValueError, match="Unsupported provenance schema"):
+        validate_provenance({"schema_version": "99"})
+
+
+def test_validate_provenance_empty_returns_empty() -> None:
+    assert validate_provenance({}) == {}
+
+
+def test_observation_state_invalidated_rejected_transitions() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="stac",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        state="RAW",
+    )
+    assert obs.can_transition_to("REJECTED") is True
+
+    obs.state = "FINAL"
+    assert obs.can_transition_to("INVALIDATED") is True
+
+    obs.state = "INVALIDATED"
+    assert obs.can_transition_to("FINAL") is False
+    assert obs.can_transition_to("SUPERSEDED") is False
+
+    obs.state = "REJECTED"
+    assert obs.can_transition_to("FINAL") is False
+
+
+def test_get_ndvi_queue_name_defaults() -> None:
+    assert get_ndvi_queue_name("ingestion") == "ndvi_ingestion"
+    assert get_ndvi_queue_name("recompute") == "ndvi_recompute"
+    assert get_ndvi_queue_name("analysis") == "ndvi_analysis"
+
+
+def test_get_ndvi_queue_name_from_settings(settings: Any) -> None:
+    settings.NDVI_QUEUE_INGESTION = "custom_ingest"
+    assert get_ndvi_queue_name("ingestion") == "custom_ingest"
+
+
+def test_get_ndvi_upsert_max_retries_default() -> None:
+    assert get_ndvi_upsert_max_retries() == 3
+
+
+def test_get_ndvi_upsert_retry_delay_default() -> None:
+    assert get_ndvi_upsert_retry_delay() == 0.1
+
+
+@pytest.mark.django_db
+def test_dispatch_ndvi_job_uses_queue_isolation() -> None:
+    with patch("ndvi.services.get_ndvi_queue_backend", return_value="celery"):
+        with patch("ndvi.tasks.run_ndvi_job.apply_async") as mock_apply:
+            dispatch_ndvi_job(123)
+            mock_apply.assert_called_once()
+            call_kwargs = mock_apply.call_args
+            assert call_kwargs.kwargs.get("queue") == "ndvi_ingestion"
+
+
+@pytest.mark.django_db
+def test_dispatch_farm_state_coverage_uses_analysis_queue(
+    settings: Any,
+) -> None:
+    settings.NDVI_QUEUE_BACKEND = "celery"
+    target_date = date(2025, 1, 3)
+    with patch(
+        "ndvi.tasks.compute_farm_state_coverage.apply_async"
+    ) as mock_apply:
+        dispatch_farm_state_coverage(
+            farm_id=7,
+            engine="stac",
+            target_date=target_date,
+            threshold=0.4,
+        )
+        mock_apply.assert_called_once()
+        call_kwargs = mock_apply.call_args
+        assert call_kwargs.kwargs.get("queue") == "ndvi_analysis"
+
+
+@pytest.mark.django_db
+def test_upsert_observations_sets_provenance_hash(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    settings.NDVI_VERSION = "v2.0-test"
+    user = get_user_model().objects.create_user(
+        username="prov-hash",
+        email="prov-hash@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-prov-hash")
+    from ndvi.engines.base import NdviPoint
+
+    points = [
+        NdviPoint(
+            date=date(2025, 3, 1),
+            mean=0.5,
+            min=0.3,
+            max=0.7,
+            sample_count=100,
+            cloud_fraction=0.10,
+        ),
+    ]
+    prov = {"engine_version": "2.0", "scl_mask": True}
+    saved = upsert_observations(
+        farm=farm,
+        engine="sentinelhub",
+        max_cloud=30,
+        points=points,
+        provenance=prov,
+    )
+    assert len(saved) == 1
+    expected_hash = compute_provenance_hash(prov)
+    assert saved[0].provenance_hash == expected_hash
+    assert saved[0].provenance == prov

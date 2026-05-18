@@ -20,14 +20,22 @@ class NdviObservation(models.Model):
         RAW = "RAW", "Raw engine output before final acceptance"
         FINAL = "FINAL", "Data that passed cloud and quality checks"
         SUPERSEDED = "SUPERSEDED", "Replaced by a newer observation"
+        INVALIDATED = "INVALIDATED", "Marked invalid due to bad source data"
+        REJECTED = "REJECTED", "Rejected by quality or processing rules"
 
     VALID_TRANSITIONS: dict[str, list[str]] = {
         ObservationState.RAW: [
             ObservationState.FINAL,
             ObservationState.SUPERSEDED,
+            ObservationState.REJECTED,
         ],
-        ObservationState.FINAL: [ObservationState.SUPERSEDED],
+        ObservationState.FINAL: [
+            ObservationState.SUPERSEDED,
+            ObservationState.INVALIDATED,
+        ],
         ObservationState.SUPERSEDED: [],
+        ObservationState.INVALIDATED: [],
+        ObservationState.REJECTED: [],
     }
 
     farm = models.ForeignKey(
@@ -73,6 +81,13 @@ class NdviObservation(models.Model):
         blank=True,
         help_text="Processing inputs: engine version, SCL mask params, etc.",
     )
+    provenance_hash = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Deterministic hash of provenance for idempotency",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -88,7 +103,12 @@ class NdviObservation(models.Model):
                 name="uniq_ndvi_latest_observation",
             ),
             models.UniqueConstraint(
-                fields=["farm", "engine", "source_scene_id"],
+                fields=[
+                    "farm",
+                    "engine",
+                    "source_scene_id",
+                    "provenance_hash",
+                ],
                 condition=models.Q(source_scene_id__isnull=False),
                 name="uniq_ndvi_scene_per_farm_engine",
             ),

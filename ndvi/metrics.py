@@ -127,3 +127,38 @@ ndvi_idempotent_hit_total = Counter(
     "Count of idempotent observation hits (no write needed)",
     labelnames=["engine"],
 )
+
+# Saturation: constraint collision tracking
+ndvi_constraint_collision_total = Counter(
+    "ndvi_constraint_collision_total",
+    "Count of IntegrityError collisions during upsert",
+    labelnames=["engine", "constraint"],
+)
+
+# Saturation: supersession churn
+ndvi_supersession_total = Counter(
+    "ndvi_supersession_total",
+    "Count of observations superseded by newer versions",
+    labelnames=["engine"],
+)
+
+# Saturation: recompute backlog
+ndvi_recompute_backlog_total = Gauge(
+    "ndvi_recompute_backlog_total",
+    "Count of stale observations awaiting recompute",
+    labelnames=["engine"],
+)
+
+# Saturation: recompute failures
+ndvi_recompute_failure_total = Counter(
+    "ndvi_recompute_failure_total",
+    "Count of recompute operations that failed",
+    labelnames=["engine", "reason"],
+)
+
+# Saturation: RAW retention age
+ndvi_raw_stale_age_seconds = Gauge(
+    "ndvi_raw_stale_age_seconds",
+    "Age in seconds of the oldest RAW observation",
+    labelnames=["engine"],
+)
