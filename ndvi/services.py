@@ -15,6 +15,7 @@ from typing import Any
 from django.conf import settings
 from django.core.cache import caches
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from farms.models import Farm
@@ -32,6 +33,8 @@ SUPPORTED_ENGINES = ("sentinelhub", "stac")
 
 DEFAULT_NDVI_ENGINE_NAME = "sentinelhub"
 DEFAULT_NDVI_QUEUE_BACKEND = "celery"
+DEFAULT_NDVI_VERSION = "v1-legacy"
+DEFAULT_NDVI_APPEND_ONLY = False
 DEFAULT_MAX_AREA_KM2 = 5000.0
 DEFAULT_MAX_DATERANGE_DAYS = 370
 DEFAULT_STEP_DAYS = 7
@@ -63,6 +66,16 @@ def get_ndvi_queue_backend() -> str:
     return str(
         getattr(settings, "NDVI_QUEUE_BACKEND", DEFAULT_NDVI_QUEUE_BACKEND)
     ).lower()
+
+
+def get_ndvi_version() -> str:
+    return str(getattr(settings, "NDVI_VERSION", DEFAULT_NDVI_VERSION))
+
+
+def get_ndvi_append_only() -> bool:
+    return bool(
+        getattr(settings, "NDVI_APPEND_ONLY", DEFAULT_NDVI_APPEND_ONLY)
+    )
 
 
 def get_max_area_km2() -> float:
@@ -466,6 +479,27 @@ def enforce_quota(farm: Farm, bbox: BBox) -> None:
         raise ValidationError("Requested area exceeds NDVI_MAX_AREA_KM2.")
 
 
+def _determine_observation_state(
+    cloud_fraction: float | None,
+    *,
+    max_cloud: int,
+) -> str:
+    """Determine the lifecycle state for an observation.
+
+    Phase 6: cloud_fraction=None cannot be FINAL.
+    Observations with unknown cloud quality are kept as RAW only.
+    """
+    from .models import NdviObservation
+
+    if cloud_fraction is None:
+        return NdviObservation.ObservationState.RAW
+
+    if not cloud_fraction_is_within_limit(cloud_fraction, max_cloud):
+        return NdviObservation.ObservationState.RAW
+
+    return NdviObservation.ObservationState.FINAL
+
+
 def upsert_observations(
     *,
     farm: Farm,
@@ -474,6 +508,9 @@ def upsert_observations(
     points: Iterable[NdviPoint],
 ) -> list[NdviObservation]:
     saved: list[NdviObservation] = []
+    version = get_ndvi_version()
+    append_only = get_ndvi_append_only()
+
     with transaction.atomic():
         for point in points:
             if not cloud_fraction_is_within_limit(
@@ -490,18 +527,66 @@ def upsert_observations(
                     max_cloud,
                 )
                 continue
-            obj, _ = NdviObservation.objects.update_or_create(
-                farm=farm,
-                engine=engine,
-                bucket_date=point.date,
-                defaults={
-                    "mean": point.mean,
-                    "min": point.min,
-                    "max": point.max,
-                    "sample_count": point.sample_count,
-                    "cloud_fraction": point.cloud_fraction,
-                },
+
+            state = _determine_observation_state(
+                point.cloud_fraction,
+                max_cloud=max_cloud,
             )
+
+            if append_only:
+                existing_latest = NdviObservation.objects.filter(
+                    farm=farm,
+                    engine=engine,
+                    bucket_date=point.date,
+                    is_latest=True,
+                ).first()
+
+                idempotent = NdviObservation.objects.filter(
+                    farm=farm,
+                    engine=engine,
+                    bucket_date=point.date,
+                    version=version,
+                ).first()
+
+                if idempotent:
+                    saved.append(idempotent)
+                    continue
+
+                if existing_latest:
+                    existing_latest.is_latest = False
+                    existing_latest.save(update_fields=["is_latest"])
+
+                obj = NdviObservation.objects.create(
+                    farm=farm,
+                    engine=engine,
+                    bucket_date=point.date,
+                    mean=point.mean,
+                    min=point.min,
+                    max=point.max,
+                    sample_count=point.sample_count,
+                    cloud_fraction=point.cloud_fraction,
+                    version=version,
+                    state=state,
+                    is_latest=True,
+                    computed_at=timezone.now(),
+                )
+            else:
+                obj, _ = NdviObservation.objects.update_or_create(
+                    farm=farm,
+                    engine=engine,
+                    bucket_date=point.date,
+                    defaults={
+                        "mean": point.mean,
+                        "min": point.min,
+                        "max": point.max,
+                        "sample_count": point.sample_count,
+                        "cloud_fraction": point.cloud_fraction,
+                        "version": version,
+                        "state": state,
+                        "is_latest": True,
+                        "computed_at": timezone.now(),
+                    },
+                )
             saved.append(obj)
     return saved
 

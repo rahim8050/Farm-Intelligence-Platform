@@ -16,6 +16,10 @@ def default_ndvi_engine_name() -> str:
 class NdviObservation(models.Model):
     """Materialized NDVI observation for a farm and date bucket."""
 
+    class ObservationState(models.TextChoices):
+        RAW = "RAW", "Raw engine output before final acceptance"
+        FINAL = "FINAL", "Data that passed cloud and quality checks"
+
     farm = models.ForeignKey(
         Farm, on_delete=models.CASCADE, related_name="ndvi_observations"
     )
@@ -26,24 +30,38 @@ class NdviObservation(models.Model):
     max = models.FloatField(null=True, blank=True)
     sample_count = models.IntegerField(null=True, blank=True)
     cloud_fraction = models.FloatField(null=True, blank=True)
+    version = models.CharField(max_length=32, default="v1-legacy")
+    state = models.CharField(
+        max_length=16,
+        choices=ObservationState.choices,
+        default=ObservationState.FINAL,
+    )
+    is_latest = models.BooleanField(default=True)
+    computed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["farm", "engine", "bucket_date"],
-                name="uniq_ndvi_observation_farm_engine_bucket",
+                fields=["farm", "engine", "bucket_date", "version"],
+                name="uniq_ndvi_observation_farm_engine_bucket_version",
             ),
         ]
         indexes = [
             models.Index(fields=["farm", "bucket_date"]),
             models.Index(fields=["engine", "bucket_date"]),
+            models.Index(
+                fields=["farm", "engine", "bucket_date", "is_latest"]
+            ),
+            models.Index(fields=["version", "engine"]),
+            models.Index(fields=["state", "engine"]),
         ]
 
     def __str__(self) -> str:
         return (
             f"NDVI {self.bucket_date} farm={self.farm_id} engine={self.engine}"
+            f" v={self.version} state={self.state} latest={self.is_latest}"
         )
 
 

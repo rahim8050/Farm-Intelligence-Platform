@@ -19,6 +19,7 @@ from ndvi.services import (
     NDVI_LATEST_CACHE_VERSION,
     LatestParams,
     TimeseriesParams,
+    _determine_observation_state,
     cache_latest_response,
     dispatch_farm_state_coverage,
     dispatch_ndvi_job,
@@ -28,11 +29,14 @@ from ndvi.services import (
     get_default_ndvi_engine_name,
     get_engine,
     get_max_daterange_days,
+    get_ndvi_append_only,
     get_ndvi_queue_backend,
+    get_ndvi_version,
     is_stale,
     normalize_latest_params,
     normalize_timeseries_params,
     resolve_ndvi_engine_name,
+    upsert_observations,
 )
 
 
@@ -344,3 +348,245 @@ def test_latest_params_dataclass() -> None:
     params = LatestParams(lookback_days=7, max_cloud=30)
     assert params.lookback_days == 7
     assert params.max_cloud == 30
+
+
+def test_get_ndvi_version_default() -> None:
+    assert get_ndvi_version() == "v1-legacy"
+
+
+def test_get_ndvi_version_from_settings(settings: Any) -> None:
+    settings.NDVI_VERSION = "v2.1-cloud-mask"
+    assert get_ndvi_version() == "v2.1-cloud-mask"
+
+
+def test_get_ndvi_append_only_default() -> None:
+    assert get_ndvi_append_only() is False
+
+
+def test_get_ndvi_append_only_from_settings(settings: Any) -> None:
+    settings.NDVI_APPEND_ONLY = True
+    assert get_ndvi_append_only() is True
+
+
+def test_determine_observation_state_final() -> None:
+    state = _determine_observation_state(0.15, max_cloud=30)
+    assert state == "FINAL"
+
+
+def test_determine_observation_state_raw_when_cloud_exceeds_limit() -> None:
+    state = _determine_observation_state(0.80, max_cloud=30)
+    assert state == "RAW"
+
+
+def test_determine_observation_state_raw_when_cloud_none() -> None:
+    state = _determine_observation_state(None, max_cloud=30)
+    assert state == "RAW"
+
+
+@pytest.mark.django_db
+def test_upsert_observations_sets_version_and_state(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    user = get_user_model().objects.create_user(
+        username="upsert-owner",
+        email="upsert-owner@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-upsert")
+    from ndvi.engines.base import NdviPoint
+
+    points = [
+        NdviPoint(
+            date=date(2025, 3, 1),
+            mean=0.5,
+            min=0.3,
+            max=0.7,
+            sample_count=100,
+            cloud_fraction=0.10,
+        ),
+    ]
+    saved = upsert_observations(
+        farm=farm,
+        engine="sentinelhub",
+        max_cloud=30,
+        points=points,
+    )
+    assert len(saved) == 1
+    obs = saved[0]
+    assert obs.version == "v1-legacy"
+    assert obs.state == "FINAL"
+    assert obs.is_latest is True
+
+
+@pytest.mark.django_db
+def test_upsert_observations_marks_cloudy_as_raw(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    user = get_user_model().objects.create_user(
+        username="upsert-raw",
+        email="upsert-raw@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-raw")
+    from ndvi.engines.base import NdviPoint
+
+    points = [
+        NdviPoint(
+            date=date(2025, 3, 1),
+            mean=0.5,
+            min=0.3,
+            max=0.7,
+            sample_count=100,
+            cloud_fraction=None,
+        ),
+    ]
+    saved = upsert_observations(
+        farm=farm,
+        engine="sentinelhub",
+        max_cloud=30,
+        points=points,
+    )
+    assert len(saved) == 1
+    assert saved[0].state == "RAW"
+
+
+@pytest.mark.django_db
+def test_upsert_observations_append_only_creates_new_row(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    settings.NDVI_VERSION = "v2.0-test"
+    settings.NDVI_APPEND_ONLY = True
+    user = get_user_model().objects.create_user(
+        username="append-owner",
+        email="append-owner@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-append")
+    from ndvi.engines.base import NdviPoint
+
+    points = [
+        NdviPoint(
+            date=date(2025, 3, 1),
+            mean=0.5,
+            min=0.3,
+            max=0.7,
+            sample_count=100,
+            cloud_fraction=0.10,
+        ),
+    ]
+    first = upsert_observations(
+        farm=farm,
+        engine="sentinelhub",
+        max_cloud=30,
+        points=points,
+    )
+    assert len(first) == 1
+    assert first[0].is_latest is True
+
+    settings.NDVI_VERSION = "v2.1-updated"
+    points2 = [
+        NdviPoint(
+            date=date(2025, 3, 1),
+            mean=0.6,
+            min=0.4,
+            max=0.8,
+            sample_count=120,
+            cloud_fraction=0.05,
+        ),
+    ]
+    second = upsert_observations(
+        farm=farm,
+        engine="sentinelhub",
+        max_cloud=30,
+        points=points2,
+    )
+    assert len(second) == 1
+    assert second[0].is_latest is True
+    assert second[0].id != first[0].id
+
+    first[0].refresh_from_db()
+    assert first[0].is_latest is False
+
+    total = NdviObservation.objects.filter(
+        farm=farm, engine="sentinelhub", bucket_date=date(2025, 3, 1)
+    ).count()
+    assert total == 2
+
+
+@pytest.mark.django_db
+def test_upsert_observations_append_only_idempotent_same_version(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    settings.NDVI_VERSION = "v2.0-test"
+    settings.NDVI_APPEND_ONLY = True
+    user = get_user_model().objects.create_user(
+        username="idempotent-owner",
+        email="idempotent-owner@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-idempotent")
+    from ndvi.engines.base import NdviPoint
+
+    points = [
+        NdviPoint(
+            date=date(2025, 3, 1),
+            mean=0.5,
+            min=0.3,
+            max=0.7,
+            sample_count=100,
+            cloud_fraction=0.10,
+        ),
+    ]
+    first = upsert_observations(
+        farm=farm,
+        engine="sentinelhub",
+        max_cloud=30,
+        points=points,
+    )
+    second = upsert_observations(
+        farm=farm,
+        engine="sentinelhub",
+        max_cloud=30,
+        points=points,
+    )
+    assert first[0].id == second[0].id
+    total = NdviObservation.objects.filter(
+        farm=farm, engine="sentinelhub", bucket_date=date(2025, 3, 1)
+    ).count()
+    assert total == 1
+
+
+@pytest.mark.django_db
+def test_upsert_observations_skips_overly_cloudy(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    user = get_user_model().objects.create_user(
+        username="cloudy-skip",
+        email="cloudy-skip@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-cloudy")
+    from ndvi.engines.base import NdviPoint
+
+    points = [
+        NdviPoint(
+            date=date(2025, 3, 1),
+            mean=0.5,
+            min=0.3,
+            max=0.7,
+            sample_count=100,
+            cloud_fraction=0.90,
+        ),
+    ]
+    saved = upsert_observations(
+        farm=farm,
+        engine="sentinelhub",
+        max_cloud=30,
+        points=points,
+    )
+    assert len(saved) == 0

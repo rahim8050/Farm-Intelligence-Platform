@@ -254,3 +254,94 @@ def test_set_and_get_cached_coverage() -> None:
     )
     assert found is True
     assert value == 75.5
+
+
+@pytest.mark.django_db
+def test_farm_state_filters_to_latest_and_final(settings: Any) -> None:
+    """Farm state computation only uses is_latest=True and state=FINAL rows."""
+    caches["default"].clear()
+    settings.NDVI_ENGINE = "stac"
+    user = get_user_model().objects.create_user(
+        username="fs-filter",
+        email="fs-filter@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Farm",
+        slug="farm-filter",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    bucket = date.today() - timedelta(days=1)
+
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="stac",
+        bucket_date=bucket,
+        mean=0.9,
+        is_latest=False,
+        state="FINAL",
+        version="v1-legacy",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="stac",
+        bucket_date=bucket,
+        mean=0.1,
+        is_latest=True,
+        state="RAW",
+        version="v2.0-raw",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="stac",
+        bucket_date=bucket,
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v2.1-final",
+    )
+
+    result = build_farm_state(farm=farm, engine="stac")
+    assert result.mean_ndvi is not None
+    assert abs(result.mean_ndvi - 0.5) < 0.001
+
+
+@pytest.mark.django_db
+def test_farm_state_ignores_non_latest_final(settings: Any) -> None:
+    """Non-latest FINAL rows are excluded from farm state."""
+    caches["default"].clear()
+    settings.NDVI_ENGINE = "stac"
+    user = get_user_model().objects.create_user(
+        username="fs-nonlatest",
+        email="fs-nonlatest@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Farm",
+        slug="farm-nonlatest",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    bucket = date.today() - timedelta(days=1)
+
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="stac",
+        bucket_date=bucket,
+        mean=0.9,
+        is_latest=False,
+        state="FINAL",
+    )
+
+    result = build_farm_state(farm=farm, engine="stac")
+    assert result.mean_ndvi is None
+    assert result.state == "unknown"

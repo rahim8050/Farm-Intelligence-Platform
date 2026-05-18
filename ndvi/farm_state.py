@@ -584,7 +584,12 @@ def _compute_farm_state(
     farm: Farm,
     engine: str,
 ) -> FarmStateResult:
-    """Compute farm state from observations (no cache logic)."""
+    """Compute farm state from observations (no cache logic).
+
+    Phase 4: Only reads FINAL, latest observations.
+    """
+    from ndvi.models import NdviObservation
+
     window_days = get_trend_window_days()
     end = date.today()
     start = end - timedelta(days=window_days)
@@ -595,6 +600,8 @@ def _compute_farm_state(
             engine=engine,
             bucket_date__gte=start,
             bucket_date__lte=end,
+            is_latest=True,
+            state=NdviObservation.ObservationState.FINAL,
         ).order_by("bucket_date")
     )
     observations = filter_observations_by_cloud(
