@@ -767,8 +767,13 @@ class NdviLatestView(BaseFarmView):
         observations = filter_observations_by_cloud(
             list(
                 NdviObservation.objects.filter(
-                    farm=farm, engine=engine_name
-                ).order_by("-bucket_date")
+                    farm=farm,
+                    engine=engine_name,
+                    is_latest=True,
+                )
+                .exclude(state="INVALIDATED")
+                .exclude(state="REJECTED")
+                .order_by("-bucket_date")
             ),
             max_cloud=params.max_cloud,
         )

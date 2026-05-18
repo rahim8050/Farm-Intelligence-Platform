@@ -587,6 +587,8 @@ def _compute_farm_state(
     """Compute farm state from observations (no cache logic).
 
     Phase 4: Only reads FINAL, latest observations.
+    Follows the canonical validity rule: is_latest=True,
+    state=FINAL, mean is not null.
     """
     from ndvi.models import NdviObservation
 
@@ -602,7 +604,9 @@ def _compute_farm_state(
             bucket_date__lte=end,
             is_latest=True,
             state=NdviObservation.ObservationState.FINAL,
-        ).order_by("bucket_date")
+        )
+        .exclude(mean__isnull=True)
+        .order_by("bucket_date")
     )
     observations = filter_observations_by_cloud(
         observations,

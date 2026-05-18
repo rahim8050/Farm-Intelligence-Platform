@@ -54,6 +54,23 @@ app.conf.update(
     worker_prefetch_multiplier=1,  # Fetch 1 task at a time
     # Task acknowledgment
     task_acks_late=True,  # Ack after task completion
+    # Queue isolation for NDVI workloads
+    task_default_queue="default",
+    task_queues={
+        "default": {},
+        "ndvi_ingestion": {},
+        "ndvi_recompute": {},
+        "ndvi_analysis": {},
+    },
+    task_routes={
+        "ndvi.tasks.run_ndvi_job": {"queue": "ndvi_ingestion"},
+        "ndvi.tasks.compute_farm_state_coverage": {"queue": "ndvi_analysis"},
+        "ndvi.tasks.enqueue_daily_refresh": {"queue": "ndvi_ingestion"},
+        "ndvi.tasks.enqueue_weekly_gap_fill": {"queue": "ndvi_recompute"},
+        "ndvi.tasks.enqueue_daily_farm_state_coverage": {
+            "queue": "ndvi_analysis"
+        },
+    },
 )
 
 from .celery_metrics import (  # noqa: E402

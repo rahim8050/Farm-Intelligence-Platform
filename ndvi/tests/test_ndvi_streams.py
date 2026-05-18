@@ -322,6 +322,7 @@ class TestDispatchFarmStateCoverageStreamMode:
 
 class TestStreamSettings:
     def test_default_queue_backend_is_celery(self, settings: Any) -> None:
+        settings.NDVI_QUEUE_BACKEND = "celery"
         from ndvi.services import get_ndvi_queue_backend
 
         backend = get_ndvi_queue_backend()

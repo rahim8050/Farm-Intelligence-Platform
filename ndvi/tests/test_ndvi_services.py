@@ -41,8 +41,11 @@ from ndvi.services import (
     get_ndvi_recompute_max_window_days,
     get_ndvi_upsert_max_retries,
     get_ndvi_upsert_retry_delay,
+    get_ndvi_upsert_retry_jitter,
     get_ndvi_version,
     get_ndvi_version_registry,
+    get_valid_observations_qs,
+    is_analytically_valid,
     is_stale,
     normalize_latest_params,
     normalize_timeseries_params,
@@ -1075,3 +1078,179 @@ def test_upsert_observations_sets_provenance_hash(
     expected_hash = compute_provenance_hash(prov)
     assert saved[0].provenance_hash == expected_hash
     assert saved[0].provenance == prov
+
+
+def test_compute_provenance_hash_canonical_json() -> None:
+    """Provenance hash uses strict canonical JSON (no whitespace)."""
+    prov = {"engine_version": "2.0", "scl_mask": True}
+    h = compute_provenance_hash(prov)
+    assert len(h) == 16
+    assert h == compute_provenance_hash(prov)
+
+
+def test_compute_provenance_hash_unicode_safe() -> None:
+    """Provenance hash handles unicode with ensure_ascii."""
+    prov = {"description": "café"}
+    h1 = compute_provenance_hash(prov)
+    h2 = compute_provenance_hash({"description": "caf\u00e9"})
+    assert h1 == h2
+
+
+def test_get_ndvi_upsert_retry_jitter_default() -> None:
+    assert get_ndvi_upsert_retry_jitter() == 0.05
+
+
+@pytest.mark.django_db
+def test_is_analytically_valid_final_latest() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="stac",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+    )
+    assert is_analytically_valid(obs) is True
+
+
+@pytest.mark.django_db
+def test_is_analytically_valid_rejects_raw() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="stac",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        is_latest=True,
+        state="RAW",
+    )
+    assert is_analytically_valid(obs) is False
+
+
+@pytest.mark.django_db
+def test_is_analytically_valid_rejects_invalidated() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="stac",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        is_latest=True,
+        state="INVALIDATED",
+    )
+    assert is_analytically_valid(obs) is False
+
+
+@pytest.mark.django_db
+def test_is_analytically_valid_rejects_rejected() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="stac",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        is_latest=True,
+        state="REJECTED",
+    )
+    assert is_analytically_valid(obs) is False
+
+
+@pytest.mark.django_db
+def test_is_analytically_valid_rejects_not_latest() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="stac",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        is_latest=False,
+        state="FINAL",
+    )
+    assert is_analytically_valid(obs) is False
+
+
+@pytest.mark.django_db
+def test_is_analytically_valid_rejects_null_mean() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="stac",
+        bucket_date=date(2025, 1, 1),
+        mean=None,  # type: ignore[arg-type]
+        is_latest=True,
+        state="FINAL",
+    )
+    assert is_analytically_valid(obs) is False
+
+
+@pytest.mark.django_db
+def test_get_valid_observations_qs_excludes_invalid(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    user = get_user_model().objects.create_user(
+        username="valid-qs",
+        email="valid-qs@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-valid-qs")
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 2),
+        mean=0.6,
+        is_latest=True,
+        state="INVALIDATED",
+        version="v1",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 3),
+        mean=0.7,
+        is_latest=False,
+        state="FINAL",
+        version="v1",
+    )
+
+    qs = get_valid_observations_qs(farm=farm, engine="sentinelhub")
+    assert qs.count() == 1
+    assert qs.first().bucket_date == date(2025, 3, 1)
+
+
+@pytest.mark.django_db
+def test_recompute_stale_observations_includes_dispatch_key(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    settings.NDVI_VERSION = "v2.0-current"
+    user = get_user_model().objects.create_user(
+        username="recompute-key",
+        email="recompute-key@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user, name="Farm", slug="farm-recompute-key"
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1-legacy",
+    )
+
+    results = recompute_stale_observations(
+        engine="sentinelhub",
+        start_date=date(2025, 3, 1),
+        end_date=date(2025, 3, 31),
+    )
+    assert len(results) == 1
+    assert "dispatch_key" in results[0]
+    assert len(results[0]["dispatch_key"]) == 16

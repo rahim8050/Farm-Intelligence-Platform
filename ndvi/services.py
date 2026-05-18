@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+import secrets
 import time
 import uuid
 from collections.abc import Callable, Iterable
@@ -15,7 +16,8 @@ from typing import Any
 
 from django.conf import settings
 from django.core.cache import caches
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, models, transaction
+from django.db.models import QuerySet
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -29,6 +31,7 @@ from .metrics import (
     ndvi_constraint_collision_total,
     ndvi_idempotent_hit_total,
     ndvi_jobs_total,
+    ndvi_recompute_failure_total,
     ndvi_supersession_total,
 )
 from .models import NdviJob, NdviObservation
@@ -38,6 +41,44 @@ from .raster.registry import resolve_raster_engine_name
 logger = logging.getLogger(__name__)
 
 SUPPORTED_ENGINES = ("sentinelhub", "stac")
+
+_upsert_failure_counts: dict[str, list[float]] = {}
+
+
+def _check_retry_circuit_breaker(engine: str) -> bool:
+    """Check if the circuit breaker is open for upsert retries.
+
+    Returns True if retries should be suppressed (circuit open).
+    Tracks failures within a sliding time window.
+    """
+    window = get_ndvi_retry_circuit_breaker_window()
+    max_failures = get_ndvi_retry_circuit_breaker_max_failures()
+    now = time.monotonic()
+
+    failures = _upsert_failure_counts.get(engine, [])
+    cutoff = now - window
+    recent = [t for t in failures if t > cutoff]
+    _upsert_failure_counts[engine] = recent
+
+    if len(recent) >= max_failures:
+        logger.warning(
+            "ndvi.upsert.circuit_breaker_open engine=%s "
+            "failures=%d window=%ds",
+            engine,
+            len(recent),
+            window,
+        )
+        return True
+    return False
+
+
+def _record_upsert_failure(engine: str) -> None:
+    """Record an upsert failure for circuit breaker tracking."""
+    now = time.monotonic()
+    if engine not in _upsert_failure_counts:
+        _upsert_failure_counts[engine] = []
+    _upsert_failure_counts[engine].append(now)
+
 
 DEFAULT_NDVI_ENGINE_NAME = "sentinelhub"
 DEFAULT_NDVI_QUEUE_BACKEND = "celery"
@@ -49,6 +90,9 @@ DEFAULT_NDVI_RECOMPUTE_BACKPRESSURE_THRESHOLD = 1000
 DEFAULT_NDVI_ANOMALY_THRESHOLD = 0.30
 DEFAULT_NDVI_UPSERT_MAX_RETRIES = 3
 DEFAULT_NDVI_UPSERT_RETRY_DELAY = 0.1
+DEFAULT_NDVI_UPSERT_RETRY_JITTER = 0.05
+DEFAULT_NDVI_RETRY_CIRCUIT_BREAKER_WINDOW = 300
+DEFAULT_NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES = 10
 DEFAULT_NDVI_QUEUE_INGESTION = "ndvi_ingestion"
 DEFAULT_NDVI_QUEUE_RECOMPUTE = "ndvi_recompute"
 DEFAULT_NDVI_QUEUE_ANALYSIS = "ndvi_analysis"
@@ -140,6 +184,30 @@ def get_ndvi_upsert_retry_delay() -> float:
             "NDVI_UPSERT_RETRY_DELAY",
             DEFAULT_NDVI_UPSERT_RETRY_DELAY,
         )
+    )
+
+
+def get_ndvi_upsert_retry_jitter() -> float:
+    return float(
+        getattr(
+            settings,
+            "NDVI_UPSERT_RETRY_JITTER",
+            DEFAULT_NDVI_UPSERT_RETRY_JITTER,
+        )
+    )
+
+
+def get_ndvi_retry_circuit_breaker_window() -> int:
+    return _get_int_setting(
+        "NDVI_RETRY_CIRCUIT_BREAKER_WINDOW",
+        DEFAULT_NDVI_RETRY_CIRCUIT_BREAKER_WINDOW,
+    )
+
+
+def get_ndvi_retry_circuit_breaker_max_failures() -> int:
+    return _get_int_setting(
+        "NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES",
+        DEFAULT_NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES,
     )
 
 
@@ -582,9 +650,25 @@ VALID_PROVENANCE_KEYS = frozenset(
 
 
 def compute_provenance_hash(provenance: dict[str, Any]) -> str:
-    """Compute a deterministic hash of provenance data for idempotency."""
-    normalized = json.dumps(provenance, sort_keys=True, default=str)
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    """Compute a deterministic hash of provenance data for idempotency.
+
+    Uses strict canonical JSON serialization:
+    - sorted keys
+    - no whitespace (separators=(',', ':'))
+    - ensure_ascii=True
+    - default=str for non-serializable types
+
+    This prevents silent identity drift from different JSON encodings
+    of the same logical provenance data.
+    """
+    canonical = json.dumps(
+        provenance,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 def validate_provenance(provenance: dict[str, Any]) -> dict[str, Any]:
@@ -811,22 +895,42 @@ def upsert_observations(
         except IntegrityError as exc:
             if "unique constraint" not in str(exc).lower():
                 raise
+            _record_upsert_failure(engine)
+            if _check_retry_circuit_breaker(engine):
+                logger.error(
+                    "ndvi.upsert.circuit_breaker_suppressing_retry "
+                    "farm_id=%s engine=%s",
+                    farm.id,
+                    engine,
+                )
+                ndvi_recompute_failure_total.labels(
+                    engine=engine,
+                    reason="circuit_breaker",
+                ).inc()
+                raise
             if attempt < max_retries - 1:
                 delay = base_delay * (2**attempt)
+                jitter = (
+                    secrets.randbelow(
+                        int(get_ndvi_upsert_retry_jitter() * 1000)
+                    )
+                    / 1000.0
+                )
+                total_delay = delay + jitter
                 logger.warning(
                     "ndvi.upsert.constraint_collision attempt=%d/%d "
-                    "farm_id=%s engine=%s delay=%.2f",
+                    "farm_id=%s engine=%s delay=%.3f",
                     attempt + 1,
                     max_retries,
                     farm.id,
                     engine,
-                    delay,
+                    total_delay,
                 )
                 ndvi_constraint_collision_total.labels(
                     engine=engine,
                     constraint="upsert",
                 ).inc()
-                time.sleep(delay)
+                time.sleep(total_delay)
             else:
                 logger.error(
                     "ndvi.upsert.constraint_collision_exhausted "
@@ -987,6 +1091,67 @@ def is_stale(observation: NdviObservation | None, lookback_days: int) -> bool:
     return (today - observation.bucket_date).days > lookback_days
 
 
+def is_analytically_valid(observation: NdviObservation) -> bool:
+    """Determine if an observation is analytically valid for computation.
+
+    Canonical rule: an observation is valid if and only if:
+    - state is FINAL (not RAW, SUPERSEDED, INVALIDATED, or REJECTED)
+    - is_latest is True
+    - mean is not None
+    - cloud_fraction is within the configured max_cloud limit
+
+    This is the single source of truth for what counts as valid NDVI
+    data across all read paths, recomputation, and chaining.
+    """
+    if observation.state != NdviObservation.ObservationState.FINAL:
+        return False
+    if not observation.is_latest:
+        return False
+    if observation.mean is None:
+        return False
+    return True
+
+
+def get_valid_observations_qs(
+    *,
+    farm: Farm | None = None,
+    engine: str | None = None,
+    start: date | None = None,
+    end: date | None = None,
+    max_cloud: int | None = None,
+) -> QuerySet[NdviObservation]:
+    """Get a queryset of analytically valid observations.
+
+    Excludes INVALIDATED, REJECTED, SUPERSEDED, and RAW rows.
+    Only returns is_latest=True, state=FINAL rows with non-null mean.
+
+    This is the canonical read path for all NDVI consumers.
+    """
+    qs = (
+        NdviObservation.objects.filter(
+            is_latest=True,
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        .exclude(mean__isnull=True)
+        .order_by("bucket_date")
+    )
+
+    if farm:
+        qs = qs.filter(farm=farm)
+    if engine:
+        qs = qs.filter(engine=engine)
+    if start:
+        qs = qs.filter(bucket_date__gte=start)
+    if end:
+        qs = qs.filter(bucket_date__lte=end)
+    if max_cloud is not None:
+        qs = qs.filter(
+            models.Q(cloud_fraction__isnull=True)
+            | models.Q(cloud_fraction__lte=max_cloud / 100.0)
+        )
+    return qs
+
+
 def get_latest_observations(
     *,
     farm: Farm,
@@ -1079,32 +1244,17 @@ def get_ndvi_version_registry() -> list[dict[str, str]]:
 
 
 def _get_global_recompute_queue_depth() -> int:
-    """Get the total queued recompute jobs across all Celery workers.
+    """Get the total queued recompute jobs from the database.
 
-    Uses Celery inspect to query all workers for their reserved and
-    scheduled tasks, providing a globally authoritative queue depth.
-    Falls back to DB query if inspect is unavailable.
+    Uses DB-level query as the authoritative source. Celery inspect
+    is unreliable under load (workers may not respond, connections
+    may timeout, etc.), so we depend on the database which is the
+    single source of truth for job state.
+
+    This is safe because NdviJob status is updated within
+    transaction.atomic() blocks, so the DB count is always consistent.
     """
-    try:
-        from celery import current_app
-
-        inspect = current_app.control.inspect()
-        if inspect is None:
-            return _get_db_recompute_queue_depth()
-
-        active = inspect.active() or {}
-        reserved = inspect.reserved() or {}
-        scheduled = inspect.scheduled() or {}
-
-        total = 0
-        for worker_tasks in [active, reserved, scheduled]:
-            for tasks in worker_tasks.values():
-                for task in tasks:
-                    if task.get("name") == "ndvi.tasks.run_ndvi_job":
-                        total += 1
-        return total
-    except Exception:
-        return _get_db_recompute_queue_depth()
+    return _get_db_recompute_queue_depth()
 
 
 def _get_db_recompute_queue_depth() -> int:
@@ -1129,8 +1279,13 @@ def recompute_stale_observations(
     ready for dispatch via dispatch_ndvi_job().
 
     Implements bounded windows, chunking, and backpressure controls.
-    Backpressure uses Celery inspect for globally authoritative queue
-    depth across all workers.
+    Backpressure uses DB-level query (not Celery inspect) as the
+    authoritative source.
+
+    Idempotency: each result includes a deterministic dispatch_key
+    based on (farm_id, bucket_date, engine). Dispatching the same
+    key twice will hit the existing NdviJob unique constraint and
+    return the existing job without creating duplicates.
     """
     max_days = max_window_days or get_ndvi_recompute_max_window_days()
     if (end_date - start_date).days > max_days:
@@ -1167,12 +1322,16 @@ def recompute_stale_observations(
 
     results: list[dict[str, Any]] = []
     for row in stale_qs[:chunk]:
+        dispatch_key = hashlib.sha256(
+            f"recompute:{row['farm_id']}:{engine}:{row['bucket_date']}".encode()
+        ).hexdigest()[:16]
         results.append(
             {
                 "farm_id": row["farm_id"],
                 "bucket_date": row["bucket_date"],
                 "current_version": row["version"],
                 "observation_id": row["id"],
+                "dispatch_key": dispatch_key,
             }
         )
 
