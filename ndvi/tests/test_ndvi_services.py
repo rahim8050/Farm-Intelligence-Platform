@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # ruff: noqa: S101
 import secrets
+import time
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Protocol
@@ -19,7 +20,11 @@ from ndvi.services import (
     NDVI_LATEST_CACHE_VERSION,
     LatestParams,
     TimeseriesParams,
+    _cb_cache_key,
+    _check_retry_circuit_breaker,
     _determine_observation_state,
+    _record_upsert_failure,
+    _record_upsert_success,
     cache_latest_response,
     compute_provenance_hash,
     detect_anomalies,
@@ -34,16 +39,19 @@ from ndvi.services import (
     get_max_daterange_days,
     get_ndvi_anomaly_threshold,
     get_ndvi_append_only,
+    get_ndvi_enforce_queue_isolation,
     get_ndvi_queue_backend,
     get_ndvi_queue_name,
     get_ndvi_recompute_backpressure_threshold,
     get_ndvi_recompute_chunk_size,
     get_ndvi_recompute_max_window_days,
+    get_ndvi_retry_circuit_breaker_half_open_max,
     get_ndvi_upsert_max_retries,
     get_ndvi_upsert_retry_delay,
     get_ndvi_upsert_retry_jitter,
     get_ndvi_version,
     get_ndvi_version_registry,
+    get_recompute_queue_breakdown,
     get_valid_observations_qs,
     is_analytically_valid,
     is_stale,
@@ -53,6 +61,7 @@ from ndvi.services import (
     resolve_ndvi_engine_name,
     upsert_observations,
     validate_provenance,
+    validate_queue_isolation,
 )
 
 
@@ -1256,3 +1265,413 @@ def test_recompute_stale_observations_includes_dispatch_key(
     assert len(results) == 1
     assert "dispatch_key" in results[0]
     assert len(results[0]["dispatch_key"]) == 16
+
+
+# --- Circuit breaker (Redis-backed) ---
+
+
+def test_cb_cache_key_returns_correct_format() -> None:
+    assert _cb_cache_key("sentinelhub") == "ndvi:cb:sentinelhub"
+    assert _cb_cache_key("stac") == "ndvi:cb:stac"
+
+
+@pytest.mark.django_db
+def test_circuit_breaker_starts_closed() -> None:
+    cache = caches["default"]
+    cache.delete(_cb_cache_key("test-cb-closed"))
+    result = _check_retry_circuit_breaker("test-cb-closed")
+    assert result is False
+
+
+@pytest.mark.django_db
+def test_circuit_breaker_opens_after_max_failures(
+    settings: Any,
+) -> None:
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_WINDOW = 300
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES = 2
+    engine = "test-cb-open"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    assert _check_retry_circuit_breaker(engine) is False
+    _record_upsert_failure(engine)
+    _record_upsert_failure(engine)
+
+    _check_retry_circuit_breaker(engine)
+    assert _check_retry_circuit_breaker(engine) is True
+
+
+@pytest.mark.django_db
+def test_circuit_breaker_transitions_to_half_open(
+    settings: Any,
+) -> None:
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_WINDOW = 1
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES = 2
+    engine = "test-cb-half-open"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    _record_upsert_failure(engine)
+    _record_upsert_failure(engine)
+    _check_retry_circuit_breaker(engine)
+
+    import time
+
+    time.sleep(1.1)
+    result = _check_retry_circuit_breaker(engine)
+    assert result is False
+
+
+@pytest.mark.django_db
+def test_circuit_breaker_reopens_after_half_open_failures(
+    settings: Any,
+) -> None:
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_WINDOW = 300
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES = 2
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_HALF_OPEN_MAX = 1
+    engine = "test-cb-reopen"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    _record_upsert_failure(engine)
+    _record_upsert_failure(engine)
+    _check_retry_circuit_breaker(engine)
+
+    cache_key = _cb_cache_key(engine)
+    state_data = cache.get(cache_key)
+    state_data["state"] = "half_open"
+    state_data["half_open_attempts"] = 0
+    state_data["last_failure"] = time.monotonic() - 200
+    cache.set(cache_key, state_data, timeout=600)
+
+    _record_upsert_failure(engine)
+    _check_retry_circuit_breaker(engine)
+    assert _check_retry_circuit_breaker(engine) is True
+
+
+@pytest.mark.django_db
+def test_circuit_breaker_closes_on_success_from_half_open(
+    settings: Any,
+) -> None:
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_WINDOW = 300
+    engine = "test-cb-close-success"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    cache_key = _cb_cache_key(engine)
+    state_data = {
+        "state": "half_open",
+        "failures": [time.monotonic() - 100],
+        "half_open_attempts": 0,
+        "last_failure": time.monotonic() - 100,
+    }
+    cache.set(cache_key, state_data, timeout=600)
+
+    _record_upsert_success(engine)
+    updated = cache.get(cache_key)
+    assert updated["state"] == "closed"
+    assert updated["failures"] == []
+
+
+@pytest.mark.django_db
+def test_circuit_breaker_success_from_closed_does_nothing() -> None:
+    engine = "test-cb-success-closed"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    _record_upsert_success(engine)
+    assert cache.get(_cb_cache_key(engine)) is None
+
+
+@pytest.mark.django_db
+def test_get_ndvi_retry_circuit_breaker_half_open_max(
+    settings: Any,
+) -> None:
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_HALF_OPEN_MAX = 5
+    assert get_ndvi_retry_circuit_breaker_half_open_max() == 5
+
+
+# --- Queue isolation ---
+
+
+def test_get_ndvi_enforce_queue_isolation_defaults_false(
+    settings: Any,
+) -> None:
+    if hasattr(settings, "NDVI_ENFORCE_QUEUE_ISOLATION"):
+        delattr(settings, "NDVI_ENFORCE_QUEUE_ISOLATION")
+    assert get_ndvi_enforce_queue_isolation() is False
+
+
+def test_get_ndvi_enforce_queue_isolation_reads_setting(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    assert get_ndvi_enforce_queue_isolation() is True
+
+
+def test_validate_queue_isolation_returns_true_when_disabled(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = False
+    assert validate_queue_isolation() is True
+
+
+def test_validate_queue_isolation_returns_true_on_celery_error(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    import sys
+
+    mock_celery = MagicMock()
+    mock_celery.current_app.conf.task_queues.keys.side_effect = RuntimeError(
+        "no celery"
+    )
+    with patch.dict(sys.modules, {"celery": mock_celery}):
+        assert validate_queue_isolation() is True
+
+
+# --- Version/engine-aware validity ---
+
+
+@pytest.mark.django_db
+def test_is_analytically_valid_with_min_version_passes() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="sentinelhub",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v2.0",
+    )
+    assert is_analytically_valid(obs, min_version="v1.0") is True
+
+
+@pytest.mark.django_db
+def test_is_analytically_valid_with_min_version_rejects_old() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="sentinelhub",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1.0",
+    )
+    assert is_analytically_valid(obs, min_version="v2.0") is False
+
+
+@pytest.mark.django_db
+def test_is_analytically_valid_with_allowed_engines_passes() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="sentinelhub",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+    assert is_analytically_valid(obs, allowed_engines=["sentinelhub"]) is True
+
+
+@pytest.mark.django_db
+def test_is_analytically_valid_with_allowed_engines_rejects() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="stac",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+    assert is_analytically_valid(obs, allowed_engines=["sentinelhub"]) is False
+
+
+@pytest.mark.django_db
+def test_get_valid_observations_qs_with_min_version(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    user = get_user_model().objects.create_user(
+        username="version-qs",
+        email="version-qs@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-version-qs")
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v2.0",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 2),
+        mean=0.6,
+        is_latest=True,
+        state="FINAL",
+        version="v1.0",
+    )
+
+    qs = get_valid_observations_qs(farm=farm, min_version="v2.0")
+    assert qs.count() == 1
+    first = qs.first()
+    assert first is not None
+    assert first.version == "v2.0"
+
+
+@pytest.mark.django_db
+def test_get_valid_observations_qs_with_allowed_engines(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    user = get_user_model().objects.create_user(
+        username="engine-qs",
+        email="engine-qs@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-engine-qs")
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="stac",
+        bucket_date=date(2025, 3, 2),
+        mean=0.6,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+
+    qs = get_valid_observations_qs(farm=farm, allowed_engines=["sentinelhub"])
+    assert qs.count() == 1
+    first = qs.first()
+    assert first is not None
+    assert first.engine == "sentinelhub"
+
+
+# --- Recompute queue breakdown ---
+
+
+@pytest.mark.django_db
+def test_get_recompute_queue_breakdown_returns_counts() -> None:
+    result = get_recompute_queue_breakdown()
+    assert "queued" in result
+    assert "running" in result
+    assert "stuck" in result
+    assert "total" in result
+    assert result["total"] == result["queued"] + result["running"]
+
+
+@pytest.mark.django_db
+def test_get_recompute_queue_breakdown_with_jobs() -> None:
+    user = get_user_model().objects.create_user(
+        username="breakdown-user",
+        email="breakdown@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-breakdown")
+    NdviJob.objects.create(
+        owner=user,
+        farm=farm,
+        engine="sentinelhub",
+        job_type=NdviJob.JobType.BACKFILL,
+        status=NdviJob.JobStatus.QUEUED,
+        request_hash="hash1",
+    )
+    NdviJob.objects.create(
+        owner=user,
+        farm=farm,
+        engine="sentinelhub",
+        job_type=NdviJob.JobType.BACKFILL,
+        status=NdviJob.JobStatus.RUNNING,
+        request_hash="hash2",
+    )
+    result = get_recompute_queue_breakdown()
+    assert result["queued"] == 1
+    assert result["running"] == 1
+    assert result["total"] == 2
+
+
+# --- Recompute with target_version ---
+
+
+@pytest.mark.django_db
+def test_recompute_stale_observations_with_target_version(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENGINE = "sentinelhub"
+    settings.NDVI_VERSION = "v3.0"
+    user = get_user_model().objects.create_user(
+        username="target-ver",
+        email="target-ver@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-target-ver")
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1-legacy",
+    )
+
+    results = recompute_stale_observations(
+        engine="sentinelhub",
+        start_date=date(2025, 3, 1),
+        end_date=date(2025, 3, 31),
+        target_version="v2.0",
+    )
+    assert len(results) == 1
+    assert results[0]["target_version"] == "v2.0"
+    assert results[0]["current_version"] == "v1-legacy"
+
+
+@pytest.mark.django_db
+def test_recompute_stale_observations_different_target_versions() -> None:
+    user = get_user_model().objects.create_user(
+        username="diff-target",
+        email="diff-target@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user, name="Farm", slug="farm-diff-target"
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+
+    results_v2 = recompute_stale_observations(
+        engine="sentinelhub",
+        start_date=date(2025, 3, 1),
+        end_date=date(2025, 3, 31),
+        target_version="v2.0",
+    )
+    results_v3 = recompute_stale_observations(
+        engine="sentinelhub",
+        start_date=date(2025, 3, 1),
+        end_date=date(2025, 3, 31),
+        target_version="v3.0",
+    )
+    assert results_v2[0]["dispatch_key"] != results_v3[0]["dispatch_key"]
