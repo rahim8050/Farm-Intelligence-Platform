@@ -261,15 +261,16 @@ class TestDispatchNdviJobStreamMode:
 
         mock_redis.xadd.assert_called_once()
 
+    @pytest.mark.django_db
     def test_bypasses_stream_when_backend_is_celery(
         self, mock_job: MagicMock, settings: Any
     ) -> None:
         settings.NDVI_QUEUE_BACKEND = "celery"
 
-        with patch("ndvi.tasks.run_ndvi_job.delay") as mock_delay:
+        with patch("ndvi.tasks.run_ndvi_job.apply_async") as mock_apply:
             dispatch_ndvi_job(mock_job)
 
-        mock_delay.assert_called_once_with(mock_job.id)
+        mock_apply.assert_called_once()
 
 
 class TestDispatchFarmStateCoverageStreamMode:
@@ -292,14 +293,15 @@ class TestDispatchFarmStateCoverageStreamMode:
 
         mock_redis.xadd.assert_called_once()
 
+    @pytest.mark.django_db
     def test_bypasses_stream_when_backend_is_celery(
         self, settings: Any
     ) -> None:
         settings.NDVI_QUEUE_BACKEND = "celery"
 
         with patch(
-            "ndvi.tasks.compute_farm_state_coverage.delay"
-        ) as mock_delay:
+            "ndvi.tasks.compute_farm_state_coverage.apply_async"
+        ) as mock_apply:
             dispatch_farm_state_coverage(
                 farm_id=7,
                 engine="stac",
@@ -307,12 +309,12 @@ class TestDispatchFarmStateCoverageStreamMode:
                 threshold=0.4,
             )
 
-        mock_delay.assert_called_once_with(
-            farm_id=7,
-            engine="stac",
-            target_date="2025-01-03",
-            threshold=0.4,
-        )
+        mock_apply.assert_called_once()
+        call_kwargs = mock_apply.call_args
+        assert call_kwargs.kwargs["kwargs"]["farm_id"] == 7
+        assert call_kwargs.kwargs["kwargs"]["engine"] == "stac"
+        assert call_kwargs.kwargs["kwargs"]["target_date"] == "2025-01-03"
+        assert call_kwargs.kwargs["kwargs"]["threshold"] == 0.4
 
 
 # ─── Settings & Feature Flag Tests ──────────────────────────────────

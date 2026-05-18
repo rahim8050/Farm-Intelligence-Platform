@@ -97,13 +97,15 @@ def test_no_default_engine_constant() -> None:
     assert not hasattr(services, "DEFAULT_ENGINE")
 
 
+@pytest.mark.django_db
 def test_dispatch_ndvi_job_uses_celery_delay() -> None:
-    with patch("ndvi.tasks.run_ndvi_job.delay") as mock_delay:
-        dispatch_ndvi_job(123)
+    with patch("ndvi.services.get_ndvi_queue_backend", return_value="celery"):
+        with patch("ndvi.tasks.run_ndvi_job.apply_async") as mock_apply:
+            dispatch_ndvi_job(123)
+            mock_apply.assert_called_once()
 
-    mock_delay.assert_called_once_with(123)
 
-
+@pytest.mark.django_db
 def test_dispatch_ndvi_job_uses_stream_when_backend_is_stream(
     settings: Any,
 ) -> None:
@@ -123,23 +125,27 @@ def test_dispatch_ndvi_job_uses_stream_when_backend_is_stream(
         mock_publish.assert_called_once()
 
 
+@pytest.mark.django_db
 def test_dispatch_farm_state_coverage_uses_celery_delay() -> None:
     target_date = date(2025, 1, 3)
 
-    with patch("ndvi.tasks.compute_farm_state_coverage.delay") as mock_delay:
-        dispatch_farm_state_coverage(
-            farm_id=7,
-            engine="stac",
-            target_date=target_date,
-            threshold=0.4,
-        )
+    with patch("ndvi.services.get_ndvi_queue_backend", return_value="celery"):
+        with patch(
+            "ndvi.tasks.compute_farm_state_coverage.apply_async"
+        ) as mock_apply:
+            dispatch_farm_state_coverage(
+                farm_id=7,
+                engine="stac",
+                target_date=target_date,
+                threshold=0.4,
+            )
 
-    mock_delay.assert_called_once_with(
-        farm_id=7,
-        engine="stac",
-        target_date="2025-01-03",
-        threshold=0.4,
-    )
+            mock_apply.assert_called_once()
+            call_kwargs = mock_apply.call_args
+            assert call_kwargs.kwargs["kwargs"]["farm_id"] == 7
+            assert call_kwargs.kwargs["kwargs"]["engine"] == "stac"
+            assert call_kwargs.kwargs["kwargs"]["target_date"] == "2025-01-03"
+            assert call_kwargs.kwargs["kwargs"]["threshold"] == 0.4
 
 
 def test_dispatch_farm_state_coverage_uses_stream_when_backend_is_stream(

@@ -257,6 +257,7 @@ def test_set_and_get_cached_coverage() -> None:
 
 
 @pytest.mark.django_db
+@pytest.mark.django_db
 def test_farm_state_filters_to_latest_and_final(settings: Any) -> None:
     """Farm state computation only uses is_latest=True and state=FINAL rows."""
     caches["default"].clear()
@@ -281,7 +282,7 @@ def test_farm_state_filters_to_latest_and_final(settings: Any) -> None:
     NdviObservation.objects.create(
         farm=farm,
         engine="stac",
-        bucket_date=bucket,
+        bucket_date=bucket - timedelta(days=1),
         mean=0.9,
         is_latest=False,
         state="FINAL",
@@ -299,7 +300,7 @@ def test_farm_state_filters_to_latest_and_final(settings: Any) -> None:
     NdviObservation.objects.create(
         farm=farm,
         engine="stac",
-        bucket_date=bucket,
+        bucket_date=bucket - timedelta(days=2),
         mean=0.5,
         is_latest=True,
         state="FINAL",
