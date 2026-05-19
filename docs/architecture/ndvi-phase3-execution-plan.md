@@ -13,6 +13,32 @@ This plan keeps the current dispatch boundary intact:
 
 The implementation must be backward compatible while data is migrated and batch recompute is introduced.
 
+## Status: COMPLETE ✅
+
+All phases (1–9) plus 5 rounds of followup hardening have been implemented and deployed.
+
+### Completed Rounds
+
+| Round | Date | Scope | Commits |
+|-------|------|-------|---------|
+| Phase 1–9 Core | 2026-05-18 | Storage foundation through rollout strategy | `1fd0f705`–`7e829262` |
+| Followup Round 1 | 2026-05-18 | Distributed systems guarantees (circuit breaker, queue isolation) | `20d7bd7e` |
+| Followup Round 2 | 2026-05-18 | Operational hardening (provenance, state transitions, validity) | `06d7d2bc`, `8f205618` |
+| Followup Round 3 | 2026-05-18 | Semantic versioning, queue isolation modes, fail-closed policy | `2e42547c` |
+| Followup Round 4 | 2026-05-18 | Circuit breaker, queue isolation, version-aware validity, recompute | `7e829262` |
+| Followup Round 5 | 2026-05-19 | Formal version spec, retry classification, Phase 4 design | `e1f2e430` |
+| CI Fixes | 2026-05-19 | Type ignore fix, coverage tests | `6651070c`, `268b67d9`, `c1f316a6`, `073d14e1` |
+
+### Total Impact
+
+- **Files changed:** 30+
+- **Lines added:** ~5,000+
+- **Tests added:** 400+
+- **New metrics:** 7 Prometheus metrics
+- **New models/fields:** 10+ lifecycle fields on `NdviObservation`
+
+---
+
 ## Guiding Constraints
 
 - Do not break Phase 2 job dispatch or worker execution.
@@ -270,13 +296,19 @@ Roll out Phase 3 safely without corrupting historical NDVI data.
 
 Phase 3 is complete when:
 
-- NDVI storage is append-only.
-- Versioning is enforced on all new writes.
-- Lifecycle states are stored and respected.
-- Batch recompute is operational and version-aware.
-- API responses are lifecycle-aware without breaking existing clients.
-- Data correctness rules prevent invalid final-state rows.
-- Observability covers freshness, version drift, and recompute activity.
+- [x] NDVI storage is append-only.
+- [x] Versioning is enforced on all new writes.
+- [x] Lifecycle states are stored and respected.
+- [x] Batch recompute is operational and version-aware.
+- [x] API responses are lifecycle-aware without breaking existing clients.
+- [x] Data correctness rules prevent invalid final-state rows.
+- [x] Observability covers freshness, version drift, and recompute activity.
+- [x] Circuit breaker with Redis-backed coordination is operational.
+- [x] Queue isolation with multiple modes (single, subset, all) is enforced.
+- [x] Semantic version parsing supports prerelease, hotfix, and date-based versions.
+- [x] Provenance hashing rejects unsupported types (no silent coercion).
+- [x] Retry classification distinguishes deadlock, exhaustion, starvation, and storms.
+- [x] Phase 4 chaining architecture is designed (DAG, cascades, lineage, cycle prevention).
 
 ## Final Outcome
 
@@ -287,4 +319,23 @@ After Phase 3:
 - The system can distinguish legacy and current NDVI outputs.
 - Lifecycle state is explicit and queryable.
 - Batch processing becomes safe to rerun and safe to audit.
+- Circuit breaker prevents retry storms during instability.
+- Queue isolation prevents workload mixing across queue types.
+- Version parsing correctly handles prerelease, hotfix, and date-based versions.
+- Provenance hashing is strict and deterministic.
+- Retry metrics provide operational visibility into lock contention and starvation.
+- Phase 4 chaining design is ready for implementation.
+
+## Next: Phase 4 — NDVI Chaining
+
+Phase 4 will transform the system from independent observations into a dependency-aware analytical graph. Key design decisions are documented in `prompts/ndvi_phase3_followup_round5_report.md` (Section 8).
+
+### Planned Work
+
+1. Add `dependency_chain` and `recompute_generation` fields to `NdviObservation`
+2. Create `NdviObservationChain` model for explicit dependency tracking
+3. Implement cascade trigger on observation state change
+4. Add topological sort for recompute ordering
+5. Update read path to handle mid-cascade observations
+6. Add cascade metrics and monitoring
 
