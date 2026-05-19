@@ -2224,10 +2224,7 @@ def test_validate_queue_isolation_with_worker_queues_subset(
     settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
     settings.NDVI_QUEUE_ISOLATION_MODE = "subset"
     assert (
-        validate_queue_isolation(
-            ["ndvi_ingestion", "ndvi_recompute"]
-        )
-        is True
+        validate_queue_isolation(["ndvi_ingestion", "ndvi_recompute"]) is True
     )
 
 
