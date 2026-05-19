@@ -2317,3 +2317,203 @@ def test_get_ndvi_queue_isolation_mode_invalid_bogus(
 ) -> None:
     settings.NDVI_QUEUE_ISOLATION_MODE = "bogus"
     assert get_ndvi_queue_isolation_mode() == "single"
+
+
+# --- Circuit breaker cache.set exception paths ---
+
+
+def test_circuit_breaker_cache_set_fails_on_init(
+    settings: Any,
+) -> None:
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_WINDOW = 300
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES = 2
+    engine = "test-cb-set-fail-init"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    with patch.object(cache, "set", side_effect=RuntimeError("cache down")):
+        result = _check_retry_circuit_breaker(engine)
+        assert result is False
+
+
+def test_circuit_breaker_cache_set_fails_on_open(
+    settings: Any,
+) -> None:
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_WINDOW = 300
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES = 2
+    engine = "test-cb-set-fail-open"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    _record_upsert_failure(engine)
+    _record_upsert_failure(engine)
+
+    with patch.object(cache, "set", side_effect=RuntimeError("cache down")):
+        result = _check_retry_circuit_breaker(engine)
+        assert result is False
+
+
+def test_circuit_breaker_cache_set_fails_on_half_open(
+    settings: Any,
+) -> None:
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_WINDOW = 1
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES = 2
+    engine = "test-cb-set-fail-half-open"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    _record_upsert_failure(engine)
+    _record_upsert_failure(engine)
+    _check_retry_circuit_breaker(engine)
+
+    import time
+
+    time.sleep(1.1)
+
+    with patch.object(cache, "set", side_effect=RuntimeError("cache down")):
+        result = _check_retry_circuit_breaker(engine)
+        assert result is False
+
+
+def test_circuit_breaker_cache_set_fails_on_reopen(
+    settings: Any,
+) -> None:
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_WINDOW = 300
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES = 2
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_HALF_OPEN_MAX = 1
+    engine = "test-cb-set-fail-reopen"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    _record_upsert_failure(engine)
+    _record_upsert_failure(engine)
+    _check_retry_circuit_breaker(engine)
+
+    cache_key = _cb_cache_key(engine)
+    state_data = cache.get(cache_key)
+    state_data["state"] = "half_open"
+    state_data["half_open_attempts"] = 0
+    state_data["last_failure"] = time.monotonic() - 200
+    cache.set(cache_key, state_data, timeout=600)
+
+    with patch.object(cache, "set", side_effect=RuntimeError("cache down")):
+        _record_upsert_failure(engine)
+        result = _check_retry_circuit_breaker(engine)
+        assert result is False
+
+
+# --- _record_upsert_success cache error paths ---
+
+
+def test_record_upsert_success_cache_get_fails() -> None:
+    engine = "test-cb-success-get-fail"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    cache_key = _cb_cache_key(engine)
+    cache.set(
+        cache_key,
+        {
+            "state": "half_open",
+            "failures": [time.monotonic() - 100],
+            "half_open_attempts": 0,
+            "last_failure": time.monotonic() - 100,
+        },
+        timeout=600,
+    )
+
+    with patch.object(cache, "get", side_effect=RuntimeError("cache down")):
+        _record_upsert_success(engine)
+
+
+def test_record_upsert_success_cache_set_fails() -> None:
+    engine = "test-cb-success-set-fail"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    cache_key = _cb_cache_key(engine)
+    cache.set(
+        cache_key,
+        {
+            "state": "half_open",
+            "failures": [time.monotonic() - 100],
+            "half_open_attempts": 0,
+            "last_failure": time.monotonic() - 100,
+        },
+        timeout=600,
+    )
+
+    with patch.object(cache, "set", side_effect=RuntimeError("cache down")):
+        _record_upsert_success(engine)
+        updated = cache.get(cache_key)
+        assert updated["state"] == "half_open"
+
+
+# --- _record_upsert_failure cache error paths ---
+
+
+def test_record_upsert_failure_cache_get_fails() -> None:
+    engine = "test-cb-failure-get-fail"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    with patch.object(cache, "get", side_effect=RuntimeError("cache down")):
+        _record_upsert_failure(engine)
+
+
+def test_record_upsert_failure_cache_set_fails() -> None:
+    engine = "test-cb-failure-set-fail"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    with patch.object(cache, "set", side_effect=RuntimeError("cache down")):
+        _record_upsert_failure(engine)
+        assert cache.get(_cb_cache_key(engine)) is None
+
+
+# --- _validate_json_types with bool and None ---
+
+
+def test_compute_provenance_hash_with_bool_and_none() -> None:
+    provenance = {
+        "engine_version": "1.0",
+        "scl_mask": True,
+        "cloud_mask": False,
+        "resolution": None,
+        "schema_version": "1",
+    }
+    result = compute_provenance_hash(provenance)
+    assert len(result) == 16
+
+
+# --- parse_ndvi_version with no v prefix ---
+
+
+def test_parse_ndvi_version_no_v_prefix() -> None:
+    v = parse_ndvi_version("2.1.3")
+    assert v.major == 2
+    assert v.minor == 1
+    assert v.patch == 3
+    assert v.raw == "2.1.3"
+
+
+# --- validate_queue_isolation subset mode with empty overlap ---
+
+
+def test_validate_queue_isolation_subset_empty_overlap(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.NDVI_QUEUE_ISOLATION_MODE = "subset"
+    assert validate_queue_isolation(["default", "celery"]) is False
+
+
+# --- get_ndvi_queue_isolation_mode missing setting ---
+
+
+def test_get_ndvi_queue_isolation_mode_missing_setting(
+    settings: Any,
+) -> None:
+    if hasattr(settings, "NDVI_QUEUE_ISOLATION_MODE"):
+        delattr(settings, "NDVI_QUEUE_ISOLATION_MODE")
+    assert get_ndvi_queue_isolation_mode() == "single"
