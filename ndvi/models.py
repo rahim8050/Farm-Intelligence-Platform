@@ -66,7 +66,7 @@ class ValidObservationQuerySet(QuerySet):
 
 
 class ObservationManager(
-    models.Manager.from_queryset(ValidObservationQuerySet)
+    models.Manager.from_queryset(ValidObservationQuerySet)  # type: ignore[misc]
 ):
     """Custom manager for NdviObservation with validity enforcement.
 
