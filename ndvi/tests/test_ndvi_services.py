@@ -2122,3 +2122,201 @@ def test_recompute_with_engine_config_hash() -> None:
     assert results_a[0]["dispatch_key"] != results_b[0]["dispatch_key"]
     assert results_a[0]["engine_config_hash"] == "config-a"
     assert results_b[0]["engine_config_hash"] == "config-b"
+
+
+# --- NdviVersion comparison methods ---
+
+
+def test_ndvi_version_lt() -> None:
+    from ndvi.services import NdviVersion
+
+    v1 = NdviVersion(1, 0, 0)
+    v2 = NdviVersion(2, 0, 0)
+    assert (v1 < v2) is True
+    assert (v2 < v1) is False
+    assert (v1 < v1) is False
+
+
+def test_ndvi_version_le() -> None:
+    from ndvi.services import NdviVersion
+
+    v1 = NdviVersion(1, 0, 0)
+    v2 = NdviVersion(2, 0, 0)
+    assert (v1 <= v2) is True
+    assert (v1 <= v1) is True
+    assert (v2 <= v1) is False
+
+
+def test_ndvi_version_gt() -> None:
+    from ndvi.services import NdviVersion
+
+    v1 = NdviVersion(1, 0, 0)
+    v2 = NdviVersion(2, 0, 0)
+    assert (v2 > v1) is True
+    assert (v1 > v2) is False
+    assert (v1 > v1) is False
+
+
+def test_ndvi_version_ge() -> None:
+    from ndvi.services import NdviVersion
+
+    v1 = NdviVersion(1, 0, 0)
+    v2 = NdviVersion(2, 0, 0)
+    assert (v2 >= v1) is True
+    assert (v1 >= v1) is True
+    assert (v1 >= v2) is False
+
+
+def test_ndvi_version_eq_with_non_version() -> None:
+    from ndvi.services import NdviVersion
+
+    v = NdviVersion(1, 0, 0)
+    assert (v == "not a version") is False
+
+
+def test_ndvi_version_prerelease_ordering() -> None:
+    from ndvi.services import NdviVersion
+
+    alpha = NdviVersion(2, 1, 0, prerelease="alpha")
+    beta = NdviVersion(2, 1, 0, prerelease="beta")
+    rc = NdviVersion(2, 1, 0, prerelease="rc")
+    release = NdviVersion(2, 1, 0, prerelease="release")
+
+    assert alpha < beta < rc < release
+
+
+def test_ndvi_version_prerelease_num_comparison() -> None:
+    from ndvi.services import NdviVersion
+
+    beta1 = NdviVersion(2, 1, 0, prerelease="beta", prerelease_num=1)
+    beta2 = NdviVersion(2, 1, 0, prerelease="beta", prerelease_num=2)
+    assert beta1 < beta2
+
+
+# --- parse_version with prerelease/hotfix stripping ---
+
+
+def test_parse_version_strips_prerelease() -> None:
+    assert parse_version("v2.1-beta") == (2, 1)
+    assert parse_version("v2.1-rc2") == (2, 1)
+    assert parse_version("v2.1-alpha3") == (2, 1)
+
+
+def test_parse_version_strips_hotfix() -> None:
+    assert parse_version("v2.1.1-hotfix") == (2, 1, 1)
+    assert parse_version("v2.1.1-hotfix3") == (2, 1, 1)
+
+
+# --- validate_queue_isolation with worker_queues ---
+
+
+def test_validate_queue_isolation_with_worker_queues_single(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.NDVI_QUEUE_ISOLATION_MODE = "single"
+    assert validate_queue_isolation(["ndvi_ingestion"]) is True
+
+
+def test_validate_queue_isolation_with_worker_queues_subset(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.NDVI_QUEUE_ISOLATION_MODE = "subset"
+    assert (
+        validate_queue_isolation(
+            ["ndvi_ingestion", "ndvi_recompute"]
+        )
+        is True
+    )
+
+
+def test_validate_queue_isolation_with_worker_queues_all(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.NDVI_QUEUE_ISOLATION_MODE = "all"
+    assert (
+        validate_queue_isolation(
+            [
+                "ndvi_ingestion",
+                "ndvi_recompute",
+                "ndvi_analysis",
+            ]
+        )
+        is True
+    )
+
+
+# --- _validate_json_types with lists ---
+
+
+def test_compute_provenance_hash_with_list_values() -> None:
+    provenance = {
+        "engine_version": "1.0",
+        "quality_profile": ["high", "medium"],
+        "schema_version": "1",
+    }
+    result = compute_provenance_hash(provenance)
+    assert len(result) == 16
+
+
+def test_compute_provenance_hash_with_nested_list() -> None:
+    provenance = {
+        "engine_version": "1.0",
+        "quality_profile": [["high", "low"], ["medium"]],
+        "schema_version": "1",
+    }
+    result = compute_provenance_hash(provenance)
+    assert len(result) == 16
+
+
+# --- parse_ndvi_version edge cases ---
+
+
+def test_parse_ndvi_version_mixed_prerelease_hotfix() -> None:
+    v = parse_ndvi_version("v2.1-beta-hotfix")
+    assert v.major == 2
+    assert v.minor == 1
+    assert v.patch == 0
+    assert v.prerelease == "beta"
+    assert v.is_hotfix is True
+
+
+def test_parse_ndvi_version_with_v_prefix_stripped() -> None:
+    v = parse_ndvi_version("2.1.3")
+    assert v.major == 2
+    assert v.minor == 1
+    assert v.patch == 3
+
+
+# --- normalize_version edge cases ---
+
+
+def test_normalize_version_with_rc() -> None:
+    assert normalize_version("v2.1-rc") == "v2.1.0-rc"
+    assert normalize_version("v2.1-rc3") == "v2.1.0-rc3"
+
+
+def test_normalize_version_with_alpha() -> None:
+    assert normalize_version("v2.1-alpha") == "v2.1.0-alpha"
+    assert normalize_version("v2.1-alpha2") == "v2.1.0-alpha2"
+
+
+# --- is_valid_ndvi_version edge cases ---
+
+
+def test_is_valid_ndvi_version_with_v_prefix_variants() -> None:
+    assert is_valid_ndvi_version("V1.0") is True
+    assert is_valid_ndvi_version("v1.0.0") is True
+    assert is_valid_ndvi_version("1.0.0") is True
+
+
+# --- get_ndvi_queue_isolation_mode invalid default ---
+
+
+def test_get_ndvi_queue_isolation_mode_invalid_bogus(
+    settings: Any,
+) -> None:
+    settings.NDVI_QUEUE_ISOLATION_MODE = "bogus"
+    assert get_ndvi_queue_isolation_mode() == "single"
