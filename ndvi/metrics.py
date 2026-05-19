@@ -162,3 +162,55 @@ ndvi_raw_stale_age_seconds = Gauge(
     "Age in seconds of the oldest RAW observation",
     labelnames=["engine"],
 )
+
+# Lock contention: transaction duration
+ndvi_transaction_duration_seconds = Histogram(
+    "ndvi_transaction_duration_seconds",
+    "Duration of NDVI database transactions",
+    labelnames=["operation"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
+)
+
+# Lock contention: lock wait time
+ndvi_lock_wait_seconds = Histogram(
+    "ndvi_lock_wait_seconds",
+    "Time spent waiting for database locks",
+    labelnames=["operation"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
+)
+
+# Lock contention: lock acquisition failures
+ndvi_lock_contention_total = Counter(
+    "ndvi_lock_contention_total",
+    "Count of lock contention events (retries, timeouts, deadlocks)",
+    labelnames=["operation", "reason"],
+)
+
+# Deadlock and retry classification
+# Operational classes for failure analysis under heavy recompute load
+ndvi_retry_classification_total = Counter(
+    "ndvi_retry_classification_total",
+    "Count of retry events by operational class",
+    labelnames=["operation", "class_"],
+)
+
+# Retry storm detection: retries per time window
+ndvi_retry_storm_window_total = Counter(
+    "ndvi_retry_storm_window_total",
+    "Count of retries within storm detection window",
+    labelnames=["operation"],
+)
+
+# Starvation detection: transactions waiting beyond threshold
+ndvi_starvation_events_total = Counter(
+    "ndvi_starvation_events_total",
+    "Count of transactions waiting beyond starvation threshold",
+    labelnames=["operation"],
+)
+
+# Long lock wait events (beyond P95 threshold)
+ndvi_long_lock_wait_total = Counter(
+    "ndvi_long_lock_wait_total",
+    "Count of lock waits exceeding P95 threshold",
+    labelnames=["operation", "threshold_seconds"],
+)

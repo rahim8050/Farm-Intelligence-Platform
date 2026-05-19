@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from django.conf import settings
 from django.db import models
+from django.db.models import QuerySet
 from django.utils import timezone
 
 from farms.models import Farm
@@ -13,8 +14,83 @@ def default_ndvi_engine_name() -> str:
     return str(getattr(settings, "NDVI_ENGINE", "sentinelhub")).lower()
 
 
+class ValidObservationQuerySet(QuerySet):
+    """QuerySet that enforces analytical validity rules.
+
+    Only returns observations that are:
+    - state=FINAL
+    - is_latest=True
+    - mean is not None
+
+    This prevents ad-hoc ORM queries from bypassing the canonical
+    validity rules used across all NDVI read paths.
+    """
+
+    def valid(self) -> ValidObservationQuerySet:
+        """Filter to analytically valid observations only."""
+        return self.filter(
+            state=NdviObservation.ObservationState.FINAL,
+            is_latest=True,
+        ).exclude(mean__isnull=True)
+
+    def for_engine(self, engine: str) -> ValidObservationQuerySet:
+        """Filter by engine."""
+        return self.filter(engine=engine)
+
+    def for_farm(self, farm: Farm) -> ValidObservationQuerySet:
+        """Filter by farm."""
+        return self.filter(farm=farm)
+
+    def for_date_range(
+        self, start: date | None, end: date | None
+    ) -> ValidObservationQuerySet:
+        """Filter by date range (inclusive)."""
+        qs = self
+        if start:
+            qs = qs.filter(bucket_date__gte=start)
+        if end:
+            qs = qs.filter(bucket_date__lte=end)
+        return qs
+
+    def with_min_version(self, min_version: str) -> ValidObservationQuerySet:
+        """Filter by minimum version (string comparison).
+
+        Note: For strict semantic version comparison, filter results
+        in Python using services.version_gte().
+        """
+        return self.filter(version__gte=min_version)
+
+    def for_engines(self, engines: list[str]) -> ValidObservationQuerySet:
+        """Filter to allowed engines."""
+        return self.filter(engine__in=engines)
+
+
+class ObservationManager(
+    models.Manager.from_queryset(ValidObservationQuerySet)
+):
+    """Custom manager for NdviObservation with validity enforcement.
+
+    Use `NdviObservation.objects.valid()` as the canonical read path
+    instead of building ad-hoc filters. This prevents filter drift
+    and ensures consistent validity rules across all consumers.
+    """
+
+
 class NdviObservation(models.Model):
-    """Materialized NDVI observation for a farm and date bucket."""
+    """Materialized NDVI observation for a farm and date bucket.
+
+    Use `NdviObservation.objects.valid()` as the canonical read path
+    for analytically valid observations. This enforces:
+    - state=FINAL
+    - is_latest=True
+    - mean is not None
+
+    For additional validity checks (min_version, allowed_engines),
+    use the chainable methods on ValidObservationQuerySet or the
+    services.is_analytically_valid() function for Python-level checks.
+    """
+
+    objects = ObservationManager()
 
     class ObservationState(models.TextChoices):
         RAW = "RAW", "Raw engine output before final acceptance"

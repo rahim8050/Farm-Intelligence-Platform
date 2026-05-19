@@ -41,6 +41,7 @@ from ndvi.services import (
     get_ndvi_append_only,
     get_ndvi_enforce_queue_isolation,
     get_ndvi_queue_backend,
+    get_ndvi_queue_isolation_mode,
     get_ndvi_queue_name,
     get_ndvi_recompute_backpressure_threshold,
     get_ndvi_recompute_chunk_size,
@@ -55,13 +56,18 @@ from ndvi.services import (
     get_valid_observations_qs,
     is_analytically_valid,
     is_stale,
+    is_valid_ndvi_version,
     normalize_latest_params,
     normalize_timeseries_params,
+    normalize_version,
+    parse_ndvi_version,
+    parse_version,
     recompute_stale_observations,
     resolve_ndvi_engine_name,
     upsert_observations,
     validate_provenance,
     validate_queue_isolation,
+    version_gte,
 )
 
 
@@ -1420,6 +1426,7 @@ def test_validate_queue_isolation_returns_true_on_celery_error(
     settings: Any,
 ) -> None:
     settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.DEBUG = True
     import sys
 
     mock_celery = MagicMock()
@@ -1675,3 +1682,443 @@ def test_recompute_stale_observations_different_target_versions() -> None:
         target_version="v3.0",
     )
     assert results_v2[0]["dispatch_key"] != results_v3[0]["dispatch_key"]
+
+
+# --- Semantic version parsing ---
+
+
+def test_parse_version_simple() -> None:
+    assert parse_version("v1.0") == (1, 0)
+    assert parse_version("v2.1.3") == (2, 1, 3)
+    assert parse_version("v10.0") == (10, 0)
+    assert parse_version("1.2.3") == (1, 2, 3)
+
+
+def test_parse_version_strips_v_prefix() -> None:
+    assert parse_version("V1.0") == (1, 0)
+    assert parse_version("v2.0") == (2, 0)
+
+
+def test_parse_version_invalid_raises() -> None:
+    with pytest.raises(ValueError, match="Invalid version component"):
+        parse_version("v1.abc")
+
+
+def test_version_gte_semantic_comparison() -> None:
+    assert version_gte("v2.0", "v1.0") is True
+    assert version_gte("v1.0", "v2.0") is False
+    assert version_gte("v10.0", "v2.0") is True
+    assert version_gte("v2.0", "v10.0") is False
+    assert version_gte("v2.1.3", "v2.1.2") is True
+    assert version_gte("v2.1.2", "v2.1.3") is False
+    assert version_gte("v1.0", "v1.0") is True
+
+
+def test_is_analytically_valid_with_semantic_version() -> None:
+    obs = NdviObservation(
+        farm_id=1,
+        engine="sentinelhub",
+        bucket_date=date(2025, 1, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v10.0",
+    )
+    assert is_analytically_valid(obs, min_version="v2.0") is True
+    assert is_analytically_valid(obs, min_version="v10.0") is True
+    assert is_analytically_valid(obs, min_version="v11.0") is False
+
+
+def test_parse_ndvi_version_core() -> None:
+    v = parse_ndvi_version("v2.1.3")
+    assert v.major == 2
+    assert v.minor == 1
+    assert v.patch == 3
+    assert v.prerelease == "release"
+    assert v.is_hotfix is False
+
+
+def test_parse_ndvi_version_prerelease() -> None:
+    v = parse_ndvi_version("v2.1-beta")
+    assert v.major == 2
+    assert v.minor == 1
+    assert v.patch == 0
+    assert v.prerelease == "beta"
+    assert v.prerelease_num == 1
+
+    v = parse_ndvi_version("v2.1-rc2")
+    assert v.prerelease == "rc"
+    assert v.prerelease_num == 2
+
+
+def test_parse_ndvi_version_hotfix() -> None:
+    v = parse_ndvi_version("v2.1.1-hotfix")
+    assert v.major == 2
+    assert v.minor == 1
+    assert v.patch == 1
+    assert v.is_hotfix is True
+    assert v.hotfix_num == 1
+
+    v = parse_ndvi_version("v2.1.1-hotfix3")
+    assert v.hotfix_num == 3
+
+
+def test_parse_ndvi_version_date_based() -> None:
+    v = parse_ndvi_version("v2025.03.15")
+    assert v.major == 2025
+    assert v.minor == 3
+    assert v.patch == 15
+
+
+def test_ndvi_version_comparison() -> None:
+    assert parse_ndvi_version("v2.0") > parse_ndvi_version("v1.0")
+    assert parse_ndvi_version("v10.0") > parse_ndvi_version("v2.0")
+    assert parse_ndvi_version("v2.1") > parse_ndvi_version("v2.1-beta")
+    assert parse_ndvi_version("v2.1-rc") > parse_ndvi_version("v2.1-beta")
+    assert parse_ndvi_version("v2.1-beta2") > parse_ndvi_version("v2.1-beta")
+    assert parse_ndvi_version("v2.1") == parse_ndvi_version("v2.1.0")
+
+
+def test_normalize_version() -> None:
+    assert normalize_version("1.0") == "v1.0.0"
+    assert normalize_version("V2.1-beta") == "v2.1.0-beta"
+    assert normalize_version("v2.1.1-hotfix2") == "v2.1.1-hotfix2"
+    assert normalize_version("v2025.03.15") == "v2025.3.15"
+
+
+def test_is_valid_ndvi_version() -> None:
+    assert is_valid_ndvi_version("v1.0") is True
+    assert is_valid_ndvi_version("v2.1-beta") is True
+    assert is_valid_ndvi_version("v2.1.1-hotfix") is True
+    assert is_valid_ndvi_version("v2025.03.15") is True
+    assert is_valid_ndvi_version("invalid") is False
+    assert is_valid_ndvi_version("v1.abc") is False
+
+
+# --- Queue isolation modes ---
+
+
+def test_get_ndvi_queue_isolation_mode_defaults_single(
+    settings: Any,
+) -> None:
+    if hasattr(settings, "NDVI_QUEUE_ISOLATION_MODE"):
+        delattr(settings, "NDVI_QUEUE_ISOLATION_MODE")
+    assert get_ndvi_queue_isolation_mode() == "single"
+
+
+def test_get_ndvi_queue_isolation_mode_reads_setting(
+    settings: Any,
+) -> None:
+    settings.NDVI_QUEUE_ISOLATION_MODE = "subset"
+    assert get_ndvi_queue_isolation_mode() == "subset"
+    settings.NDVI_QUEUE_ISOLATION_MODE = "all"
+    assert get_ndvi_queue_isolation_mode() == "all"
+
+
+def test_get_ndvi_queue_isolation_mode_invalid_defaults_single(
+    settings: Any,
+) -> None:
+    settings.NDVI_QUEUE_ISOLATION_MODE = "invalid"
+    assert get_ndvi_queue_isolation_mode() == "single"
+
+
+def test_validate_queue_isolation_single_mode_passes(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.NDVI_QUEUE_ISOLATION_MODE = "single"
+    assert validate_queue_isolation(["ndvi_ingestion"]) is True
+    assert validate_queue_isolation(["ndvi_recompute"]) is True
+    assert validate_queue_isolation(["ndvi_analysis"]) is True
+
+
+def test_validate_queue_isolation_single_mode_fails_multiple(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.NDVI_QUEUE_ISOLATION_MODE = "single"
+    assert (
+        validate_queue_isolation(["ndvi_ingestion", "ndvi_recompute"]) is False
+    )
+
+
+def test_validate_queue_isolation_subset_mode_passes(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.NDVI_QUEUE_ISOLATION_MODE = "subset"
+    assert validate_queue_isolation(["ndvi_ingestion"]) is True
+    assert (
+        validate_queue_isolation(["ndvi_ingestion", "ndvi_recompute"]) is True
+    )
+
+
+def test_validate_queue_isolation_subset_mode_fails_none(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.NDVI_QUEUE_ISOLATION_MODE = "subset"
+    assert validate_queue_isolation(["other_queue"]) is False
+
+
+def test_validate_queue_isolation_all_mode_passes(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.NDVI_QUEUE_ISOLATION_MODE = "all"
+    assert (
+        validate_queue_isolation(
+            ["ndvi_ingestion", "ndvi_recompute", "ndvi_analysis"]
+        )
+        is True
+    )
+
+
+def test_validate_queue_isolation_all_mode_fails_missing(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.NDVI_QUEUE_ISOLATION_MODE = "all"
+    assert validate_queue_isolation(["ndvi_ingestion"]) is False
+
+
+def test_validate_queue_isolation_fail_closed_production(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.DEBUG = False
+    import sys
+
+    mock_celery = MagicMock()
+    mock_celery.current_app.conf.task_queues.keys.side_effect = RuntimeError(
+        "no celery"
+    )
+    with patch.dict(sys.modules, {"celery": mock_celery}):
+        assert validate_queue_isolation() is False
+
+
+def test_validate_queue_isolation_fail_open_debug(
+    settings: Any,
+) -> None:
+    settings.NDVI_ENFORCE_QUEUE_ISOLATION = True
+    settings.DEBUG = True
+    import sys
+
+    mock_celery = MagicMock()
+    mock_celery.current_app.conf.task_queues.keys.side_effect = RuntimeError(
+        "no celery"
+    )
+    with patch.dict(sys.modules, {"celery": mock_celery}):
+        assert validate_queue_isolation() is True
+
+
+# --- Provenance hashing safety ---
+
+
+def test_compute_provenance_hash_rejects_unsupported_types() -> None:
+    class CustomObject:
+        pass
+
+    with pytest.raises(ValueError, match="Unsupported type"):
+        compute_provenance_hash({"key": CustomObject()})
+
+
+def test_compute_provenance_hash_accepts_valid_types() -> None:
+    provenance = {
+        "engine_version": "1.0",
+        "scl_mask": True,
+        "cloud_mask": False,
+        "resolution": 10,
+        "quality_profile": "high",
+        "fusion_mode": "average",
+        "schema_version": "1",
+    }
+    result = compute_provenance_hash(provenance)
+    assert len(result) == 16
+    assert isinstance(result, str)
+
+
+def test_compute_provenance_hash_rejects_nested_unsupported() -> None:
+    class CustomObject:
+        pass
+
+    with pytest.raises(ValueError, match="Unsupported type"):
+        compute_provenance_hash({"nested": {"key": CustomObject()}})
+
+
+# --- Circuit breaker failure semantics ---
+
+
+def test_circuit_breaker_fails_open_on_cache_error(
+    settings: Any,
+) -> None:
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_WINDOW = 300
+    settings.NDVI_RETRY_CIRCUIT_BREAKER_MAX_FAILURES = 2
+    engine = "test-cb-cache-error"
+    cache = caches["default"]
+    cache.delete(_cb_cache_key(engine))
+
+    with patch.object(cache, "get", side_effect=RuntimeError("redis down")):
+        result = _check_retry_circuit_breaker(engine)
+        assert result is False
+
+
+# --- Custom manager/queryset ---
+
+
+@pytest.mark.django_db
+def test_observation_manager_valid_filters_correctly() -> None:
+    user = get_user_model().objects.create_user(
+        username="valid-qs",
+        email="valid-qs@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-valid-qs")
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 2),
+        mean=0.6,
+        is_latest=False,
+        state="FINAL",
+        version="v1",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 4),
+        mean=0.7,
+        is_latest=True,
+        state="RAW",
+        version="v1",
+    )
+
+    valid_qs = NdviObservation.objects.valid()
+    assert valid_qs.count() == 1
+    obs = valid_qs.first()
+    assert obs is not None
+    assert obs.bucket_date == date(2025, 3, 1)
+
+
+@pytest.mark.django_db
+def test_observation_manager_valid_chaining() -> None:
+    user = get_user_model().objects.create_user(
+        username="chain-qs",
+        email="chain-qs@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-chain-qs")
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="stac",
+        bucket_date=date(2025, 3, 2),
+        mean=0.6,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+
+    qs = (
+        NdviObservation.objects.valid()
+        .for_farm(farm)
+        .for_engine("sentinelhub")
+    )
+    assert qs.count() == 1
+    assert qs.first().engine == "sentinelhub"
+
+
+# --- Recompute intent identity extension ---
+
+
+@pytest.mark.django_db
+def test_recompute_with_provenance_schema_version() -> None:
+    user = get_user_model().objects.create_user(
+        username="schema-ver",
+        email="schema-ver@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-schema-ver")
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+
+    results_v1 = recompute_stale_observations(
+        engine="sentinelhub",
+        start_date=date(2025, 3, 1),
+        end_date=date(2025, 3, 31),
+        target_version="v2.0",
+        provenance_schema_version="1",
+    )
+    results_v2 = recompute_stale_observations(
+        engine="sentinelhub",
+        start_date=date(2025, 3, 1),
+        end_date=date(2025, 3, 31),
+        target_version="v2.0",
+        provenance_schema_version="2",
+    )
+    assert results_v1[0]["dispatch_key"] != results_v2[0]["dispatch_key"]
+    assert results_v1[0]["provenance_schema_version"] == "1"
+    assert results_v2[0]["provenance_schema_version"] == "2"
+
+
+@pytest.mark.django_db
+def test_recompute_with_engine_config_hash() -> None:
+    user = get_user_model().objects.create_user(
+        username="config-hash",
+        email="config-hash@example.com",
+        password=secrets.token_urlsafe(12),
+    )
+    farm = Farm.objects.create(
+        owner=user, name="Farm", slug="farm-config-hash"
+    )
+    NdviObservation.objects.create(
+        farm=farm,
+        engine="sentinelhub",
+        bucket_date=date(2025, 3, 1),
+        mean=0.5,
+        is_latest=True,
+        state="FINAL",
+        version="v1",
+    )
+
+    results_a = recompute_stale_observations(
+        engine="sentinelhub",
+        start_date=date(2025, 3, 1),
+        end_date=date(2025, 3, 31),
+        target_version="v2.0",
+        engine_config_hash="config-a",
+    )
+    results_b = recompute_stale_observations(
+        engine="sentinelhub",
+        start_date=date(2025, 3, 1),
+        end_date=date(2025, 3, 31),
+        target_version="v2.0",
+        engine_config_hash="config-b",
+    )
+    assert results_a[0]["dispatch_key"] != results_b[0]["dispatch_key"]
+    assert results_a[0]["engine_config_hash"] == "config-a"
+    assert results_b[0]["engine_config_hash"] == "config-b"

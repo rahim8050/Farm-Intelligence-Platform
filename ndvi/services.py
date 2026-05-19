@@ -31,8 +31,14 @@ from .metrics import (
     ndvi_constraint_collision_total,
     ndvi_idempotent_hit_total,
     ndvi_jobs_total,
+    ndvi_lock_contention_total,
+    ndvi_long_lock_wait_total,
     ndvi_recompute_failure_total,
+    ndvi_retry_classification_total,
+    ndvi_retry_storm_window_total,
+    ndvi_starvation_events_total,
     ndvi_supersession_total,
+    ndvi_transaction_duration_seconds,
 )
 from .models import NdviJob, NdviObservation
 from .raster.base import ColormapNormalization
@@ -43,6 +49,244 @@ logger = logging.getLogger(__name__)
 SUPPORTED_ENGINES = ("sentinelhub", "stac")
 
 _CB_STATES = ("closed", "open", "half_open")
+
+_ALLOWED_JSON_TYPES = (dict, list, str, int, float, bool, type(None))
+
+_PRERELEASE_ORDER = {"alpha": 0, "beta": 1, "rc": 2, "release": 3}
+
+
+@dataclass(frozen=True)
+class NdviVersion:
+    """Parsed NDVI version with semantic comparison support.
+
+    Supports:
+    - Core versions: v1.0, v2.1.3, v10.0.1
+    - Prerelease tags: v2.1-alpha, v2.1-beta, v2.1-rc1
+    - Hotfix suffixes: v2.1.1-hotfix, v2.1.1-hotfix2
+    - Date-based versions: v2025.03.15, v20250315
+
+    Comparison rules:
+    - Core version numbers compared numerically (major.minor.patch)
+    - Prerelease versions are less than release versions
+    - Prerelease order: alpha < beta < rc < release
+    - Hotfix suffixes are ignored for comparison (same as base version)
+    - Date-based versions are compared as numeric tuples
+    """
+
+    major: int
+    minor: int
+    patch: int
+    prerelease: str = "release"
+    prerelease_num: int = 0
+    is_hotfix: bool = False
+    hotfix_num: int = 0
+    raw: str = ""
+
+    def __lt__(self, other: NdviVersion) -> bool:
+        if (self.major, self.minor, self.patch) != (
+            other.major,
+            other.minor,
+            other.patch,
+        ):
+            return (self.major, self.minor, self.patch) < (
+                other.major,
+                other.minor,
+                other.patch,
+            )
+        self_prerelease = _PRERELEASE_ORDER.get(self.prerelease, -1)
+        other_prerelease = _PRERELEASE_ORDER.get(other.prerelease, -1)
+        if self_prerelease != other_prerelease:
+            return self_prerelease < other_prerelease
+        if self.prerelease_num != other.prerelease_num:
+            return self.prerelease_num < other.prerelease_num
+        return False
+
+    def __le__(self, other: NdviVersion) -> bool:
+        return self == other or self < other
+
+    def __gt__(self, other: NdviVersion) -> bool:
+        return not self <= other
+
+    def __ge__(self, other: NdviVersion) -> bool:
+        return not self < other
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, NdviVersion):
+            return NotImplemented
+        return (
+            self.major == other.major
+            and self.minor == other.minor
+            and self.patch == other.patch
+            and self.prerelease == other.prerelease
+            and self.prerelease_num == other.prerelease_num
+        )
+
+    def normalized(self) -> str:
+        """Return normalized version string."""
+        core = f"v{self.major}.{self.minor}.{self.patch}"
+        if self.prerelease != "release":
+            core += f"-{self.prerelease}"
+            if self.prerelease_num > 1:
+                core += str(self.prerelease_num)
+        if self.is_hotfix:
+            core += "-hotfix"
+            if self.hotfix_num > 1:
+                core += str(self.hotfix_num)
+        return core
+
+
+def _parse_prerelease(part: str) -> tuple[str, int]:
+    """Parse prerelease tag like 'alpha', 'beta1', 'rc2'."""
+    for tag in ("alpha", "beta", "rc"):
+        if part.startswith(tag):
+            num_str = part[len(tag) :]
+            num = int(num_str) if num_str else 1
+            return tag, num
+    return "release", 0
+
+
+def parse_version(version: str) -> tuple[int, ...]:
+    """Parse a version string into a tuple of ints for comparison.
+
+    Supports:
+    - Core versions: v1.0, v2.1.3, v10.0.1
+    - Prerelease tags: v2.1-alpha, v2.1-beta, v2.1-rc1
+    - Hotfix suffixes: v2.1.1-hotfix, v2.1.1-hotfix2
+    - Date-based versions: v2025.03.15, v20250315
+
+    Returns a tuple of integers suitable for lexicographic comparison.
+    Prerelease and hotfix metadata are stripped for simple comparison.
+    For full semantic comparison, use parse_ndvi_version().
+
+    Examples:
+        'v1.0' -> (1, 0)
+        'v2.1.3' -> (2, 1, 3)
+        'v10.0' -> (10, 0)
+        '1.2.3' -> (1, 2, 3)
+        'v2.1-beta' -> (2, 1)
+        'v2.1.1-hotfix' -> (2, 1, 1)
+    """
+    cleaned = version.strip()
+    if cleaned and cleaned[0] in ("v", "V"):
+        cleaned = cleaned[1:]
+
+    # Strip hotfix suffix
+    cleaned = cleaned.split("-hotfix")[0]
+
+    # Strip prerelease tag
+    for tag in ("-alpha", "-beta", "-rc"):
+        if tag in cleaned:
+            cleaned = cleaned.split(tag)[0]
+            break
+
+    parts = cleaned.split(".")
+    result: list[int] = []
+    for part in parts:
+        try:
+            result.append(int(part))
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid version component '{part}' in '{version}'. "
+                f"Expected numeric components separated by dots."
+            ) from exc
+    return tuple(result)
+
+
+def parse_ndvi_version(version: str) -> NdviVersion:
+    """Parse a version string into a full NdviVersion object.
+
+    Supports prerelease tags, hotfix suffixes, and date-based versions.
+    Use this for full semantic comparison including prerelease ordering.
+
+    Examples:
+        'v2.1-beta' -> NdviVersion(2, 1, 0, prerelease='beta')
+        'v2.1.1-hotfix' -> NdviVersion(2, 1, 1, is_hotfix=True)
+        'v2025.03.15' -> NdviVersion(2025, 3, 15)
+    """
+    cleaned = version.strip()
+    if cleaned and cleaned[0] in ("v", "V"):
+        cleaned = cleaned[1:]
+
+    is_hotfix = False
+    hotfix_num = 0
+    if "-hotfix" in cleaned:
+        is_hotfix = True
+        hotfix_part = cleaned.split("-hotfix")[1]
+        hotfix_num = int(hotfix_part) if hotfix_part else 1
+        cleaned = cleaned.split("-hotfix")[0]
+
+    prerelease = "release"
+    prerelease_num = 0
+    for tag in ("-alpha", "-beta", "-rc"):
+        if tag in cleaned:
+            tag_name = tag.lstrip("-")
+            suffix = cleaned.split(tag)[1]
+            prerelease_num = int(suffix) if suffix else 1
+            prerelease = tag_name
+            cleaned = cleaned.split(tag)[0]
+            break
+
+    parts = cleaned.split(".")
+    major = int(parts[0]) if len(parts) > 0 else 0
+    minor = int(parts[1]) if len(parts) > 1 else 0
+    patch = int(parts[2]) if len(parts) > 2 else 0
+
+    return NdviVersion(
+        major=major,
+        minor=minor,
+        patch=patch,
+        prerelease=prerelease,
+        prerelease_num=prerelease_num,
+        is_hotfix=is_hotfix,
+        hotfix_num=hotfix_num,
+        raw=version,
+    )
+
+
+def version_gte(version: str, min_version: str) -> bool:
+    """Return True if version >= min_version using semantic comparison.
+
+    Handles versions like 'v1.0', 'v2.1.3', 'v10.0' correctly,
+    avoiding the lexicographic trap where 'v10' < 'v2'.
+
+    For prerelease-aware comparison, use parse_ndvi_version() directly.
+    """
+    return parse_version(version) >= parse_version(min_version)
+
+
+def normalize_version(version: str) -> str:
+    """Normalize a version string to canonical form.
+
+    Rules:
+    - Always prefixed with 'v'
+    - At least major.minor (patch defaults to 0)
+    - Prerelease tags lowercase: -alpha, -beta, -rc
+    - Hotfix suffix: -hotfix (with number if > 1)
+
+    Examples:
+        '1.0' -> 'v1.0.0'
+        'V2.1-beta' -> 'v2.1.0-beta'
+        'v2.1.1-hotfix2' -> 'v2.1.1-hotfix2'
+    """
+    parsed = parse_ndvi_version(version)
+    return parsed.normalized()
+
+
+def is_valid_ndvi_version(version: str) -> bool:
+    """Check if a version string is a valid NDVI version.
+
+    Valid formats:
+    - v{major}.{minor}[.{patch}][-alpha[n]|-beta[n]|-rc[n]]
+    - v{major}.{minor}[.{patch}][-hotfix[n]]
+    - Date-based: v{YYYY}.{MM}.{DD} or v{YYYYMMDD}
+
+    Returns True if the version can be parsed, False otherwise.
+    """
+    try:
+        parse_ndvi_version(version)
+        return True
+    except (ValueError, IndexError):
+        return False
 
 
 def _cb_cache_key(engine: str) -> str:
@@ -57,6 +301,15 @@ def _check_retry_circuit_breaker(engine: str) -> bool:
 
     Returns True if retries should be suppressed (circuit open).
     In half_open state, allows limited retries to test recovery.
+
+    Failure semantics:
+    - Redis unavailable: fail-open (return False, allow retries)
+    - Stale cache: handled by TTL and cutoff logic
+    - Partial network partition: fail-open for reads
+    - Cache failover: relies on Django cache backend retry logic
+
+    This ensures that cache failures do not block all retries,
+    which would be worse than allowing uncoordinated retries.
     """
     from django.core.cache import caches
 
@@ -67,7 +320,17 @@ def _check_retry_circuit_breaker(engine: str) -> bool:
     key = _cb_cache_key(engine)
     now = time.monotonic()
 
-    state_data = cache.get(key)
+    try:
+        state_data = cache.get(key)
+    except Exception as exc:
+        logger.warning(
+            "ndvi.circuit_breaker.cache_unavailable fail_open "
+            "engine=%s error=%s",
+            engine,
+            exc,
+        )
+        return False
+
     if state_data is None:
         state_data = {
             "state": "closed",
@@ -75,7 +338,14 @@ def _check_retry_circuit_breaker(engine: str) -> bool:
             "half_open_attempts": 0,
             "last_failure": 0,
         }
-        cache.set(key, state_data, timeout=window * 2)
+        try:
+            cache.set(key, state_data, timeout=window * 2)
+        except Exception as exc:
+            logger.debug(
+                "ndvi.circuit_breaker.cache_set_failed engine=%s error=%s",
+                engine,
+                exc,
+            )
 
     cutoff = now - window
     recent = [t for t in state_data["failures"] if t > cutoff]
@@ -88,7 +358,14 @@ def _check_retry_circuit_breaker(engine: str) -> bool:
             state_data["state"] = "open"
             state_data["half_open_attempts"] = 0
             state_data["last_failure"] = now
-            cache.set(key, state_data, timeout=window * 2)
+            try:
+                cache.set(key, state_data, timeout=window * 2)
+            except Exception as exc:
+                logger.debug(
+                    "ndvi.circuit_breaker.cache_set_failed engine=%s error=%s",
+                    engine,
+                    exc,
+                )
             logger.warning(
                 "ndvi.upsert.circuit_breaker_open engine=%s "
                 "failures=%d window=%ds",
@@ -102,7 +379,14 @@ def _check_retry_circuit_breaker(engine: str) -> bool:
         if state_data["last_failure"] < cutoff:
             state_data["state"] = "half_open"
             state_data["half_open_attempts"] = 0
-            cache.set(key, state_data, timeout=window * 2)
+            try:
+                cache.set(key, state_data, timeout=window * 2)
+            except Exception as exc:
+                logger.debug(
+                    "ndvi.circuit_breaker.cache_set_failed engine=%s error=%s",
+                    engine,
+                    exc,
+                )
             logger.info(
                 "ndvi.upsert.circuit_breaker_half_open engine=%s",
                 engine,
@@ -114,7 +398,14 @@ def _check_retry_circuit_breaker(engine: str) -> bool:
         if state_data["half_open_attempts"] >= half_open_max:
             state_data["state"] = "open"
             state_data["last_failure"] = now
-            cache.set(key, state_data, timeout=window * 2)
+            try:
+                cache.set(key, state_data, timeout=window * 2)
+            except Exception as exc:
+                logger.debug(
+                    "ndvi.circuit_breaker.cache_set_failed engine=%s error=%s",
+                    engine,
+                    exc,
+                )
             logger.warning(
                 "ndvi.upsert.circuit_breaker_reopened engine=%s "
                 "half_open_attempts=%d",
@@ -131,6 +422,7 @@ def _record_upsert_failure(engine: str) -> None:
     """Record an upsert failure for circuit breaker tracking.
 
     Uses Django cache for global coordination across workers.
+    Fails silently if cache is unavailable to avoid blocking upserts.
     """
     from django.core.cache import caches
 
@@ -139,7 +431,17 @@ def _record_upsert_failure(engine: str) -> None:
     key = _cb_cache_key(engine)
     window = get_ndvi_retry_circuit_breaker_window()
 
-    state_data = cache.get(key)
+    try:
+        state_data = cache.get(key)
+    except Exception as exc:
+        logger.warning(
+            "ndvi.circuit_breaker.record_failure_cache_error "
+            "engine=%s error=%s",
+            engine,
+            exc,
+        )
+        return
+
     if state_data is None:
         state_data = {
             "state": "closed",
@@ -159,13 +461,22 @@ def _record_upsert_failure(engine: str) -> None:
             engine,
         )
 
-    cache.set(key, state_data, timeout=window * 2)
+    try:
+        cache.set(key, state_data, timeout=window * 2)
+    except Exception as exc:
+        logger.warning(
+            "ndvi.circuit_breaker.record_failure_cache_set_error "
+            "engine=%s error=%s",
+            engine,
+            exc,
+        )
 
 
 def _record_upsert_success(engine: str) -> None:
     """Record an upsert success to reset circuit breaker.
 
     If in half_open state, a success closes the circuit.
+    Fails silently if cache is unavailable.
     """
     from django.core.cache import caches
 
@@ -173,7 +484,17 @@ def _record_upsert_success(engine: str) -> None:
     key = _cb_cache_key(engine)
     window = get_ndvi_retry_circuit_breaker_window()
 
-    state_data = cache.get(key)
+    try:
+        state_data = cache.get(key)
+    except Exception as exc:
+        logger.warning(
+            "ndvi.circuit_breaker.record_success_cache_error "
+            "engine=%s error=%s",
+            engine,
+            exc,
+        )
+        return
+
     if state_data is None:
         return
 
@@ -181,7 +502,15 @@ def _record_upsert_success(engine: str) -> None:
         state_data["state"] = "closed"
         state_data["failures"] = []
         state_data["half_open_attempts"] = 0
-        cache.set(key, state_data, timeout=window * 2)
+        try:
+            cache.set(key, state_data, timeout=window * 2)
+        except Exception as exc:
+            logger.warning(
+                "ndvi.circuit_breaker.record_success_cache_set_error "
+                "engine=%s error=%s",
+                engine,
+                exc,
+            )
         logger.info(
             "ndvi.upsert.circuit_breaker_closed engine=%s",
             engine,
@@ -213,6 +542,7 @@ DEFAULT_NDVI_QUEUE_INGESTION = "ndvi_ingestion"
 DEFAULT_NDVI_QUEUE_RECOMPUTE = "ndvi_recompute"
 DEFAULT_NDVI_QUEUE_ANALYSIS = "ndvi_analysis"
 DEFAULT_NDVI_ENFORCE_QUEUE_ISOLATION = False
+DEFAULT_NDVI_QUEUE_ISOLATION_MODE = "single"
 DEFAULT_MAX_AREA_KM2 = 5000.0
 DEFAULT_MAX_DATERANGE_DAYS = 370
 DEFAULT_STEP_DAYS = 7
@@ -362,45 +692,125 @@ def get_ndvi_enforce_queue_isolation() -> bool:
     )
 
 
-def validate_queue_isolation(expected_queues: list[str] | None = None) -> bool:
-    """Validate that the current worker only consumes from expected queues.
+def get_ndvi_queue_isolation_mode() -> str:
+    """Get the queue isolation mode.
+
+    Modes:
+    - "single": Exactly one NDVI queue (strict isolation)
+    - "subset": Allowed subset of NDVI queues (flexible)
+    - "all": All NDVI queues (legacy behavior)
+
+    Default is "single" for strict workload isolation.
+    """
+    mode = str(
+        getattr(
+            settings,
+            "NDVI_QUEUE_ISOLATION_MODE",
+            DEFAULT_NDVI_QUEUE_ISOLATION_MODE,
+        )
+    ).lower()
+    if mode not in ("single", "subset", "all"):
+        logger.warning(
+            "Invalid NDVI_QUEUE_ISOLATION_MODE '%s', using default 'single'",
+            mode,
+        )
+        return "single"
+    return mode
+
+
+def validate_queue_isolation(
+    worker_queues: list[str] | None = None,
+) -> bool:
+    """Validate worker queue config matches isolation policy.
 
     When NDVI_ENFORCE_QUEUE_ISOLATION=True, this function checks that
-    the Celery worker's configured queues match the expected set.
-    Returns True if isolation is valid, False otherwise.
+    the Celery worker's configured queues match the expected set based
+    on NDVI_QUEUE_ISOLATION_MODE.
+
+    Modes:
+    - "single": Exactly one NDVI queue (strict isolation).
+      Recommended for production workload isolation.
+    - "subset": Non-empty subset of NDVI queues (flexible).
+      Allows multi-queue workers while preventing non-NDVI mixing.
+    - "all": All NDVI queues (legacy behavior).
+
+    Fail-closed in production: returns False on validation errors
+    to prevent silent bypass of isolation guarantees.
+    Fail-open in DEBUG mode to avoid blocking local development.
 
     Should be called at worker startup to prevent accidental
     multi-queue workers from processing mixed workloads.
+
+    Args:
+        worker_queues: Optional list of queue names the worker is
+            consuming from. If None, detects from Celery config.
     """
     if not get_ndvi_enforce_queue_isolation():
         return True
 
-    if expected_queues is None:
-        expected_queues = [
-            get_ndvi_queue_name("ingestion"),
-            get_ndvi_queue_name("recompute"),
-            get_ndvi_queue_name("analysis"),
-        ]
+    isolation_mode = get_ndvi_queue_isolation_mode()
+    ndvi_queues = [
+        get_ndvi_queue_name("ingestion"),
+        get_ndvi_queue_name("recompute"),
+        get_ndvi_queue_name("analysis"),
+    ]
 
     try:
-        from celery import current_app
+        if worker_queues is None:
+            from celery import current_app
 
-        configured = set(current_app.conf.task_queues.keys())
-        expected = set(expected_queues)
-        if not expected.issubset(configured):
-            logger.error(
-                "ndvi.queue_isolation_violation expected=%s configured=%s",
-                sorted(expected),
-                sorted(configured),
-            )
-            return False
+            worker_queues = list(current_app.conf.task_queues.keys())
+
+        configured = set(worker_queues)
+        ndvi_set = set(ndvi_queues)
+        overlap = configured & ndvi_set
+
+        if isolation_mode == "single":
+            if len(overlap) != 1:
+                logger.error(
+                    "ndvi.queue_isolation_violation mode=single "
+                    "expected_exactly_one_ndvi_queue got=%s configured=%s",
+                    sorted(overlap),
+                    sorted(configured),
+                )
+                return False
+
+        elif isolation_mode == "subset":
+            if not overlap:
+                logger.error(
+                    "ndvi.queue_isolation_violation mode=subset "
+                    "expected_at_least_one_ndvi_queue got=%s configured=%s",
+                    sorted(overlap),
+                    sorted(configured),
+                )
+                return False
+
+        elif isolation_mode == "all":
+            if not ndvi_set.issubset(configured):
+                logger.error(
+                    "ndvi.queue_isolation_violation mode=all "
+                    "expected=%s configured=%s",
+                    sorted(ndvi_set),
+                    sorted(configured),
+                )
+                return False
+
         return True
+
     except Exception as exc:
-        logger.warning(
-            "ndvi.queue_isolation_check_failed error=%s",
+        is_debug = getattr(settings, "DEBUG", False)
+        if is_debug:
+            logger.warning(
+                "ndvi.queue_isolation_check_failed fail_open_debug error=%s",
+                exc,
+            )
+            return True
+        logger.error(
+            "ndvi.queue_isolation_check_failed fail_closed_production "
+            "error=%s",
             exc,
         )
-        return True
+        return False
 
 
 def get_max_area_km2() -> float:
@@ -817,6 +1227,26 @@ VALID_PROVENANCE_KEYS = frozenset(
 )
 
 
+def _validate_json_types(obj: Any, path: str = "root") -> None:
+    """Recursively validate JSON-serializable types.
+
+    Raises ValueError if unsupported types are found, with a clear
+    path to the offending value.
+    """
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            _validate_json_types(value, path=f"{path}.{key}")
+    elif isinstance(obj, list):
+        for idx, value in enumerate(obj):
+            _validate_json_types(value, path=f"{path}[{idx}]")
+    elif not isinstance(obj, _ALLOWED_JSON_TYPES):
+        raise ValueError(
+            f"Unsupported type {type(obj).__name__} at {path}. "
+            f"Provenance data must contain only JSON-serializable types "
+            f"(dict, list, str, int, float, bool, None)."
+        )
+
+
 def compute_provenance_hash(provenance: dict[str, Any]) -> str:
     """Compute a deterministic hash of provenance data for idempotency.
 
@@ -824,17 +1254,20 @@ def compute_provenance_hash(provenance: dict[str, Any]) -> str:
     - sorted keys
     - no whitespace (separators=(',', ':'))
     - ensure_ascii=True
-    - default=str for non-serializable types
 
-    This prevents silent identity drift from different JSON encodings
-    of the same logical provenance data.
+    Rejects unsupported types instead of silently coercing them with
+    default=str, preventing silent identity drift from unexpected
+    serialization behavior.
+
+    Raises:
+        ValueError: If provenance contains non-JSON-serializable types.
     """
+    _validate_json_types(provenance)
     canonical = json.dumps(
         provenance,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
-        default=str,
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
@@ -906,6 +1339,9 @@ def upsert_observations(
 
     On IntegrityError from concurrent inserts, retries with
     exponential backoff up to NDVI_UPSERT_MAX_RETRIES.
+
+    Records transaction duration and lock contention metrics
+    for observability.
     """
     saved: list[NdviObservation] = []
     version = get_ndvi_version()
@@ -921,6 +1357,7 @@ def upsert_observations(
         else None
     )
 
+    tx_start = time.monotonic()
     for attempt in range(max_retries):
         try:
             with transaction.atomic():
@@ -1058,12 +1495,25 @@ def upsert_observations(
                             defaults=defaults,
                         )
                     saved.append(obj)
+            tx_duration = time.monotonic() - tx_start
+            ndvi_transaction_duration_seconds.labels(
+                operation="upsert"
+            ).observe(tx_duration)
             return saved
 
         except IntegrityError as exc:
             if "unique constraint" not in str(exc).lower():
                 raise
             _record_upsert_failure(engine)
+            ndvi_lock_contention_total.labels(
+                operation="upsert",
+                reason="constraint_collision",
+            ).inc()
+            ndvi_retry_classification_total.labels(
+                operation="upsert",
+                class_="constraint_collision",
+            ).inc()
+            ndvi_retry_storm_window_total.labels(operation="upsert").inc()
             if _check_retry_circuit_breaker(engine):
                 logger.error(
                     "ndvi.upsert.circuit_breaker_suppressing_retry "
@@ -1075,6 +1525,14 @@ def upsert_observations(
                     engine=engine,
                     reason="circuit_breaker",
                 ).inc()
+                ndvi_retry_classification_total.labels(
+                    operation="upsert",
+                    class_="circuit_breaker_suppressed",
+                ).inc()
+                tx_duration = time.monotonic() - tx_start
+                ndvi_transaction_duration_seconds.labels(
+                    operation="upsert"
+                ).observe(tx_duration)
                 raise
             if attempt < max_retries - 1:
                 delay = base_delay * (2**attempt)
@@ -1113,7 +1571,38 @@ def upsert_observations(
                     engine=engine,
                     constraint="upsert",
                 ).inc()
+                ndvi_retry_classification_total.labels(
+                    operation="upsert",
+                    class_="retry_exhausted",
+                ).inc()
+                tx_duration = time.monotonic() - tx_start
+                ndvi_transaction_duration_seconds.labels(
+                    operation="upsert"
+                ).observe(tx_duration)
                 raise
+
+    tx_duration = time.monotonic() - tx_start
+    ndvi_transaction_duration_seconds.labels(operation="upsert").observe(
+        tx_duration
+    )
+
+    # Starvation detection: transactions beyond 10 seconds
+    if tx_duration > 10.0:
+        ndvi_starvation_events_total.labels(operation="upsert").inc()
+        logger.warning(
+            "ndvi.upsert.starvation_detected duration=%.2fs "
+            "farm_id=%s engine=%s",
+            tx_duration,
+            farm.id,
+            engine,
+        )
+
+    # Long lock wait detection: beyond P95 threshold (2 seconds)
+    if tx_duration > 2.0:
+        ndvi_long_lock_wait_total.labels(
+            operation="upsert",
+            threshold_seconds="2",
+        ).inc()
 
     return saved
 
@@ -1274,7 +1763,7 @@ def is_analytically_valid(
     - state is FINAL (not RAW, SUPERSEDED, INVALIDATED, or REJECTED)
     - is_latest is True
     - mean is not None
-    - version >= min_version (if specified)
+    - version >= min_version (if specified, using semantic comparison)
     - engine in allowed_engines (if specified)
 
     This is the single source of truth for what counts as valid NDVI
@@ -1286,7 +1775,7 @@ def is_analytically_valid(
         return False
     if observation.mean is None:
         return False
-    if min_version and observation.version < min_version:
+    if min_version and not version_gte(observation.version, min_version):
         return False
     if allowed_engines and observation.engine not in allowed_engines:
         return False
@@ -1312,6 +1801,11 @@ def get_valid_observations_qs(
     Excludes INVALIDATED, REJECTED, SUPERSEDED, and RAW rows.
     Only returns is_latest=True, state=FINAL rows with non-null mean.
     Optionally filters by min_version and allowed_engines.
+
+    Note: min_version filtering uses DB string comparison which may
+    have edge cases for versions like 'v10.0' vs 'v2.0'. For strict
+    semantic version comparison, filter results in Python using
+    is_analytically_valid(obs, min_version=...).
     """
     qs = (
         NdviObservation.objects.filter(
@@ -1505,6 +1999,8 @@ def recompute_stale_observations(
     chunk_size: int | None = None,
     max_window_days: int | None = None,
     target_version: str | None = None,
+    provenance_schema_version: str | None = None,
+    engine_config_hash: str | None = None,
 ) -> list[dict[str, Any]]:
     """Find observations that need recomputation.
 
@@ -1516,8 +2012,9 @@ def recompute_stale_observations(
     authoritative source.
 
     Idempotency model:
-    - Intent identity: (farm_id, engine, bucket_date, target_version)
-      defines WHAT should be computed. Same intent = same result.
+    - Intent identity: (farm_id, engine, bucket_date, target_version,
+      provenance_schema_version, engine_config_hash) defines WHAT should
+      be computed. Same intent = same result.
     - Execution identity: dispatch_key is derived from intent identity.
       Same dispatch_key → same NdviJob.request_hash → no duplicates.
     - Execution parameters (chunk_size, max_window_days) do NOT affect
@@ -1532,6 +2029,8 @@ def recompute_stale_observations(
 
     chunk = chunk_size or get_ndvi_recompute_chunk_size()
     target_ver = target_version or get_ndvi_version()
+    schema_ver = provenance_schema_version or "1"
+    config_hash = engine_config_hash or ""
 
     stale_qs = (
         NdviObservation.objects.filter(
@@ -1560,7 +2059,8 @@ def recompute_stale_observations(
     for row in stale_qs[:chunk]:
         dispatch_key = hashlib.sha256(
             f"recompute:{row['farm_id']}:{engine}:"
-            f"{row['bucket_date']}:{target_ver}".encode()
+            f"{row['bucket_date']}:{target_ver}:"
+            f"{schema_ver}:{config_hash}".encode()
         ).hexdigest()[:16]
         results.append(
             {
@@ -1570,6 +2070,8 @@ def recompute_stale_observations(
                 "target_version": target_ver,
                 "observation_id": row["id"],
                 "dispatch_key": dispatch_key,
+                "provenance_schema_version": schema_ver,
+                "engine_config_hash": config_hash,
             }
         )
 
