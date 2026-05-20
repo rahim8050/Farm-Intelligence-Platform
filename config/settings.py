@@ -746,6 +746,37 @@ NDVI_VALID_PIXEL_THRESHOLD = env.float(
     "NDVI_VALID_PIXEL_THRESHOLD",
     default=0.30,
 )
+
+# V2 Quality Engine thresholds (Phase 2)
+NDVI_V2_ROLLING_WINDOW = env.int("NDVI_V2_ROLLING_WINDOW", default=5)
+NDVI_V2_OUTLIER_THRESHOLD = env.float(
+    "NDVI_V2_OUTLIER_THRESHOLD",
+    default=0.15,
+)
+NDVI_V2_ACCEPT_THRESHOLD = env.float("NDVI_V2_ACCEPT_THRESHOLD", default=0.75)
+NDVI_V2_LOW_CONFIDENCE_THRESHOLD = env.float(
+    "NDVI_V2_LOW_CONFIDENCE_THRESHOLD",
+    default=0.50,
+)
+NDVI_V2_VALID_PIXEL_REJECT = env.float(
+    "NDVI_V2_VALID_PIXEL_REJECT",
+    default=0.30,
+)
+NDVI_V2_RECENCY_MAX_DAYS = env.int("NDVI_V2_RECENCY_MAX_DAYS", default=14)
+NDVI_V2_TEMPORAL_DEVIATION = env.float(
+    "NDVI_V2_TEMPORAL_DEVIATION",
+    default=0.20,
+)
+NDVI_V2_MIN_SMOOTH_VALUES = env.int("NDVI_V2_MIN_SMOOTH_VALUES", default=3)
+NDVI_V2_MIN_ROLLING_CONTEXT = env.int(
+    "NDVI_V2_MIN_ROLLING_CONTEXT",
+    default=3,
+)
+NDVI_V2_MAX_CONFIDENCE_WITHOUT_CONTEXT = env.float(
+    "NDVI_V2_MAX_CONFIDENCE_WITHOUT_CONTEXT",
+    default=0.49,
+)
+
 NDVI_STAC_API_URL = env(
     "NDVI_STAC_API_URL",
     default="https://stac.dataspace.copernicus.eu/v1/",

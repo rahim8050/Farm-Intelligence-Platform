@@ -355,3 +355,89 @@ class NdviRasterArtifact(models.Model):
             f"Raster {self.date} farm={self.farm_id} engine={self.engine} "
             f"size={self.size}"
         )
+
+
+class NdviDerivedObservation(models.Model):
+    """V2 decision-grade observation derived from a V1 raw observation.
+
+    This model stores confidence-scored, smoothed NDVI values with
+    explicit null behavior when quality is insufficient. It is the
+    output of the V2 quality engine (Phase 2).
+    """
+
+    farm = models.ForeignKey(
+        Farm,
+        on_delete=models.CASCADE,
+        related_name="ndvi_v2_observations",
+    )
+    v1_observation = models.OneToOneField(
+        NdviObservation,
+        on_delete=models.CASCADE,
+        related_name="v2_observation",
+    )
+    engine = models.CharField(max_length=64)
+    bucket_date = models.DateField()
+    source = models.CharField(
+        max_length=32,
+        help_text="Source engine that produced this V2 observation",
+    )
+    selected_ndvi = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Selected NDVI value (may be null if quality insufficient)",
+    )
+    smoothed_ndvi = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Temporally smoothed NDVI value",
+    )
+    confidence = models.FloatField(
+        help_text="Confidence score in [0, 1]",
+    )
+    confidence_components = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Breakdown of confidence formula components",
+    )
+    quality_flags = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Quality flags: cloud_heavy, low_confidence, "
+        "outlier_removed, etc.",
+    )
+    is_null = models.BooleanField(
+        default=False,
+        help_text="True when this observation was forced to null",
+    )
+    null_reason = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        help_text="Reason for null output",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["v1_observation"],
+                name="uniq_v2_per_v1_observation",
+            ),
+            models.UniqueConstraint(
+                fields=["farm", "engine", "bucket_date"],
+                name="uniq_v2_farm_engine_bucket",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["farm", "engine", "bucket_date"]),
+            models.Index(fields=["engine", "confidence"]),
+            models.Index(fields=["source", "bucket_date"]),
+        ]
+
+    def __str__(self) -> str:
+        null_str = " NULL" if self.is_null else ""
+        return (
+            f"V2 NDVI {self.bucket_date} farm={self.farm_id} "
+            f"engine={self.engine} confidence={self.confidence:.2f}{null_str}"
+        )
