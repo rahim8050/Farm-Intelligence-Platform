@@ -13,6 +13,8 @@ It is responsible for:
 - Worker execution and state transitions
 - WebSocket notifications for activity state changes
 - Prometheus metrics for activity execution
+- Scheduler leader lock and contention tracking
+- Stale execution recovery and terminal cleanup
 
 It is not responsible for:
 - Farm ownership and bounding box persistence (see `farms/`)
@@ -195,6 +197,7 @@ Response:
 - `activities_websocket_events_total`: WebSocket event counter
 - `activities_websocket_failures_total`: WebSocket delivery failure counter
 - `activities_lock_contention_total`: claim / execution contention counter
+- Correlation metadata is carried in activity metadata and logged during scheduler, worker, and WebSocket handling
 
 ## Metrics / monitoring
 
@@ -212,6 +215,8 @@ Prometheus metrics (from `activities/metrics.py`):
 
 - The app currently uses the persisted `Activity` row as the source of truth for state transitions.
 - Worker execution is idempotent through `execution_id` validation.
+- The scheduler uses a cache-based lock to avoid multiple concurrent pollers.
+- `activities.cleanup_completed` removes old terminal activities.
 - The NDVI trigger handler is implemented, but it returns recommendations for downstream dispatch rather than creating new activity records itself.
 
 ## Related docs

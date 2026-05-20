@@ -11,7 +11,7 @@
 
 This review documents the distributed systems gaps that were identified during implementation and the remaining hardening items that are still open.
 
-**OVERALL RISK: LOW** - Phase 5 production hardening complete. All critical items implemented.
+**OVERALL RISK: LOW** - Phase 5 production hardening complete. Critical concurrency, recovery, retention, and observability items are implemented.
 
 ## Phase 5 Enforcement
 
@@ -99,7 +99,7 @@ if activity.status == RUNNING:
 
 **MEDIUM** - If multiple Celery Beat instances run, they will poll the same activities.
 
-**Status:** Not implemented. The deployment should run a single Celery Beat instance or add explicit leader election if multiple schedulers are introduced.
+**Status:** Mitigated in code via a cache-based scheduler lock in `activities.scheduler.poll`. Operationally, a single Beat instance is still the simplest deployment model.
 
 ---
 
@@ -139,7 +139,7 @@ async def emit_activity_event(user_id: int, event: dict):
 
 **Problem:** User offline = notification lost forever.
 
-**Status:** Open. WebSocket notifications are still best-effort; delivery is not persisted.
+**Status:** Documented and accepted. WebSocket notifications are still best-effort; delivery is not persisted.
 
 ### Issue 3.2: No Acknowledgment Protocol
 
@@ -155,7 +155,7 @@ async def emit_activity_event(user_id: int, event: dict):
 
 **HIGH** - DONE activities accumulate forever.
 
-**Status:** Open. Completed activity cleanup/archiving is not implemented.
+**Status:** Fixed in code. Terminal activity cleanup runs via `activities.cleanup_completed`.
 
 ### Issue 4.2: No Pagination in Schedule Query
 
@@ -201,25 +201,25 @@ self.group_name = f"user_{self.user.id}"  # Only own group
 
 **MEDIUM** - No way to trace activity across scheduler → queue → worker → WebSocket.
 
-**Status:** Open. Correlation IDs are still not propagated end-to-end.
+**Status:** Fixed in code. Correlation IDs are propagated through the scheduler, worker, and WebSocket event logs.
 
 ### Issue 6.2: No Scheduler Metrics
 
 **MEDIUM** - Only worker metrics defined.
 
-**Status:** Open. Scheduler-specific metrics are not yet implemented.
+**Status:** Fixed in code. Scheduler run and dispatch latency metrics are emitted.
 
 ### Issue 6.3: No WebSocket Metrics
 
 **MEDIUM** - No visibility into WebSocket health.
 
-**Status:** Open. WebSocket health metrics are not yet implemented.
+**Status:** Fixed in code. WebSocket send/queue metrics are emitted.
 
 ### Issue 6.4: No Lock Contention Metrics
 
 **MEDIUM** - Can't see if locks are causing delays.
 
-**Status:** Open. Lock contention metrics are not yet implemented.
+**Status:** Fixed in code. Claim and execution contention are tracked.
 
 ---
 
@@ -252,7 +252,7 @@ Worker B: UPDATE status=RUNNING → also succeeds (same value!)
 
 **HIGH** - API endpoint has no rate limiting.
 
-**Status:** Open. The app uses the repo’s existing DRF throttling defaults.
+**Status:** Partial. The app uses the repo’s existing DRF throttling defaults; there is no Activities-specific throttle scope.
 
 ### Issue 8.2: No Input Validation on Metadata
 
@@ -264,7 +264,7 @@ Worker B: UPDATE status=RUNNING → also succeeds (same value!)
 
 **MEDIUM** - Can't monitor system health.
 
-**Status:** Open. No dedicated activities health endpoint exists.
+**Status:** Fixed in code. `GET /api/v1/activities/health/` exists and is documented.
 
 ### Issue 8.4: Handler Error Classification Missing
 
@@ -284,12 +284,12 @@ Worker B: UPDATE status=RUNNING → also succeeds (same value!)
 | CRITICAL | No JWT WebSocket auth | 5.1 | ⚠️ PARTIAL | Uses AuthMiddlewareStack, no custom JWT middleware |
 | CRITICAL | Dispatch race | 7.1 | ✅ FIXED | Atomic dispatch via claim_activity() |
 | HIGH | Lost activity recovery | 2.2 | ✅ FIXED | `recover_stale_activities` task with `select_for_update` |
-| HIGH | DB growth | 4.1 | ❌ NOT IMPLEMENTED | No auto-archive for old activities |
+| HIGH | DB growth | 4.1 | ✅ FIXED | `activities.cleanup_completed` removes old terminal activities |
 | HIGH | No rate limiting | 8.1 | ⚠️ PARTIAL | Uses default DRF throttling only |
 | MEDIUM | Atomic recurrence | 7.2 | ⚠️ OPEN | Recurrence exists, but not as an atomic create-next-in-same-transaction flow |
 | MEDIUM | Check-then-act race | 1.2 | ✅ FIXED | Atomic UPDATE prevents race |
 | MEDIUM | Multiple schedulers | 1.3 | ⚠️ NOT ADDRESSED | No leader election for multiple Celery Beat instances |
-| MEDIUM | Tracing correlation | 6.1 | ⚠️ NOT IMPLEMENTED | No correlation_id through scheduler→worker→WebSocket |
+| MEDIUM | Tracing correlation | 6.1 | ✅ FIXED | Correlation IDs are logged across scheduler→worker→WebSocket |
 | MEDIUM | Handler exceptions | 8.4 | ⚠️ NOT IMPLEMENTED | No exception hierarchy (TemporaryError/PermanentError) |
 
 ## Implementation Notes
@@ -339,13 +339,23 @@ Worker B: UPDATE status=RUNNING → also succeeds (same value!)
 
 ### Implemented in Phase 5
 
-1. **DB auto-cleanup** - ✅ Implemented via `cleanup_completed_activities_task`
-2. **Scheduler leader election** - ✅ Implemented via cache-based lock in `poll_activities`
-3. **Distributed tracing correlation IDs** - ✅ Implemented via `X-Correlation-ID` header
+1. **DB auto-cleanup** - ✅ Implemented via `activities.cleanup_completed`
+2. **Scheduler leader election** - ✅ Mitigated via cache-based lock in `poll_activities`
+3. **Distributed tracing correlation IDs** - ✅ Implemented via correlation metadata/logging
 
 ### Not Implemented
 
 1. **Handler exception hierarchy** - All exceptions treated similarly
+
+## Remaining Open Items
+
+The following items are still open or only partially addressed in the current codebase:
+
+1. WebSocket delivery remains best-effort; no acknowledgment protocol exists.
+2. Recurring activities still create persisted rows for future occurrences.
+3. No dedicated Activities-specific rate limiting exists beyond the repo defaults.
+4. Handler exceptions are not split into temporary vs permanent categories.
+5. Recurrence double-reschedule behavior is not modeled as a single atomic create-next transaction.
 
 ## Verdict: COMPLETE ✅
 

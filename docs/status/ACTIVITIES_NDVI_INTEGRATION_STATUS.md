@@ -60,6 +60,8 @@ Covered cases include:
 - The handler returns `recommended_actions` in the result metadata.
 - Any downstream execution policy should be implemented by the scheduler or a follow-up task.
 - The Activities REST API remains authoritative for persisted state.
+- Activities hardening is documented in `docs/architecture/activities/02_hardening_review.md` and current app behavior is summarized in `activities/README.md`.
+- The current Activities implementation includes scheduler locking, stale recovery, terminal cleanup, a health endpoint, and observability metrics.
 
 ---
 
