@@ -486,6 +486,7 @@ paths:
       tags:
       - v1
       security:
+      - IntegrationJWTAuth: []
       - jwtAuth: []
       - ApiKeyAuth: []
       responses:
@@ -514,6 +515,7 @@ paths:
               $ref: '#/components/schemas/Farm'
         required: true
       security:
+      - IntegrationJWTAuth: []
       - jwtAuth: []
       - ApiKeyAuth: []
       responses:
@@ -853,8 +855,8 @@ paths:
       tags:
       - v1
       security:
-      - jwtAuth: []
-      - ApiKeyAuth: []
+      - FarmObservationAuth: []
+      - IntegrationJWTAuth: []
       responses:
         '200':
           content:
@@ -1033,8 +1035,8 @@ paths:
       tags:
       - v1
       security:
-      - jwtAuth: []
-      - ApiKeyAuth: []
+      - FarmObservationAuth: []
+      - IntegrationJWTAuth: []
       responses:
         '202':
           content:
@@ -1107,8 +1109,8 @@ paths:
       tags:
       - v1
       security:
-      - jwtAuth: []
-      - ApiKeyAuth: []
+      - FarmObservationAuth: []
+      - IntegrationJWTAuth: []
       responses:
         '200':
           content:
@@ -1609,6 +1611,7 @@ paths:
       tags:
       - v1
       security:
+      - IntegrationJWTAuth: []
       - jwtAuth: []
       - ApiKeyAuth: []
       responses:
@@ -1642,6 +1645,7 @@ paths:
               $ref: '#/components/schemas/Farm'
         required: true
       security:
+      - IntegrationJWTAuth: []
       - jwtAuth: []
       - ApiKeyAuth: []
       responses:
@@ -1674,6 +1678,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PatchedFarm'
       security:
+      - IntegrationJWTAuth: []
       - jwtAuth: []
       - ApiKeyAuth: []
       responses:
@@ -1695,6 +1700,7 @@ paths:
       tags:
       - v1
       security:
+      - IntegrationJWTAuth: []
       - jwtAuth: []
       - ApiKeyAuth: []
       responses:
@@ -5335,6 +5341,10 @@ components:
         provider_name:
           type: string
           readOnly: true
+        provider_logo_url:
+          type: string
+          nullable: true
+          readOnly: true
         genre:
           type: string
           maxLength: 100
@@ -5356,6 +5366,7 @@ components:
       - language
       - name
       - provider
+      - provider_logo_url
       - provider_name
     StationDetail:
       type: object
@@ -5371,6 +5382,10 @@ components:
           type: string
         provider_name:
           type: string
+          readOnly: true
+        provider_logo_url:
+          type: string
+          nullable: true
           readOnly: true
         genre:
           type: string
@@ -5409,6 +5424,7 @@ components:
       - language
       - name
       - provider
+      - provider_logo_url
       - provider_name
       - stream_url
       - website_url
@@ -5727,6 +5743,10 @@ components:
       - type: http
         scheme: bearer
         bearerFormat: JWT
+    IntegrationJWTAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
     jwtAuth:
       type: http
       scheme: bearer
