@@ -407,14 +407,25 @@ class SentinelHubEngine(NDVIEngine):
                 continue
 
             outputs = item.get("outputs", {})
-            ndvi_output = outputs.get("ndvi", {})
-            data_mask_output = outputs.get("dataMask", {})
+            ndvi_output = outputs.get("ndvi", outputs.get("default", {}))
+            data_mask_output = outputs.get(
+                "dataMask", outputs.get("dataMask", {})
+            )
 
             ndvi_stats: dict[str, Any] = ndvi_output.get("statistics", {})
             if not ndvi_stats:
                 ndvi_stats = ndvi_output.get("stats", {})
             if not ndvi_stats:
                 ndvi_stats = ndvi_output
+
+            # Handle nested "statistics.ndvi.stats" structure
+            if not ndvi_stats.get("mean") and "ndvi" in ndvi_stats:
+                ndvi_stats = ndvi_stats["ndvi"].get("stats", {})
+            # Handle "bands.NDVI.stats" structure
+            if not ndvi_stats.get("mean") and "bands" in ndvi_output:
+                bands = ndvi_output["bands"]
+                ndvi_band = bands.get("NDVI") or bands.get("ndvi") or {}
+                ndvi_stats = ndvi_band.get("stats", {})
 
             mean_val = ndvi_stats.get("mean")
             if mean_val is None:
@@ -429,8 +440,11 @@ class SentinelHubEngine(NDVIEngine):
             sample_count = ndvi_stats.get("sampleCount") or ndvi_stats.get(
                 "count"
             )
-            cloud_fraction = outputs.get("cloudCoverage") or outputs.get(
-                "cloudFraction"
+            cloud_fraction = (
+                outputs.get("cloudCoverage")
+                or outputs.get("cloudFraction")
+                or ndvi_output.get("cloudCoverage")
+                or ndvi_output.get("cloudFraction")
             )
 
             data_mask_stats: dict[str, Any] = data_mask_output.get(
