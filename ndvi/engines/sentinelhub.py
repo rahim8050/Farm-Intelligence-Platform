@@ -7,7 +7,7 @@ import logging
 import os
 import time
 from datetime import date, datetime, timedelta
-from typing import Any, Final, cast
+from typing import Any, Final
 
 import httpx
 from django.conf import settings
@@ -71,12 +71,12 @@ function setup() {
     input: [{bands: ["B08", "B04", "SCL"]}],
     output: [
       { id: "ndvi", bands: 1, sampleType: "FLOAT32", statistics: true },
-      { id: "dataMask", bands: 1 }
+      { id: "dataMask", bands: 1, sampleType: "UINT8", statistics: true }
     ]
   };
 }
 
-const MASKED_SCL = [3, 8, 9, 10, 11]; // cloud/shadow/high-probability
+const MASKED_SCL = [0, 1, 2, 3, 8, 9, 10, 11];
 
 function isClear(sceneClass) {
   return MASKED_SCL.indexOf(sceneClass) === -1;
@@ -406,24 +406,17 @@ class SentinelHubEngine(NDVIEngine):
             except ValueError:
                 continue
 
-            outputs = item.get("outputs", {}).get("default", {})
-            stats_container = (
-                outputs.get("statistics") or outputs.get("bands") or {}
-            )
-            ndvi_stats: dict[str, Any] | None = None
-            if isinstance(stats_container, dict):
-                ndvi_stats = (
-                    stats_container.get("ndvi")
-                    or stats_container.get("NDVI")
-                    or stats_container
-                )
-            raw_stats: dict[str, Any] = {}
-            if isinstance(ndvi_stats, dict):
-                raw_stats = cast(
-                    dict[str, Any], ndvi_stats.get("stats") or ndvi_stats
-                )
+            outputs = item.get("outputs", {})
+            ndvi_output = outputs.get("ndvi", {})
+            data_mask_output = outputs.get("dataMask", {})
 
-            mean_val = raw_stats.get("mean")
+            ndvi_stats: dict[str, Any] = ndvi_output.get("statistics", {})
+            if not ndvi_stats:
+                ndvi_stats = ndvi_output.get("stats", {})
+            if not ndvi_stats:
+                ndvi_stats = ndvi_output
+
+            mean_val = ndvi_stats.get("mean")
             if mean_val is None:
                 continue
             try:
@@ -431,13 +424,29 @@ class SentinelHubEngine(NDVIEngine):
             except (TypeError, ValueError):
                 continue
 
-            min_val = raw_stats.get("min")
-            max_val = raw_stats.get("max")
-            sample_count = raw_stats.get("sampleCount") or raw_stats.get(
+            min_val = ndvi_stats.get("min")
+            max_val = ndvi_stats.get("max")
+            sample_count = ndvi_stats.get("sampleCount") or ndvi_stats.get(
                 "count"
             )
             cloud_fraction = outputs.get("cloudCoverage") or outputs.get(
                 "cloudFraction"
+            )
+
+            data_mask_stats: dict[str, Any] = data_mask_output.get(
+                "statistics", {}
+            )
+            if not data_mask_stats:
+                data_mask_stats = data_mask_output.get("stats", {})
+            if not data_mask_stats:
+                data_mask_stats = data_mask_output
+
+            valid_pixel_fraction = self._compute_valid_pixel_fraction(
+                data_mask_stats
+            )
+            quality_flags = self._build_quality_flags(
+                valid_pixel_fraction,
+                cloud_fraction,
             )
 
             buckets.append(
@@ -454,9 +463,60 @@ class SentinelHubEngine(NDVIEngine):
                         if cloud_fraction is not None
                         else None
                     ),
+                    valid_pixel_fraction=valid_pixel_fraction,
+                    quality_flags=quality_flags,
                 )
             )
         return buckets
+
+    def _compute_valid_pixel_fraction(
+        self, data_mask_stats: dict[str, Any]
+    ) -> float | None:
+        """Compute valid pixel fraction from dataMask statistics."""
+        if not data_mask_stats:
+            return None
+
+        total_samples = data_mask_stats.get(
+            "sampleCount"
+        ) or data_mask_stats.get("count")
+        if total_samples is None or total_samples == 0:
+            return None
+
+        mean_mask = data_mask_stats.get("mean")
+        if mean_mask is None:
+            return None
+
+        try:
+            valid_ratio = float(mean_mask)
+            return max(0.0, min(1.0, valid_ratio))
+        except (TypeError, ValueError):
+            return None
+
+    def _build_quality_flags(
+        self,
+        valid_pixel_fraction: float | None,
+        cloud_fraction: float | None,
+    ) -> dict[str, bool]:
+        """Build quality flags from computed metrics."""
+        flags: dict[str, bool] = {}
+
+        if cloud_fraction is not None:
+            flags["cloud_heavy"] = cloud_fraction > 0.30
+        else:
+            flags["cloud_heavy"] = False
+
+        if valid_pixel_fraction is not None:
+            flags["partial_tile"] = 0.30 <= valid_pixel_fraction < 0.70
+            flags["low_valid_pixel_fraction"] = valid_pixel_fraction < 0.30
+        else:
+            flags["partial_tile"] = False
+            flags["low_valid_pixel_fraction"] = False
+
+        flags["water_detected"] = False
+        flags["saturated_pixels"] = False
+        flags["cloud_shadow"] = False
+
+        return flags
 
     def __repr__(self) -> str:  # pragma: no cover - convenience only
         return (

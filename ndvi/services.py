@@ -552,6 +552,7 @@ DEFAULT_LOCK_TIMEOUT_SECONDS = 60
 DEFAULT_CACHE_TTL_TIMESERIES_SECONDS = 86400
 DEFAULT_CACHE_TTL_LATEST_SECONDS = 21600
 DEFAULT_COLORMAP_NORMALIZATION = "histogram"
+DEFAULT_VALID_PIXEL_THRESHOLD = 0.30
 NDVI_TIMESERIES_CACHE_VERSION = 2
 NDVI_LATEST_CACHE_VERSION = 2
 
@@ -855,6 +856,17 @@ def get_default_colormap_normalization() -> ColormapNormalization:
             mode_str,
         )
         return ColormapNormalization.HISTOGRAM
+
+
+def get_valid_pixel_threshold() -> float:
+    """Get the minimum valid pixel fraction for observation acceptance."""
+    return float(
+        getattr(
+            settings,
+            "NDVI_VALID_PIXEL_THRESHOLD",
+            DEFAULT_VALID_PIXEL_THRESHOLD,
+        )
+    )
 
 
 def normalize_cloud_fraction(cloud_fraction: float | None) -> float | None:
@@ -1302,13 +1314,19 @@ def _determine_observation_state(
     cloud_fraction: float | None,
     *,
     max_cloud: int,
+    valid_pixel_fraction: float | None = None,
 ) -> str:
     """Determine the lifecycle state for an observation.
 
-    Phase 6: cloud_fraction=None cannot be FINAL.
+    Phase 1: Observations with valid_pixel_fraction below the threshold
+    are rejected. cloud_fraction=None cannot be FINAL.
     Observations with unknown cloud quality are kept as RAW only.
     """
     from .models import NdviObservation
+
+    threshold = get_valid_pixel_threshold()
+    if valid_pixel_fraction is not None and valid_pixel_fraction < threshold:
+        return NdviObservation.ObservationState.REJECTED
 
     if cloud_fraction is None:
         return NdviObservation.ObservationState.RAW
@@ -1378,10 +1396,29 @@ def upsert_observations(
                         )
                         continue
 
+                    valid_threshold = get_valid_pixel_threshold()
+                    if (
+                        point.valid_pixel_fraction is not None
+                        and point.valid_pixel_fraction < valid_threshold
+                    ):
+                        logger.info(
+                            "ndvi.observation.rejected_low_valid_pixels "
+                            "farm_id=%s engine=%s date=%s "
+                            "valid_pixel_fraction=%s threshold=%s",
+                            farm.id,
+                            engine,
+                            point.date,
+                            point.valid_pixel_fraction,
+                            valid_threshold,
+                        )
+                        continue
+
                     state = _determine_observation_state(
                         point.cloud_fraction,
                         max_cloud=max_cloud,
+                        valid_pixel_fraction=point.valid_pixel_fraction,
                     )
+                    quality_flags = point.quality_flags or {}
                     scene_id = (
                         source_scene_ids.get(point.date)
                         if source_scene_ids
@@ -1454,6 +1491,8 @@ def upsert_observations(
                             max=point.max,
                             sample_count=point.sample_count,
                             cloud_fraction=point.cloud_fraction,
+                            valid_pixel_fraction=point.valid_pixel_fraction,
+                            quality_flags=quality_flags,
                             version=version,
                             state=state,
                             is_latest=True,
@@ -1474,6 +1513,8 @@ def upsert_observations(
                             "max": point.max,
                             "sample_count": point.sample_count,
                             "cloud_fraction": point.cloud_fraction,
+                            "valid_pixel_fraction": point.valid_pixel_fraction,
+                            "quality_flags": quality_flags,
                             "version": version,
                             "state": state,
                             "is_latest": True,

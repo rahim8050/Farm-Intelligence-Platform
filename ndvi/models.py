@@ -124,6 +124,17 @@ class NdviObservation(models.Model):
     max = models.FloatField(null=True, blank=True)
     sample_count = models.IntegerField(null=True, blank=True)
     cloud_fraction = models.FloatField(null=True, blank=True)
+    valid_pixel_fraction = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Fraction of pixels that passed SCL/quality masking",
+    )
+    quality_flags = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Quality indicators: cloud_heavy, partial_tile, "
+        "low_valid_pixel_fraction, water_detected, etc.",
+    )
     version = models.CharField(max_length=32, default="v1-legacy")
     state = models.CharField(
         max_length=16,

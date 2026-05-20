@@ -43,6 +43,22 @@ DEFAULT_LIMIT = 200
 DEFAULT_STATS_SAMPLE_SIZE = 128
 DEFAULT_STAC_API_URL: Final[str] = "https://stac.dataspace.copernicus.eu/v1/"
 ASSET_RESOLUTION_ORDER: Final[tuple[str, ...]] = ("10m", "20m", "60m")
+DEFAULT_VALID_PIXEL_THRESHOLD: Final[float] = 0.30
+
+SCL_MASKED_CLASSES: Final[frozenset[int]] = frozenset(
+    {
+        0,
+        1,
+        2,
+        3,
+        8,
+        9,
+        10,
+        11,
+    }
+)
+
+SCL_WATER_CLASS: Final[int] = 6
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +230,8 @@ class NdviStats:
     min: float
     max: float
     sample_count: int
+    valid_pixel_fraction: float | None = None
+    quality_flags: dict[str, bool] | None = None
 
 
 def filter_items_by_cloud(
@@ -459,12 +477,17 @@ def load_ndvi_array(
     bbox: BBox,
     size: int | None,
     timeout_seconds: float,
+    scl_href: str | None = None,
+    mask_water: bool = False,
 ) -> np.ndarray:
     """Load NDVI values for the given bbox.
 
     Downloads remote assets to temp files first to avoid
     OpenJPEG streaming decode errors, then processes locally.
     Returns NaN for invalid pixels.
+
+    If scl_href is provided, applies SCL masking and returns
+    the masked NDVI array.
     """
 
     (
@@ -529,6 +552,19 @@ def load_ndvi_array(
                         resampling=resampling,
                         masked=True,
                     )
+
+                    if scl_href is not None:
+                        with _local_asset_context(scl_href, scl_href) as (
+                            local_scl,
+                            _,
+                        ):
+                            with rasterio.open(local_scl) as scl_ds:
+                                scl = scl_ds.read(
+                                    1,
+                                    window=window,
+                                    out_shape=out_shape,
+                                    resampling=resampling_enum.nearest,
+                                )
     except rasterio_error as exc:
         raise StacProcessingError(f"Raster processing failed: {exc}") from exc
     except Exception as exc:  # noqa: BLE001
@@ -556,6 +592,10 @@ def load_ndvi_array(
             (nir_data - red_data) / denom,
             np.nan,
         )
+
+    if scl_href is not None:
+        ndvi, _, _ = apply_scl_mask(ndvi, scl, mask_water=mask_water)
+
     return ndvi.astype(np.float32)
 
 
@@ -617,6 +657,63 @@ def compute_ndvi_stats(ndvi: np.ndarray) -> NdviStats | None:
         max=max_val,
         sample_count=sample_count,
     )
+
+
+def apply_scl_mask(
+    ndvi: np.ndarray,
+    scl: np.ndarray,
+    *,
+    mask_water: bool = False,
+) -> tuple[np.ndarray, float, dict[str, bool]]:
+    """Apply Sentinel-2 SCL mask to NDVI array.
+
+    Masks pixels with SCL classes:
+    - 0: No data
+    - 1: Saturated or defective
+    - 2: Dark area pixels
+    - 3: Cloud shadows
+    - 8: Cloud medium probability
+    - 9: Cloud high probability
+    - 10: Thin cirrus
+    - 11: Snow or ice
+    - 6: Water (optional, when mask_water=True)
+
+    Returns:
+        Tuple of (masked_ndvi, valid_pixel_fraction, quality_flags)
+    """
+    total_pixels = int(np.count_nonzero(~np.isnan(scl)))
+    if total_pixels == 0:
+        return ndvi, 0.0, {"no_scl_data": True}
+
+    masked_classes = set(SCL_MASKED_CLASSES)
+    if mask_water:
+        masked_classes.add(SCL_WATER_CLASS)
+
+    valid_mask = np.isin(scl, list(masked_classes), invert=True)
+    valid_count = int(np.count_nonzero(valid_mask))
+    valid_pixel_fraction = (
+        valid_count / total_pixels if total_pixels > 0 else 0.0
+    )
+
+    masked_ndvi = ndvi.copy()
+    masked_ndvi[~valid_mask] = np.nan
+
+    water_detected = bool(mask_water and np.any(scl == SCL_WATER_CLASS))
+    cloud_pixels = int(np.sum(np.isin(scl, [3, 8, 9, 10])))
+    cloud_fraction_of_valid = (
+        cloud_pixels / total_pixels if total_pixels > 0 else 0.0
+    )
+
+    quality_flags = {
+        "cloud_heavy": cloud_fraction_of_valid > 0.30,
+        "partial_tile": 0.30 <= valid_pixel_fraction < 0.70,
+        "low_valid_pixel_fraction": valid_pixel_fraction < 0.30,
+        "water_detected": water_detected,
+        "saturated_pixels": bool(np.any(scl == 1)),
+        "cloud_shadow": bool(np.any(scl == 3)),
+    }
+
+    return masked_ndvi, valid_pixel_fraction, quality_flags
 
 
 class StacClient:

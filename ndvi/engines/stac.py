@@ -29,6 +29,8 @@ DEFAULT_DATE_WINDOW_DAYS: Final[int] = 3
 DEFAULT_MAX_CLOUD: Final[int] = 30
 DEFAULT_ASSET_RED: Final[str] = "B04"
 DEFAULT_ASSET_NIR: Final[str] = "B08"
+DEFAULT_ASSET_SCL: Final[str] = "SCL"
+DEFAULT_MASK_WATER: Final[bool] = False
 
 
 def get_default_timeout_seconds() -> float:
@@ -61,6 +63,14 @@ def get_default_asset_nir() -> str:
     return str(getattr(settings, "NDVI_STAC_ASSET_NIR", DEFAULT_ASSET_NIR))
 
 
+def get_default_asset_scl() -> str:
+    return str(getattr(settings, "NDVI_STAC_ASSET_SCL", DEFAULT_ASSET_SCL))
+
+
+def get_default_mask_water() -> bool:
+    return bool(getattr(settings, "NDVI_STAC_MASK_WATER", DEFAULT_MASK_WATER))
+
+
 class StacEngine(NDVIEngine):
     """Fetch NDVI metrics from a STAC API."""
 
@@ -74,6 +84,8 @@ class StacEngine(NDVIEngine):
         date_window_days: int | None = None,
         asset_red: str | None = None,
         asset_nir: str | None = None,
+        asset_scl: str | None = None,
+        mask_water: bool | None = None,
     ) -> None:
         self.timeout_seconds = timeout_seconds or get_default_timeout_seconds()
         self.date_window_days = (
@@ -81,6 +93,10 @@ class StacEngine(NDVIEngine):
         )
         self.asset_red = asset_red or get_default_asset_red()
         self.asset_nir = asset_nir or get_default_asset_nir()
+        self.asset_scl = asset_scl or get_default_asset_scl()
+        self.mask_water = (
+            mask_water if mask_water is not None else get_default_mask_water()
+        )
         self.client = client or StacClient(
             timeout_seconds=self.timeout_seconds
         )
@@ -105,7 +121,7 @@ class StacEngine(NDVIEngine):
             max_cloud=cloud,
         )
         points: list[NdviPoint] = []
-        stats_cache: dict[str, NdviPoint] = {}
+        stats_cache: dict[str, tuple[NdviPoint, dict[str, bool] | None]] = {}
 
         for bucket_date in self._iter_buckets(start, end, step_days):
             item = select_best_item(
@@ -117,14 +133,17 @@ class StacEngine(NDVIEngine):
                 continue
             cached = stats_cache.get(item.id)
             if cached:
+                cached_point, cached_flags = cached
                 points.append(
                     NdviPoint(
                         date=bucket_date,
-                        mean=cached.mean,
-                        min=cached.min,
-                        max=cached.max,
-                        sample_count=cached.sample_count,
-                        cloud_fraction=cached.cloud_fraction,
+                        mean=cached_point.mean,
+                        min=cached_point.min,
+                        max=cached_point.max,
+                        sample_count=cached_point.sample_count,
+                        cloud_fraction=cached_point.cloud_fraction,
+                        valid_pixel_fraction=cached_point.valid_pixel_fraction,
+                        quality_flags=cached_flags,
                     )
                 )
                 continue
@@ -138,8 +157,10 @@ class StacEngine(NDVIEngine):
                 max=stats.max,
                 sample_count=stats.sample_count,
                 cloud_fraction=normalize_cloud_fraction(item.cloud_cover),
+                valid_pixel_fraction=stats.valid_pixel_fraction,
+                quality_flags=stats.quality_flags,
             )
-            stats_cache[item.id] = point
+            stats_cache[item.id] = (point, stats.quality_flags)
             points.append(point)
         return points
 
@@ -176,6 +197,8 @@ class StacEngine(NDVIEngine):
             max=stats.max,
             sample_count=stats.sample_count,
             cloud_fraction=normalize_cloud_fraction(item.cloud_cover),
+            valid_pixel_fraction=stats.valid_pixel_fraction,
+            quality_flags=stats.quality_flags,
         )
 
     def _iter_buckets(
@@ -195,19 +218,41 @@ class StacEngine(NDVIEngine):
     ) -> NdviStats | None:
         red_candidates = build_asset_candidates(self.asset_red)
         nir_candidates = build_asset_candidates(self.asset_nir)
+        scl_candidates = build_asset_candidates(self.asset_scl)
         red_href = resolve_asset_href_candidates(item, red_candidates)
         nir_href = resolve_asset_href_candidates(item, nir_candidates)
+        scl_href = resolve_asset_href_candidates(item, scl_candidates)
         if not red_href or not nir_href:
             logger.warning(
                 "stac.item.missing_assets item_id=%s", getattr(item, "id", "-")
             )
             return None
+
         ndvi = load_ndvi_array(
             red_href=red_href,
             nir_href=nir_href,
             bbox=bbox,
             size=DEFAULT_STATS_SAMPLE_SIZE,
             timeout_seconds=self.timeout_seconds,
+            scl_href=scl_href,
+            mask_water=self.mask_water,
         )
         stats = compute_ndvi_stats(ndvi)
-        return stats
+        if stats is None:
+            return None
+
+        if scl_href is not None:
+            valid_pixel_fraction = stats.valid_pixel_fraction
+            quality_flags = stats.quality_flags
+        else:
+            valid_pixel_fraction = None
+            quality_flags = None
+
+        return NdviStats(
+            mean=stats.mean,
+            min=stats.min,
+            max=stats.max,
+            sample_count=stats.sample_count,
+            valid_pixel_fraction=valid_pixel_fraction,
+            quality_flags=quality_flags,
+        )

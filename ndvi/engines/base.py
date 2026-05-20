@@ -28,6 +28,8 @@ class NdviPoint:
     max: float | None = None
     sample_count: int | None = None
     cloud_fraction: float | None = None
+    valid_pixel_fraction: float | None = None
+    quality_flags: dict[str, bool] | None = None
 
 
 class NDVIEngine(Protocol):
