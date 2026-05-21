@@ -1,8 +1,16 @@
-# NDVI Phase 3 — Data Lifecycle & Batch Processing Execution Plan
+# NDVI Data Lifecycle & Batch Processing Execution Plan
+
+> **Note:** This document was formerly titled "NDVI Phase 3 — Data Lifecycle & Batch
+> Processing Execution Plan." It has been renamed to avoid confusion with the master
+> architecture spec's Phase 3 (Multi-Engine Fallback). See
+> `docs/architecture/ndvi-system-evolution-phased-spec.md` for the canonical phase
+> numbering.
 
 ## Overview
 
-Phase 3 converts NDVI storage from overwrite-based persistence into a versioned, lifecycle-aware, batch-reprocessable system while preserving the existing Phase 2 execution model.
+This plan covers NDVI storage evolution from overwrite-based persistence into a
+versioned, lifecycle-aware, batch-reprocessable system while preserving the existing
+Phase 2 execution model.
 
 This plan keeps the current dispatch boundary intact:
 
