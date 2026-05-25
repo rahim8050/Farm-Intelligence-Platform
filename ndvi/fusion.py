@@ -1,20 +1,33 @@
-"""Phase 3 Multi-Engine Fallback: Fusion service and fallback selector.
+"""Phase 3-4 Fusion service: fallback selector and intelligence layer.
 
-Gathers candidate V2 observations for a (farm, bucket_date), scores them
-through the V2 quality engine, and selects the best candidate using a
-deterministic decision tree with confidence degradation on fallback.
+Phase 3 (Multi-Engine Fallback):
+  Gathers candidate V2 observations for a (farm, bucket_date), scores them
+  through the V2 quality engine, and selects the best candidate using a
+  deterministic decision tree with confidence degradation on fallback.
+
+Phase 4 (Fusion and Intelligence):
+  Adds cross-source disagreement detection, Sentinel-1 context for anomaly
+  explanation, and rule-based fusion. Sentinel-1 only affects context and
+  flags, never NDVI selection.
 
 Architecture spec: docs/architecture/ndvi-system-evolution-phased-spec.md
-Section 8 (Phase 3 - Multi-Engine Fallback).
+  Section 8 (Phase 3 - Multi-Engine Fallback)
+  Section 9 (Phase 4 - Fusion and Intelligence).
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 from ndvi.models import NdviDerivedObservation, NdviObservation
+from ndvi.sentinel1_context import (
+    Sentinel1Context,
+    detect_anomaly,
+    fetch_sentinel1_context,
+    merge_s1_context_flags,
+)
 from ndvi.v2_quality import (
     V2Result,
     build_v2_observation,
@@ -92,13 +105,21 @@ class FusionCandidate:
 
 @dataclass
 class FusionResult:
-    """Output of the fusion service."""
+    """Output of the fusion service.
+
+    quality_flags are populated during selection and include:
+      - source_disagreement: set when conflict detected
+      - fallback_used: set when Landsat or MODIS selected
+      - s1_wet_soil / s1_flooding / etc.: from Sentinel-1 context
+      - anomaly flags when S1 context explains NDVI anomaly
+    """
 
     selected: FusionCandidate | None
     candidates_evaluated: int
     candidates_discarded: int
     decision_reason: str
     conflict_detected: bool = False
+    quality_flags: dict[str, bool] = field(default_factory=dict)
 
 
 def _apply_confidence_degradation(
@@ -220,8 +241,47 @@ def _check_conflict(
     )
 
 
+def _build_result_flags(
+    selected: FusionCandidate | None,
+    conflict_detected: bool,
+    s1_context: Sentinel1Context | None = None,
+) -> dict[str, bool]:
+    """Build quality flags for a fusion result.
+
+    Args:
+        selected: The selected candidate (may be None).
+        conflict_detected: Whether a source conflict was detected.
+        s1_context: Optional Sentinel-1 context for anomaly detection.
+
+    Returns:
+        Dict of quality flags.
+    """
+    flags: dict[str, bool] = {
+        "source_disagreement": conflict_detected,
+        "fallback_used": False,
+        "anomaly_detected": False,
+    }
+
+    if selected is not None and not conflict_detected:
+        norm_source = _normalize_source(selected.source)
+        if norm_source in ("landsat", "modis"):
+            flags["fallback_used"] = True
+
+        s1 = s1_context or Sentinel1Context()
+        flags = merge_s1_context_flags(flags, s1)
+
+        if s1.has_any_signal() and selected.selected_ndvi is not None:
+            is_anom, anom_reason = detect_anomaly(selected.selected_ndvi, s1)
+            if is_anom and anom_reason:
+                flags["anomaly_detected"] = True
+                flags[f"anomaly_{anom_reason}"] = True
+
+    return flags
+
+
 def _select_by_decision_tree(
     candidates: list[FusionCandidate],
+    s1_context: Sentinel1Context | None = None,
 ) -> FusionResult:
     """Apply the deterministic decision tree to select the best candidate.
 
@@ -233,8 +293,15 @@ def _select_by_decision_tree(
     5. Tie-break by source priority
     6. No survivor -> NULL
 
+    Phase 4 additions:
+    - Sets source_disagreement flag when conflict detected
+    - Sets fallback_used flag when Landsat or MODIS selected
+    - Merges Sentinel-1 context flags
+    - Detects anomalies using Sentinel-1 context
+
     Args:
         candidates: List of candidates that passed initial screening.
+        s1_context: Optional Sentinel-1 context for flag building.
 
     Returns:
         FusionResult with selected candidate or None.
@@ -245,6 +312,7 @@ def _select_by_decision_tree(
             candidates_evaluated=0,
             candidates_discarded=0,
             decision_reason="no_candidates",
+            quality_flags=_build_result_flags(None, False, s1_context),
         )
 
     conflict_detected, conflict_reason = _check_conflict(candidates)
@@ -255,6 +323,7 @@ def _select_by_decision_tree(
             candidates_discarded=len(candidates),
             decision_reason=conflict_reason,
             conflict_detected=True,
+            quality_flags=_build_result_flags(None, True, s1_context),
         )
 
     primary_candidates = [
@@ -280,6 +349,7 @@ def _select_by_decision_tree(
             candidates_evaluated=len(candidates),
             candidates_discarded=len(candidates) - 1,
             decision_reason="sentinel2_selected",
+            quality_flags=_build_result_flags(selected, False, s1_context),
         )
 
     ls_threshold = _get_source_threshold("landsat")
@@ -295,6 +365,7 @@ def _select_by_decision_tree(
             candidates_evaluated=len(candidates),
             candidates_discarded=len(candidates) - 1,
             decision_reason="landsat_selected",
+            quality_flags=_build_result_flags(selected, False, s1_context),
         )
 
     modis_threshold = _get_source_threshold("modis")
@@ -310,6 +381,7 @@ def _select_by_decision_tree(
             candidates_evaluated=len(candidates),
             candidates_discarded=len(candidates) - 1,
             decision_reason="modis_selected",
+            quality_flags=_build_result_flags(selected, False, s1_context),
         )
 
     candidates.sort(
@@ -335,6 +407,7 @@ def _select_by_decision_tree(
         candidates_evaluated=len(candidates),
         candidates_discarded=len(candidates) - 1,
         decision_reason=selected.selection_reason,
+        quality_flags=_build_result_flags(selected, False, s1_context),
     )
 
 
@@ -343,13 +416,19 @@ def fuse_observations(
     bucket_date: date,
     *,
     candidates: list[FusionCandidate] | None = None,
+    s1_context: Sentinel1Context | None = None,
 ) -> FusionResult:
-    """Full fusion pipeline: gather, score, select.
+    """Full fusion pipeline: gather, score, select, enhance.
+
+    Phase 3: gather candidates and apply decision tree.
+    Phase 4: adds quality flags, Sentinel-1 context, anomaly detection.
 
     Args:
         farm_id: The farm to fuse observations for.
         bucket_date: The date bucket to fuse observations for.
         candidates: Optional pre-gathered candidates. If None, fetched.
+        s1_context: Optional Sentinel-1 context for flag building.
+            If None, fetched from fetch_sentinel1_context().
 
     Returns:
         FusionResult with selected candidate or None.
@@ -357,4 +436,7 @@ def fuse_observations(
     if candidates is None:
         candidates = gather_candidates(farm_id, bucket_date)
 
-    return _select_by_decision_tree(candidates)
+    if s1_context is None:
+        s1_context = fetch_sentinel1_context(farm_id, bucket_date)
+
+    return _select_by_decision_tree(candidates, s1_context=s1_context)
