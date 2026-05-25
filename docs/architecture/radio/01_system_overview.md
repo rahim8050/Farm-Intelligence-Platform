@@ -1,6 +1,6 @@
 # System Overview
 
-> **Status**: ✅ IMPLEMENTED (MVP)
+> **Status**: ✅ IMPLEMENTED
 
 ## Purpose of the Radio Service
 
@@ -10,7 +10,8 @@ The Radio service provides a standardized API for discovering and streaming inte
 
 - Station discovery via REST API
 - Stream URL retrieval for direct playback
-- Support for multiple radio providers (extensible)
+- Support for multiple radio providers
+- Seed data for BBC, SomaFM, and TuneIn
 - Future: favorites, listening history, analytics
 
 ## Relationship Between Django and Nextcloud
@@ -75,7 +76,7 @@ The `radio` app follows the same pattern.
 flowchart TB
     subgraph External
         NC[Nextcloud Frontend]
-        PROVIDER[Radio Provider<br/>BBC 1Xtra]
+        PROVIDER[Radio Provider<br/>BBC / SomaFM / TuneIn]
     end
 
     subgraph Django
@@ -98,25 +99,20 @@ flowchart TB
     NC --> PROVIDER
 ```
 
-## Initial Station: BBC 1Xtra
+## Current Seed Set
 
-| Property | Value |
-|----------|-------|
-| Station ID | `bbc_1xtra` |
-| Name | BBC 1Xtra |
-| Genre | Hip Hop, R&B, Urban |
-| Stream URL | `http://stream.live.vc.bbcmedia.co.uk/bbc_1xtra` |
-| Format | MP3 |
-| Bitrate | 128kbps |
-| Country | UK |
-| Language | English |
+The implementation currently seeds:
+
+- BBC stations: `bbc_radio1`, `bbc_1xtra`, `bbc_radio2`
+- SomaFM stations: `somafm_groovesalad`, `somafm_dronezone`, `somafm_deepspaceone`, `somafm_spacestation`, `somafm_secretagent`, `somafm_defcon`, `somafm_lounge`, `somafm_beatblender`
+- TuneIn stations: `tunein_bbc_ws`
 
 ## Future Extensibility
 
 The architecture supports:
 
-- Additional stations (BBC 1Xtra, BBC Radio 1, etc.)
-- Multiple providers (BBC, TuneIn, Radio Browser API)
+- Additional stations
+- Additional providers
 - Favorites system
 - Listening history
 - Station health monitoring

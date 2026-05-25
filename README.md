@@ -2,7 +2,8 @@
 
 Django + DRF service that provides authenticated APIs for user accounts, API key
 lifecycle management, farm resources, activity scheduling, NDVI (Sentinel Hub)
-retrieval, and provider-backed weather data (Open-Meteo + NASA POWER).
+retrieval, provider-backed weather data (Open-Meteo + NASA POWER), and public
+radio metadata/stream discovery.
 
 This repo uses both JWT (for user sessions and API key management) and
 first-party API keys (`X-API-Key`) for service-to-service calls.
@@ -17,6 +18,7 @@ first-party API keys (`X-API-Key`) for service-to-service calls.
 - NDVI: timeseries/latest, raster retrieval and queueing, job status (`/api/v1/…/ndvi/`)
 - Weather: current/daily/weekly with provider selection (`/api/v1/weather/…`)
 - Farm weather: current/hourly/daily by farm id (`/api/v1/farms/<id>/weather/…`)
+- Radio: station/provider metadata and stream URLs (`/api/v1/radio/…`)
 - Caching: Redis (recommended/required in production) or local-memory cache
 - Background jobs: Celery tasks for activities, NDVI refresh/backfill, and raster rendering
 - Observability: Prometheus metrics via `django-prometheus` at `/metrics`
@@ -34,6 +36,7 @@ flowchart LR
   Django -->|NDVI| Sentinel[Sentinel Hub APIs]
   Django -->|Weather| OpenMeteo[Open-Meteo API]
   Django -->|Weather| NasaPower[NASA POWER API]
+  Django -->|Radio metadata| Radio[Radio providers / stations]
 ```
 
 See [NDVI Pipeline Evolution](docs/architecture/ndvi-pipeline-evolution.md) for the planned Redis Sentinel + Streams rollout and operational checkpoints.
@@ -61,6 +64,16 @@ This project loads environment variables from a dotenv-style `.env` via
 guaranteed to be shell-safe. For one-off scripts, use `django-environ` or
 `python-dotenv` to load it.
 An example file exists at `.env.example`.
+
+See the app-level READMEs for the current feature surface:
+- [Accounts](accounts/README.md)
+- [API keys](api_keys/README.md)
+- [Farms](farms/README.md)
+- [Activities](activities/README.md)
+- [NDVI](ndvi/README.md)
+- [Weather](weather/README.md)
+- [Radio](radio/README.md)
+- [Monitoring](monitoring/README.md)
 
 Minimum variables for local development:
 

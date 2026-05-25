@@ -4,13 +4,16 @@ Back to root: `../README.md`
 
 ## Overview
 
-This app provides NDVI retrieval for user-owned farms using a provider engine
-(currently Sentinel Hub) and exposes endpoints under `/api/v1/…/ndvi/`.
+This app provides NDVI retrieval for user-owned farms using provider engines
+(Sentinel Hub, STAC, and a GEE backfill adapter) and exposes endpoints under
+`/api/v1/…/ndvi/`.
 
 It is responsible for:
 - NDVI timeseries/latest endpoints and response caching
 - Job creation, idempotency, and Celery task execution
 - Raster artifact storage and raster retrieval/queueing endpoints
+- V2 fusion / quality-aware representations for timeseries, latest, and
+  farm-state payloads
 
 It is not responsible for:
 - Farm ownership and bounding box persistence (see `farms/`)
@@ -51,6 +54,11 @@ AuthZ notes:
 | GET | `/api/v1/farm-state/<farm_id>/` | JWT or `X-API-Key` | Summarize last 30–60 days of NDVI to classify farm state | response: mean/max/coverage/trend plus state/action |
 | GET | `/api/v1/ndvi/jobs/<job_id>/` | JWT or `X-API-Key` | Job status for current user | path: `job_id` |
 
+All GET endpoints accept `?representation=v1|v2` where supported. `v1` is the
+backward-compatible default; `v2` adds derived fields such as
+`smoothed_ndvi`, `confidence`, `source`, `quality_flags`, and, for timeseries,
+`v2_observations`.
+
 ### Examples
 
 #### Timeseries
@@ -77,6 +85,9 @@ Response:
 }
 ```
 
+With `?representation=v2`, the payload includes `v2_observations` and
+`representation: "v2"` in the response data while preserving the V1 fields.
+
 #### Latest
 
 ```bash
@@ -95,6 +106,9 @@ Response:
   "errors": null
 }
 ```
+
+With `?representation=v2`, the response also includes `v2_observation` and
+`representation: "v2"`.
 
 #### Manual refresh
 
@@ -182,6 +196,7 @@ Jobs and idempotency:
 
 Provider engines:
 - Timeseries/latest engines:
+  - `gee`: `ndvi/engines/gee.py` (batch/backfill adapter stub)
   - `sentinelhub`: `ndvi/engines/sentinelhub.py` (Statistics API).
   - `stac`: `ndvi/engines/stac.py` (STAC search + local NDVI compute).
 - Raster engines:
@@ -206,6 +221,8 @@ Engine resolution guardrails:
   metrics, `RASTER_ENGINE_PATHS` in `ndvi/raster/registry.py` for raster).
 
 Behavior highlights:
+- `gee`: adapter for offline/backfill workloads; requires the GEE client and
+  service account credentials.
 - `sentinelhub`: upstream processing (Statistics/Process APIs) and requires
   Sentinel Hub credentials.
 - `stac`: searches a STAC API for Sentinel-2 assets, downloads COGs, and
@@ -234,11 +251,27 @@ list):
 - `NDVI_LOCK_TIMEOUT_SECONDS`
 - `NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS`
 - `NDVI_REQUEST_TIMEOUT_SECONDS` (HTTP request timeout for NDVI service calls)
+- `NDVI_V2_LOW_CONFIDENCE_THRESHOLD`, `NDVI_V2_SOURCE_DISAGREEMENT_THRESHOLD`
+- `NDVI_V2_SMOOTHING_WINDOW_DAYS`
 - Raster settings:
   - `NDVI_RASTER_ENGINE_PATH`, `NDVI_RASTER_ENGINE_NAME`
   - `NDVI_RASTER_DEFAULT_SIZE`, `NDVI_RASTER_MAX_SIZE`
   - `NDVI_RASTER_MANUAL_QUEUE_COOLDOWN_SECONDS`
   - `NDVI_RASTER_CACHE_TTL_SECONDS`
+
+## Fusion / quality signals
+
+The V2 representation uses the fusion and quality pipeline in
+`ndvi/fusion.py`, `ndvi/sentinel1_context.py`, and `ndvi/v2_quality.py` to
+derive:
+- `smoothed_ndvi`
+- `confidence`
+- `source`
+- `quality_flags`
+
+The quality flags include source disagreement, fallback usage, anomaly
+detection, and Sentinel-1 context indicators.
+
 - Colormap normalization (added Apr 2026):
   - `NDVI_COLORMAP_NORMALIZATION` (default: `histogram`; or `fixed`)
 
@@ -316,6 +349,11 @@ Prometheus metrics (from code: `ndvi/metrics.py`):
 - `ndvi_upstream_latency_seconds{engine}`
 - `ndvi_cache_hit_total{layer}`
 - `ndvi_farms_stale_total{engine}`
+- `ndvi_v2_null_output_total{engine,reason}`
+- `ndvi_v2_low_confidence_total{engine,reason}`
+- `ndvi_v2_fallback_total{engine,reason}`
+- `ndvi_v2_source_disagreement_total{engine}`
+- `ndvi_v2_quality_flags_total{flag}`
 
 ## Testing
 

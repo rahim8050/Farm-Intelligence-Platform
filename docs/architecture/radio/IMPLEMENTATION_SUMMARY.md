@@ -2,9 +2,9 @@
 
 ## Overview
 
-Created production-grade architecture documentation for integrating internet radio streaming (BBC 1Xtra) into the Django + Nextcloud ecosystem.
+Created production-grade architecture documentation for integrating internet radio streaming into the Django + Nextcloud ecosystem.
 
-> **MVP Implementation Status**: ✅ COMPLETE
+> **Implementation Status**: ✅ COMPLETE
 
 ## Documents Created
 
@@ -37,7 +37,7 @@ Created production-grade architecture documentation for integrating internet rad
 1. **Metadata-only API**: Django returns station info and stream URLs, not audio
 2. **Direct streaming**: Audio flows from provider to client, bypassing Django
 3. **Dedicated app**: Radio in own Django app for isolation and future growth
-4. **Public access**: No authentication required (v1) - radio streams are public
+4. **Public access**: No authentication required - radio streams are public
 5. **Database-backed**: Future-proof schema supports favorites, history, analytics
 
 ## Files Created: 13 markdown documents

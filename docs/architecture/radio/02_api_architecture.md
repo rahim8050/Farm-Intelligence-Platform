@@ -2,7 +2,7 @@
 
 > **Status**: ✅ IMPLEMENTED
 
-## Proposed Endpoint Structure
+## Implemented Endpoint Structure
 
 All radio endpoints follow the `/api/v1/radio/` prefix, consistent with existing project conventions.
 
@@ -14,7 +14,6 @@ All radio endpoints follow the `/api/v1/radio/` prefix, consistent with existing
 | GET | `/api/v1/radio/stations/{id}/` | Get single station details |
 | GET | `/api/v1/radio/stations/{id}/stream/` | Get stream URL for playback |
 | GET | `/api/v1/radio/providers/` | List available providers |
-| GET | `/api/v1/radio/providers/{id}/stations/` | List stations by provider |
 
 ### Example: Station List
 
@@ -147,7 +146,7 @@ CORS_ALLOWED_ORIGINS = [
 
 ## OpenAPI Documentation
 
-Endpoints will be documented with `drf-spectacular` using:
+Endpoints are documented with `drf-spectacular` using:
 
 - `@extend_schema()` decorators
 - Inline serializers for response envelopes
