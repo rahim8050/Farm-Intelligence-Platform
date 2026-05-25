@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 from ndvi.engines.base import BBox
 from ndvi.engines.gee import GeeEngine
 
 
 def _bbox() -> BBox:
-    return BBox(south=0, west=0, north=1, east=1)
+    return BBox(
+        south=Decimal(0),
+        west=Decimal(0),
+        north=Decimal(1),
+        east=Decimal(1),
+    )
 
 
 class TestGeeEngine:

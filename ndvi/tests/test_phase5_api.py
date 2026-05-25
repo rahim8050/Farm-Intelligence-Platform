@@ -88,7 +88,7 @@ class Phase5RepresentationTests(APITestCase):
         """Default (no representation param) returns V1-only payload."""
         resp = self.client.get(
             self.timeseries_url,
-            {"start": self.dates[-1], "end": self.dates[0]},
+            {"start": self.dates[-1].isoformat(), "end": self.dates[0].isoformat()},
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         data: dict[str, Any] = resp.json().get("data", {})
@@ -106,8 +106,8 @@ class Phase5RepresentationTests(APITestCase):
         resp = self.client.get(
             self.timeseries_url,
             {
-                "start": self.dates[-1],
-                "end": self.dates[0],
+                "start": self.dates[-1].isoformat(),
+                "end": self.dates[0].isoformat(),
                 "representation": "v2",
             },
         )
@@ -124,8 +124,8 @@ class Phase5RepresentationTests(APITestCase):
         resp = self.client.get(
             self.timeseries_url,
             {
-                "start": self.dates[-1],
-                "end": self.dates[0],
+                "start": self.dates[-1].isoformat(),
+                "end": self.dates[0].isoformat(),
                 "representation": "v2",
             },
         )
@@ -147,8 +147,8 @@ class Phase5RepresentationTests(APITestCase):
         resp = self.client.get(
             self.timeseries_url,
             {
-                "start": self.dates[-1],
-                "end": self.dates[0],
+                "start": self.dates[-1].isoformat(),
+                "end": self.dates[0].isoformat(),
                 "representation": "v2",
             },
         )
@@ -180,8 +180,8 @@ class Phase5RepresentationTests(APITestCase):
         resp = self.client.get(
             self.timeseries_url,
             {
-                "start": self.dates[-1],
-                "end": self.dates[0],
+                "start": self.dates[-1].isoformat(),
+                "end": self.dates[0].isoformat(),
                 "representation": "v2",
             },
         )
