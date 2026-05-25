@@ -28,6 +28,26 @@ class LoadStationsCommandTestCase(TestCase):
             "http://as-hls-ww-live.akamaized.net/pool_92079267/live/ww/bbc_1xtra/bbc_1xtra.isml/bbc_1xtra-audio%3d96000.norewind.m3u8",
         )
 
+    def test_load_stations_updates_bbc_radio_2_stream(self) -> None:
+        """Test command refreshes BBC Radio 2 to the current HLS URL."""
+        call_command("load_stations")
+        station = Station.objects.filter(id="bbc_radio2").first()
+        self.assertIsNotNone(station)
+        self.assertEqual(
+            station.stream_url,
+            "https://a.files.bbci.co.uk/media/live/manifesto/audio/simulcast/hls/uk/high/cfs/bbc_radio_two.m3u8",
+        )
+
+    def test_load_stations_uses_direct_somafm_streams(self) -> None:
+        """Test command seeds SomaFM with playable direct MP3 streams."""
+        call_command("load_stations")
+        station = Station.objects.filter(id="somafm_beatblender").first()
+        self.assertIsNotNone(station)
+        self.assertEqual(
+            station.stream_url,
+            "https://ice5.somafm.com/beatblender-128-mp3",
+        )
+
     def test_load_stations_idempotent(self) -> None:
         """Test command is idempotent - running again doesn't duplicate."""
         call_command("load_stations")

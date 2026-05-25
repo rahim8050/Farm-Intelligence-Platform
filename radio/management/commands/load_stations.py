@@ -74,7 +74,7 @@ class Command(BaseCommand):
                 "genre": "Adult Contemporary",
                 "country": "UK",
                 "language": "English",
-                "stream_url": "http://as-hls-ww-live.akamaized.net/pool_01505109/live/ww/bbc_radio_two/bbc_radio_two.isml/bbc_radio_two-audio%3d96000.norewind.m3u8",
+                "stream_url": "https://a.files.bbci.co.uk/media/live/manifesto/audio/simulcast/hls/uk/high/cfs/bbc_radio_two.m3u8",
                 "format": "HLS",
                 "bitrate": 96,
                 "is_active": True,
@@ -89,7 +89,7 @@ class Command(BaseCommand):
                 "genre": "Ambient, Downtempo",
                 "country": "USA",
                 "language": "English",
-                "stream_url": "https://ice.somafm.com/groovesalad",
+                "stream_url": "https://ice5.somafm.com/groovesalad-128-mp3",
                 "format": "MP3",
                 "bitrate": 128,
                 "logo_url": "https://somafm.com/img3/groovesalad-200.jpg",
@@ -103,7 +103,7 @@ class Command(BaseCommand):
                 "genre": "Ambient, Atmospheric",
                 "country": "USA",
                 "language": "English",
-                "stream_url": "https://ice.somafm.com/dronezone",
+                "stream_url": "https://ice5.somafm.com/dronezone-128-mp3",
                 "format": "MP3",
                 "bitrate": 128,
                 "logo_url": "https://somafm.com/img3/dronezone-200.jpg",
@@ -117,7 +117,7 @@ class Command(BaseCommand):
                 "genre": "Ambient, Electronic",
                 "country": "USA",
                 "language": "English",
-                "stream_url": "https://ice.somafm.com/deepspaceone",
+                "stream_url": "https://ice5.somafm.com/deepspaceone-128-mp3",
                 "format": "MP3",
                 "bitrate": 128,
                 "logo_url": "https://somafm.com/img3/deepspaceone-200.jpg",
@@ -131,7 +131,7 @@ class Command(BaseCommand):
                 "genre": "Ambient, Electronica",
                 "country": "USA",
                 "language": "English",
-                "stream_url": "https://ice.somafm.com/spacestation",
+                "stream_url": "https://ice5.somafm.com/spacestation-128-mp3",
                 "format": "MP3",
                 "bitrate": 128,
                 "logo_url": "https://somafm.com/img3/spacestation-200.jpg",
@@ -145,7 +145,7 @@ class Command(BaseCommand):
                 "genre": "Lounge, Spy",
                 "country": "USA",
                 "language": "English",
-                "stream_url": "https://ice.somafm.com/secretagent",
+                "stream_url": "https://ice5.somafm.com/secretagent-128-mp3",
                 "format": "MP3",
                 "bitrate": 128,
                 "logo_url": "https://somafm.com/img3/secretagent-200.jpg",
@@ -159,7 +159,7 @@ class Command(BaseCommand):
                 "genre": "Electronic, Gaming",
                 "country": "USA",
                 "language": "English",
-                "stream_url": "https://ice.somafm.com/defcon",
+                "stream_url": "https://ice5.somafm.com/defcon-128-mp3",
                 "format": "MP3",
                 "bitrate": 128,
                 "logo_url": "https://somafm.com/img3/defcon-200.jpg",
@@ -173,7 +173,7 @@ class Command(BaseCommand):
                 "genre": "Lounge, Jazz",
                 "country": "USA",
                 "language": "English",
-                "stream_url": "https://ice.somafm.com/lounge",
+                "stream_url": "https://ice5.somafm.com/lounge-128-mp3",
                 "format": "MP3",
                 "bitrate": 128,
                 "logo_url": "https://somafm.com/img3/lounge-200.jpg",
@@ -187,7 +187,7 @@ class Command(BaseCommand):
                 "genre": "House, Electronica",
                 "country": "USA",
                 "language": "English",
-                "stream_url": "https://ice.somafm.com/beatblender",
+                "stream_url": "https://ice5.somafm.com/beatblender-128-mp3",
                 "format": "MP3",
                 "bitrate": 128,
                 "logo_url": "https://somafm.com/img3/beatblender-200.jpg",
@@ -215,14 +215,14 @@ class Command(BaseCommand):
         all_stations = bbc_stations + somafm_stations + tunein_stations
 
         for station_data in all_stations:
-            station, created = Station.objects.get_or_create(
+            station, created = Station.objects.update_or_create(
                 id=station_data["id"],
                 defaults=station_data,
             )
             if created:
                 self.stdout.write(f"Created station: {station.name}")
             else:
-                self.stdout.write(f"Station already exists: {station.name}")
+                self.stdout.write(f"Updated station: {station.name}")
 
         self.stdout.write(
             self.style.SUCCESS("Radio stations loaded successfully")

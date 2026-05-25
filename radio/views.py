@@ -22,7 +22,6 @@ from radio.serializers import (
     ProviderSerializer,
     StationDetailSerializer,
     StationSerializer,
-    _upgrade_to_https,
 )
 
 StationListEnvelope = inline_serializer(
@@ -193,7 +192,7 @@ class StationStreamView(APIView):
 
         return success_response(
             {
-                "stream_url": _upgrade_to_https(station.stream_url),
+                "stream_url": station.stream_url,
                 "format": station.format,
                 "bitrate": station.bitrate,
                 "station_name": station.name,

@@ -57,7 +57,7 @@ class RadioAPITestCase(TestCase):
         self.assertIn("stream_url", response.data["data"])
         self.assertEqual(
             response.data["data"]["stream_url"],
-            "https://stream.live.vc.bbcmedia.co.uk/bbc_1xtra",
+            "http://stream.live.vc.bbcmedia.co.uk/bbc_1xtra",
         )
         self.assertEqual(response.data["data"]["format"], "MP3")
         self.assertEqual(response.data["data"]["bitrate"], 128)

@@ -64,11 +64,16 @@ class TestSomaFMProvider(TestCase):
         station_ids = [s["id"] for s in stations]
         self.assertIn("somafm_groovesalad", station_ids)
         self.assertIn("somafm_dronezone", station_ids)
+        station = next(s for s in stations if s["id"] == "somafm_groovesalad")
+        self.assertEqual(
+            station["stream_url"],
+            "https://ice5.somafm.com/groovesalad-128-mp3",
+        )
 
     def test_get_stream_url_valid(self) -> None:
         """Test getting stream URL for valid station."""
         url = self.provider.get_stream_url("somafm_groovesalad")
-        self.assertEqual(url, "https://ice.somafm.com/groovesalad")
+        self.assertEqual(url, "https://ice5.somafm.com/groovesalad-128-mp3")
 
     def test_get_stream_url_invalid_raises(self) -> None:
         """Test getting stream URL for invalid station raises."""
