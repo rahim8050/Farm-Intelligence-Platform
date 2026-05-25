@@ -88,7 +88,10 @@ class Phase5RepresentationTests(APITestCase):
         """Default (no representation param) returns V1-only payload."""
         resp = self.client.get(
             self.timeseries_url,
-            {"start": self.dates[-1].isoformat(), "end": self.dates[0].isoformat()},
+            {
+                "start": self.dates[-1].isoformat(),
+                "end": self.dates[0].isoformat(),
+            },
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         data: dict[str, Any] = resp.json().get("data", {})
