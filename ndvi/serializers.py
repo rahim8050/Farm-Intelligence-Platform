@@ -7,7 +7,7 @@ from typing import Any, cast
 from django.conf import settings
 from rest_framework import serializers
 
-from .models import NdviJob, NdviObservation
+from .models import NdviDerivedObservation, NdviJob, NdviObservation
 from .services import (
     get_default_max_cloud,
     normalize_latest_params,
@@ -47,6 +47,17 @@ class NdviObservationSerializer(serializers.ModelSerializer):
             "max",
             "sample_count",
             "cloud_fraction",
+        ]
+
+
+class NdviDerivedObservationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NdviDerivedObservation
+        fields = [
+            "smoothed_ndvi",
+            "confidence",
+            "source",
+            "quality_flags",
         ]
 
 

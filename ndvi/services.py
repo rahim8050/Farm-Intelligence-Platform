@@ -46,7 +46,7 @@ from .raster.registry import resolve_raster_engine_name
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_ENGINES = ("sentinelhub", "stac")
+SUPPORTED_ENGINES = ("gee", "sentinelhub", "stac")
 
 _CB_STATES = ("closed", "open", "half_open")
 
@@ -942,7 +942,15 @@ def _build_stac_engine() -> NDVIEngine:
     return StacEngine()
 
 
+@lru_cache(maxsize=1)
+def _build_gee_engine() -> NDVIEngine:
+    from .engines.gee import GeeEngine
+
+    return GeeEngine()
+
+
 ENGINE_FACTORIES: dict[str, Callable[[], NDVIEngine]] = {
+    "gee": _build_gee_engine,
     "sentinelhub": _build_sentinelhub_engine,
     "stac": _build_stac_engine,
 }

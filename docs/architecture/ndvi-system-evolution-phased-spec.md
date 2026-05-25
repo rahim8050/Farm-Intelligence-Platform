@@ -425,6 +425,18 @@ Keep coverage stable when Sentinel-2 is unavailable or unreliable.
 2. Landsat
 3. MODIS
 
+### Registered engines
+
+| Engine | Role | Status |
+|--------|------|--------|
+| sentinelhub | Primary NDVI | Production |
+| stac | Primary NDVI (alternative) | Production |
+| landsat | Fallback (Landsat 8/9 SR) | Stub |
+| modis | Continuity (Terra/Aqua) | Stub |
+| gee | Batch / backfill (GEE) | Stub |
+
+The ``gee`` engine is registered in ``SUPPORTED_ENGINES`` and ``ENGINE_FACTORIES`` alongside the others.  It targets offline or historical batch processing via Google Earth Engine and is **not** part of the real-time fallback chain (Phase 3 decision tree).
+
 ### Deterministic decision tree
 
 1. Gather candidates for the same `farm_id + bucket_date`.

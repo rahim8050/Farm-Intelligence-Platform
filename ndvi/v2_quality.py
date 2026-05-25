@@ -14,6 +14,11 @@ from typing import Any
 from django.conf import settings
 from django.db import transaction
 
+from ndvi.metrics import (
+    ndvi_v2_low_confidence_total,
+    ndvi_v2_null_output_total,
+    ndvi_v2_observation_total,
+)
 from ndvi.models import NdviDerivedObservation, NdviObservation
 
 logger = logging.getLogger(__name__)
@@ -498,6 +503,14 @@ def build_v2_observation(
         is_null=is_null,
         null_reason=null_reason,
     )
+
+    ndvi_v2_observation_total.labels(engine=engine, is_null=str(is_null)).inc()
+    if is_null:
+        ndvi_v2_null_output_total.labels(
+            engine=engine, null_reason=null_reason or "unknown"
+        ).inc()
+    if confidence < get_low_confidence_threshold():
+        ndvi_v2_low_confidence_total.labels(engine=engine).inc()
 
     return V2Result(
         selected_ndvi=selected_ndvi,

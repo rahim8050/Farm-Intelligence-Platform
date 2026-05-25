@@ -21,6 +21,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date
 
+from ndvi.metrics import (
+    ndvi_fallback_usage_total,
+    ndvi_source_disagreement_total,
+)
 from ndvi.models import NdviDerivedObservation, NdviObservation
 from ndvi.sentinel1_context import (
     Sentinel1Context,
@@ -317,6 +321,11 @@ def _select_by_decision_tree(
 
     conflict_detected, conflict_reason = _check_conflict(candidates)
     if conflict_detected:
+        sources = [c.source for c in candidates[:2]]
+        kw: dict[str, str] = {}
+        if len(sources) >= 2:
+            kw = {"engine_a": sources[0], "engine_b": sources[1]}
+        ndvi_source_disagreement_total.labels(**kw).inc()
         return FusionResult(
             selected=None,
             candidates_evaluated=len(candidates),
@@ -360,6 +369,9 @@ def _select_by_decision_tree(
         selected = ls_qualified[0]
         selected.is_selected = True
         selected.selection_reason = "landsat_qualified"
+        ndvi_fallback_usage_total.labels(
+            engine_selected="landsat", engine_primary="sentinel-2"
+        ).inc()
         return FusionResult(
             selected=selected,
             candidates_evaluated=len(candidates),
@@ -376,6 +388,9 @@ def _select_by_decision_tree(
         selected = modis_qualified[0]
         selected.is_selected = True
         selected.selection_reason = "modis_qualified"
+        ndvi_fallback_usage_total.labels(
+            engine_selected="modis", engine_primary="sentinel-2"
+        ).inc()
         return FusionResult(
             selected=selected,
             candidates_evaluated=len(candidates),

@@ -56,11 +56,17 @@ from integrations.authentication import (
 
 from .farm_state import build_farm_state
 from .metrics import ndvi_farms_stale_total
-from .models import NdviJob, NdviObservation, NdviRasterArtifact
+from .models import (
+    NdviDerivedObservation,
+    NdviJob,
+    NdviObservation,
+    NdviRasterArtifact,
+)
 from .raster.registry import resolve_raster_engine_name
 from .serializers import (
     FarmStateSerializer,
     LatestRequestSerializer,
+    NdviDerivedObservationSerializer,
     NdviJobSerializer,
     NdviObservationSerializer,
     RasterPngRequestSerializer,
@@ -81,6 +87,7 @@ from .services import (
     get_cached_timeseries_response,
     get_default_lookback_days,
     get_default_max_cloud,
+    get_default_ndvi_engine_name,
     hash_request,
     is_stale,
     normalize_bbox,
@@ -178,6 +185,8 @@ def _build_raster_not_found_errors(
 
 
 ndvi_observation_schema = NdviObservationSerializer()
+ndvi_v2_observation_schema = NdviDerivedObservationSerializer()
+
 timeseries_data_schema = inline_serializer(
     name="NdviTimeseriesData",
     fields={
@@ -189,6 +198,14 @@ timeseries_data_schema = inline_serializer(
         "max_cloud": serializers.IntegerField(),
         "is_partial": serializers.BooleanField(),
         "missing_buckets_count": serializers.IntegerField(),
+        "v2_observations": serializers.ListField(
+            child=NdviDerivedObservationSerializer(allow_null=True),
+            required=False,
+            allow_null=True,
+        ),
+        "representation": serializers.CharField(
+            required=False, allow_null=True
+        ),
     },
 )
 timeseries_success_response = success_envelope_serializer(
@@ -203,6 +220,12 @@ latest_data_schema = inline_serializer(
         "lookback_days": serializers.IntegerField(),
         "max_cloud": serializers.IntegerField(),
         "stale": serializers.BooleanField(),
+        "v2_observation": NdviDerivedObservationSerializer(
+            allow_null=True, required=False
+        ),
+        "representation": serializers.CharField(
+            required=False, allow_null=True
+        ),
     },
 )
 latest_success_response = success_envelope_serializer(
@@ -242,6 +265,14 @@ engine_query_param = OpenApiParameter(
     description="Override NDVI engine (sentinelhub or stac).",
 )
 
+representation_query_param = OpenApiParameter(
+    name="representation",
+    type=OpenApiTypes.STR,
+    location=OpenApiParameter.QUERY,
+    required=False,
+    description="Response representation version (v1 or v2).",
+)
+
 timeseries_query_params = [
     OpenApiParameter(
         name="start",
@@ -270,6 +301,7 @@ timeseries_query_params = [
         description="Maximum cloud coverage percent (0-100)",
     ),
     engine_query_param,
+    representation_query_param,
 ]
 
 latest_query_params = [
@@ -286,6 +318,7 @@ latest_query_params = [
         required=False,
     ),
     engine_query_param,
+    representation_query_param,
 ]
 
 external_farm_id_query_param = OpenApiParameter(
@@ -504,6 +537,7 @@ class FarmStateView(BaseFarmView):
     @extend_schema(
         auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
         operation_id="v1_farm_state_retrieve",
+        parameters=[representation_query_param],
         responses={
             200: farm_state_success_response,
             401: ndvi_error_response,
@@ -515,14 +549,34 @@ class FarmStateView(BaseFarmView):
         """Return the derived farm state for the requested farm.
 
         Inputs: path param farm_id.
+        Query params: optional representation.
         Output: success envelope with NDVI metrics + classification.
+        When representation=v2, payload includes v2_observation.
         Side effects: none.
         """
 
         self._enforce_integration_scope(request, write=False)
         farm = self._get_farm_for_request(request, farm_id)
         result = build_farm_state(farm=farm)
-        return success_response(result.as_payload(), message="Farm state")
+        payload = result.as_payload()
+
+        representation = request.query_params.get("representation", "v1")
+        if representation == "v2":
+            default_engine = get_default_ndvi_engine_name()
+            v2_obj = (
+                NdviDerivedObservation.objects.filter(
+                    farm=farm, engine=default_engine
+                )
+                .order_by("-bucket_date")
+                .first()
+            )
+            payload["v2_observation"] = (
+                NdviDerivedObservationSerializer(v2_obj).data
+                if v2_obj
+                else _v2_blank()
+            )
+            payload["representation"] = "v2"
+        return success_response(payload, message="Farm state")
 
 
 class BaseRasterView(BaseFarmView):
@@ -609,6 +663,96 @@ class BaseRasterView(BaseFarmView):
         return self._get_farm(farm_id, cast(int, user_id))
 
 
+def _v2_blank() -> dict[str, Any]:
+    return {
+        "smoothed_ndvi": None,
+        "confidence": None,
+        "source": None,
+        "quality_flags": None,
+    }
+
+
+def _inject_v2_observations(
+    payload: dict[str, Any],
+    *,
+    observations: list[NdviObservation] | None,
+    farm: Farm,
+    engine: str,
+) -> None:
+    """Add V2 derived observations to a timeseries payload.
+
+    Mutates *payload* in place, adding a ``v2_observations`` key
+    and a ``representation`` key.  Each observation dict is also
+    extended with inline V2 fields.
+    """
+    bucket_dates_raw = [
+        o.get("bucket_date") for o in payload.get("observations", [])
+    ]
+    if not bucket_dates_raw:
+        return
+
+    v2_qs = NdviDerivedObservation.objects.filter(
+        farm=farm,
+        engine=engine,
+        bucket_date__in=[
+            d if isinstance(d, date) else d for d in bucket_dates_raw
+        ],
+    )
+    v2_index: dict[str, dict[str, Any]] = {}
+    for v2 in v2_qs:
+        v2_index[v2.bucket_date.isoformat()] = (
+            NdviDerivedObservationSerializer(v2).data
+        )
+
+    v2_list = []
+    for obs_data in payload.get("observations", []):
+        iso = obs_data.get("bucket_date")
+        if isinstance(iso, date):
+            iso = iso.isoformat()
+        v2_entry = v2_index.get(iso)
+        if v2_entry:
+            obs_data.update(v2_entry)
+            v2_list.append(v2_entry)
+        else:
+            blank = _v2_blank()
+            obs_data.update(blank)
+            v2_list.append(blank)
+
+    payload["v2_observations"] = v2_list
+    payload["representation"] = "v2"
+
+
+def _inject_single_v2_observation(
+    payload: dict[str, Any],
+    *,
+    farm: Farm,
+    engine: str,
+    obs_date: date | str | None,
+) -> None:
+    """Add a single V2 derived observation to a latest payload.
+
+    Mutates *payload* in place, adding ``v2_observation`` and
+    ``representation`` keys.
+    """
+    if obs_date is None:
+        payload["v2_observation"] = _v2_blank()
+        payload["representation"] = "v2"
+        return
+
+    if isinstance(obs_date, str):
+        obs_date = date.fromisoformat(obs_date)
+
+    try:
+        v2 = NdviDerivedObservation.objects.get(
+            farm=farm, engine=engine, bucket_date=obs_date
+        )
+        payload["v2_observation"] = NdviDerivedObservationSerializer(v2).data
+    except NdviDerivedObservation.DoesNotExist:
+        payload["v2_observation"] = _v2_blank()
+
+    payload["representation"] = "v2"
+
+
 class NdviTimeseriesView(BaseFarmView):
     """Serve NDVI time series for a farm.
 
@@ -627,14 +771,16 @@ class NdviTimeseriesView(BaseFarmView):
         """Return NDVI observations for the requested range.
 
         Query params: start, end, optional step_days, optional max_cloud,
-        optional engine.
+        optional engine, optional representation.
         Success: envelope containing observations + metadata
-        (is_partial, missing_buckets_count).
+        (is_partial, missing_buckets_count). When representation=v2,
+        payload includes v2_observations and representation.
         Side effects: schedules gap-fill job when buckets are missing.
         """
 
         farm = self._get_farm(farm_id, cast(int, request.user.id))
         engine_override = request.query_params.get("engine")
+        representation = request.query_params.get("representation", "v1")
         try:
             engine_name = resolve_ndvi_engine_name(engine_override)
         except ValueError as exc:
@@ -659,6 +805,13 @@ class NdviTimeseriesView(BaseFarmView):
             params=params,
         )
         if cached:
+            if representation == "v2":
+                _inject_v2_observations(
+                    cached,
+                    observations=None,
+                    farm=farm,
+                    engine=engine_name,
+                )
             return success_response(
                 cached, message="NDVI time series (cached)"
             )
@@ -709,6 +862,13 @@ class NdviTimeseriesView(BaseFarmView):
             "is_partial": bool(missing),
             "missing_buckets_count": len(missing),
         }
+        if representation == "v2":
+            _inject_v2_observations(
+                payload,
+                observations=observations,
+                farm=farm,
+                engine=engine_name,
+            )
         cache_timeseries_response(
             owner_id=cast(int, request.user.id),
             farm_id=farm.id,
@@ -734,13 +894,16 @@ class NdviLatestView(BaseFarmView):
         """Return the most recent NDVI observation if present.
 
         Query params: lookback_days (optional), max_cloud (optional),
-        engine (optional).
+        engine (optional), representation (optional).
         Success: envelope with `observation` or null, plus stale flag.
+        When representation=v2, payload includes v2_observation
+        and representation fields.
         Side effects: enqueues refresh_latest job when missing/stale.
         """
 
         farm = self._get_farm(farm_id, cast(int, request.user.id))
         engine_override = request.query_params.get("engine")
+        representation = request.query_params.get("representation", "v1")
         try:
             engine_name = resolve_ndvi_engine_name(engine_override)
         except ValueError as exc:
@@ -762,6 +925,15 @@ class NdviLatestView(BaseFarmView):
             params=params,
         )
         if cached:
+            if representation == "v2":
+                obs_data = cached.get("observation") or {}
+                obs_date_raw = obs_data.get("bucket_date")
+                _inject_single_v2_observation(
+                    cached,
+                    farm=farm,
+                    engine=engine_name,
+                    obs_date=obs_date_raw,
+                )
             return success_response(cached, message="NDVI latest (cached)")
 
         observations = filter_observations_by_cloud(
@@ -807,6 +979,13 @@ class NdviLatestView(BaseFarmView):
             "max_cloud": params.max_cloud,
             "stale": stale,
         }
+        if representation == "v2":
+            _inject_single_v2_observation(
+                payload,
+                farm=farm,
+                engine=engine_name,
+                obs_date=observation.bucket_date if observation else None,
+            )
         cache_latest_response(
             owner_id=cast(int, request.user.id),
             farm_id=farm.id,

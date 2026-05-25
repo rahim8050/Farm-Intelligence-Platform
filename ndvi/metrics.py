@@ -214,3 +214,41 @@ ndvi_long_lock_wait_total = Counter(
     "Count of lock waits exceeding P95 threshold",
     labelnames=["operation", "threshold_seconds"],
 )
+
+# Phase 6 — V2 quality output monitoring
+ndvi_v2_null_output_total = Counter(
+    "ndvi_v2_null_output_total",
+    "Count of V2 observations forced to null",
+    labelnames=["engine", "null_reason"],
+)
+
+ndvi_v2_low_confidence_total = Counter(
+    "ndvi_v2_low_confidence_total",
+    "Count of V2 observations below confidence threshold",
+    labelnames=["engine"],
+)
+
+ndvi_v2_observation_total = Counter(
+    "ndvi_v2_observation_total",
+    "Total V2 observations produced (incl. null)",
+    labelnames=["engine", "is_null"],
+)
+
+ndvi_v2_cache_hit_total = Counter(
+    "ndvi_v2_cache_hit_total",
+    "Cache hits for V2 derived observations",
+    labelnames=["engine"],
+)
+
+# Phase 6 — Fallback and fusion monitoring
+ndvi_fallback_usage_total = Counter(
+    "ndvi_fallback_usage_total",
+    "Count of fallback engine selections",
+    labelnames=["engine_selected", "engine_primary"],
+)
+
+ndvi_source_disagreement_total = Counter(
+    "ndvi_source_disagreement_total",
+    "Count of source disagreement events during fusion",
+    labelnames=["engine_a", "engine_b"],
+)
