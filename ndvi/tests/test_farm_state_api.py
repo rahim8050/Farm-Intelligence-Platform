@@ -4,7 +4,6 @@ import secrets
 from datetime import date, timedelta
 from uuid import uuid4
 
-import pytest
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
@@ -15,14 +14,6 @@ from farms.models import Farm, FarmIntegrationAccess
 from integrations.tokens import mint_integration_access_token
 from ndvi.models import NdviObservation
 from ndvi.services import get_default_ndvi_engine_name
-
-
-@pytest.fixture(autouse=True)
-def disable_coverage_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ndvi.farm_state._enqueue_coverage_compute",
-        lambda **kwargs: None,
-    )
 
 
 class FarmStateApiTests(APITestCase):
@@ -50,6 +41,9 @@ class FarmStateApiTests(APITestCase):
         )
         self.url = f"/api/v1/farm-state/{self.farm.id}/"
         self.engine = get_default_ndvi_engine_name()
+        from django.core.cache import cache
+
+        cache.clear()
 
     def _add_observation(
         self,
@@ -182,6 +176,18 @@ class FarmStateApiTests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.json()["data"]["farm_id"], farm.id)
+
+    def test_farm_state_rejects_invalid_external_farm_id(self) -> None:
+        access, _ = mint_integration_access_token(
+            user_id="client-3", scope="read"
+        )
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        resp = client.get(
+            "/api/v1/farm-state/999999/",
+            {"external_farm_id": "not-a-uuid"},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_farm_state_classification_edges(self) -> None:
         cases: list[tuple[str, list[tuple[int, float, float]]]] = [
