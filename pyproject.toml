@@ -105,6 +105,10 @@ module = ["tests.*"]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
+module = ["django_prometheus", "django_prometheus.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = ["channels", "channels.*", "channels.auth", "channels.routing"]
 ignore_missing_imports = true
 
