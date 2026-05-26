@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import date, timedelta
+from uuid import uuid4
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -147,6 +148,40 @@ class FarmStateApiTests(APITestCase):
         resp = client.get(self.url)
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.json()["data"]["farm_id"], self.farm.id)
+
+    def test_farm_state_accepts_external_farm_id_for_integration_tokens(
+        self,
+    ) -> None:
+        external_farm_id = uuid4()
+        farm = Farm.objects.create(
+            owner=self.user,
+            external_farm_id=external_farm_id,
+            name="External Farm",
+            slug="external-farm",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        self._add_observation(
+            farm=farm,
+            days_ago=5,
+            mean=0.3,
+            max_value=0.33,
+        )
+        access, _ = mint_integration_access_token(
+            user_id="client-2", scope="read"
+        )
+        FarmIntegrationAccess.objects.create(farm=farm, client_id="client-2")
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        resp = client.get(
+            "/api/v1/farm-state/999999/",
+            {"external_farm_id": str(external_farm_id)},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.json()["data"]["farm_id"], farm.id)
 
     def test_farm_state_classification_edges(self) -> None:
         cases: list[tuple[str, list[tuple[int, float, float]]]] = [

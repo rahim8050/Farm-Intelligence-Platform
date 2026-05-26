@@ -2,12 +2,15 @@ from __future__ import annotations
 
 # ruff: noqa: S101
 from decimal import Decimal
+from json import JSONDecodeError
 from typing import Any
 from unittest.mock import patch
 
 import httpx
+import pytest
 from django.core.cache import caches
-from django.test import Client
+from django.http import HttpResponse
+from django.test import Client, RequestFactory
 from rest_framework.exceptions import Throttled
 from rest_framework.parsers import JSONParser
 from rest_framework.request import Request
@@ -18,6 +21,7 @@ from config.api.exceptions import _to_json_value, custom_exception_handler
 from config.api.openapi import remove_deprecated_integration_aliases
 from config.api.proxy import proxy_json_request
 from config.api.responses import error_response
+from config.views import prometheus_metrics
 
 
 def test_error_response_payload() -> None:
@@ -67,6 +71,32 @@ def test_home_view_returns_metadata() -> None:
     assert body["ok"] is True
     assert body["service"] == "weather-apis"
     assert body["docs"] == "/api/docs/"
+
+
+def test_prometheus_metrics_recovers_from_corrupt_multiprocess_files(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics_dir = tmp_path / "prometheus"
+    metrics_dir.mkdir()
+    stale_file = metrics_dir / "counter_123.db"
+    stale_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(metrics_dir))
+    request = RequestFactory().get("/metrics")
+
+    with patch(
+        "config.views.ExportToDjangoView",
+        side_effect=[
+            JSONDecodeError("Expecting value", "", 0),
+            HttpResponse(b"metrics-ok", content_type="text/plain"),
+        ],
+    ) as mock_export:
+        response = prometheus_metrics(request)
+
+    assert response.status_code == 200
+    assert response.content == b"metrics-ok"
+    assert not stale_file.exists()
+    assert mock_export.call_count == 2
 
 
 def test_remove_deprecated_aliases_ignores_non_dict_paths() -> None:

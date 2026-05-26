@@ -4,13 +4,15 @@ import secrets
 from datetime import date, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.core.cache import caches
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
-from farms.models import Farm
+from farms.models import Farm, FarmIntegrationAccess
+from integrations.tokens import mint_integration_access_token
 from ndvi.engines.base import NdviPoint
 from ndvi.engines.sentinelhub import SentinelHubEngine
 from ndvi.models import NdviJob, NdviObservation
@@ -63,6 +65,109 @@ class NdviApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    @patch("ndvi.views.dispatch_ndvi_job")
+    def test_timeseries_accepts_external_farm_id_for_integration_tokens(
+        self, mock_delay: MagicMock
+    ) -> None:
+        external_farm_id = uuid4()
+        farm = Farm.objects.create(
+            owner=self.user,
+            external_farm_id=external_farm_id,
+            name="External Farm",
+            slug="external-farm",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        NdviObservation.objects.create(
+            farm=farm,
+            engine=self.default_engine,
+            bucket_date=date(2024, 1, 1),
+            mean=0.3,
+            min=0.25,
+            max=0.35,
+            sample_count=100,
+            cloud_fraction=0.1,
+        )
+        FarmIntegrationAccess.objects.create(farm=farm, client_id="client-1")
+        access, _ = mint_integration_access_token(
+            user_id="client-1", scope="read"
+        )
+        client = self._integration_client(access)
+
+        resp = client.get(
+            "/api/v1/farms/999999/ndvi/timeseries/",
+            {
+                "start": "2024-01-01",
+                "end": "2024-01-10",
+                "external_farm_id": str(external_farm_id),
+            },
+            format="json",
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            resp.json()["data"]["observations"][0]["bucket_date"],
+            "2024-01-01",
+        )
+        self.assertEqual(resp.json()["data"]["engine"], self.default_engine)
+        mock_delay.assert_called_once()
+
+    @patch("ndvi.views.dispatch_ndvi_job")
+    def test_latest_accepts_external_farm_id_for_integration_tokens(
+        self, mock_delay: MagicMock
+    ) -> None:
+        external_farm_id = uuid4()
+        farm = Farm.objects.create(
+            owner=self.user,
+            external_farm_id=external_farm_id,
+            name="External Farm",
+            slug="external-farm-latest",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        NdviObservation.objects.create(
+            farm=farm,
+            engine=self.default_engine,
+            bucket_date=date.today(),
+            mean=0.3,
+            min=0.25,
+            max=0.35,
+            sample_count=100,
+            cloud_fraction=0.1,
+            is_latest=True,
+        )
+        FarmIntegrationAccess.objects.create(farm=farm, client_id="client-2")
+        access, _ = mint_integration_access_token(
+            user_id="client-2", scope="read"
+        )
+        client = self._integration_client(access)
+
+        resp = client.get(
+            "/api/v1/farms/999999/ndvi/latest/",
+            {"external_farm_id": str(external_farm_id)},
+            format="json",
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        body = resp.json()
+        self.assertEqual(
+            body["data"]["observation"]["bucket_date"],
+            date.today().isoformat(),
+        )
+        self.assertEqual(body["data"]["engine"], self.default_engine)
+        mock_delay.assert_not_called()
+
+    def _integration_client(self, access_token: str) -> APIClient:
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
+        return client
 
     def test_bbox_required(self) -> None:
         """Missing bounding box returns 400."""

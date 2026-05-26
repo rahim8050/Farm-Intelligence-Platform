@@ -1,22 +1,31 @@
 """Project-level non-DRF views.
 
 This module contains the root landing endpoint used for quick service checks
-and links to the interactive API documentation endpoints.
+links to the interactive API documentation endpoints, and a safe
+Prometheus metrics endpoint wrapper.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 from typing import Any, TypedDict, cast
 
 from django.conf import settings
 from django.core.cache import caches
-from django.http import HttpRequest, JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.test.client import RequestFactory
+from django_prometheus.exports import ExportToDjangoView
 from drf_spectacular.views import SpectacularAPIView
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 from rest_framework import status
 from rest_framework.request import Request
 from rest_framework.response import Response
+
+from config.prometheus import clear_prometheus_multiprocess_dir
+
+logger = logging.getLogger(__name__)
 
 
 class SchemaCacheEntry(TypedDict):
@@ -48,6 +57,37 @@ def home(request: HttpRequest) -> JsonResponse:
             "docs": "/api/docs/",
             "redoc": "/api/redoc/",
         }
+    )
+
+
+def prometheus_metrics(request: HttpRequest) -> HttpResponse:
+    """Return Prometheus metrics and recover from stale shard files."""
+    try:
+        return cast(HttpResponse, ExportToDjangoView(request))
+    except json.JSONDecodeError as exc:
+        removed = clear_prometheus_multiprocess_dir()
+        logger.warning(
+            "Prometheus multiprocess metrics were corrupted; "
+            "cleared %s shard files and retrying (%s)",
+            removed,
+            exc,
+        )
+        try:
+            return cast(HttpResponse, ExportToDjangoView(request))
+        except Exception:
+            logger.exception(
+                "Prometheus metrics export failed after cleanup; "
+                "falling back to the in-memory registry."
+            )
+    except Exception:
+        logger.exception(
+            "Prometheus metrics export failed; "
+            "falling back to the in-memory registry."
+        )
+
+    return HttpResponse(
+        generate_latest(REGISTRY),
+        content_type=CONTENT_TYPE_LATEST,
     )
 
 

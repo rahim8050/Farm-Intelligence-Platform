@@ -442,9 +442,21 @@ paths:
         Return the derived farm state for the requested farm.
 
         Inputs: path param farm_id.
+        Query params: optional representation, optional external_farm_id
+        (integration tokens).
         Output: success envelope with NDVI metrics + classification.
         Side effects: none.
       parameters:
+      - in: query
+        name: external_farm_id
+        schema:
+          type: string
+          format: uuid
+        description: Resolve farm by external_farm_id (integration tokens).
+      - in: query
+        name: representation
+        schema:
+          type: string
       - in: path
         name: farm_id
         schema:
@@ -830,7 +842,7 @@ paths:
         Return the most recent NDVI observation if present.
 
         Query params: lookback_days (optional), max_cloud (optional),
-        engine (optional).
+        engine (optional), external_farm_id (integration tokens).
         Success: envelope with `observation` or null, plus stale flag.
         Side effects: enqueues refresh_latest job when missing/stale.
       parameters:
@@ -839,6 +851,12 @@ paths:
         schema:
           type: string
         description: Override NDVI engine (sentinelhub or stac).
+      - in: query
+        name: external_farm_id
+        schema:
+          type: string
+          format: uuid
+        description: Resolve farm by external_farm_id (integration tokens).
       - in: path
         name: farm_id
         schema:
@@ -1069,7 +1087,7 @@ paths:
         Return NDVI observations for the requested range.
 
         Query params: start, end, optional step_days, optional max_cloud,
-        optional engine.
+        optional engine, external_farm_id (integration tokens).
         Success: envelope containing observations + metadata
         (is_partial, missing_buckets_count).
         Side effects: schedules gap-fill job when buckets are missing.
@@ -1085,6 +1103,12 @@ paths:
         schema:
           type: string
         description: Override NDVI engine (sentinelhub or stac).
+      - in: query
+        name: external_farm_id
+        schema:
+          type: string
+          format: uuid
+        description: Resolve farm by external_farm_id (integration tokens).
       - in: path
         name: farm_id
         schema:

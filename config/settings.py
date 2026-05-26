@@ -27,6 +27,8 @@ from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 from redis.connection import URL_QUERY_ARGUMENT_PARSERS
 
+from config.prometheus import sanitize_prometheus_multiprocess_dir
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env()
@@ -713,6 +715,7 @@ NDVI_CELERY_METRICS_DIR = env(
     "NDVI_CELERY_METRICS_DIR",
     default=str(BASE_DIR / "tmp" / "celery-metrics"),
 )
+sanitize_prometheus_multiprocess_dir()
 NDVI_STREAM_NAME = env("NDVI_STREAM_NAME", default="ndvi:stream")
 NDVI_STREAM_GROUP = env("NDVI_STREAM_GROUP", default="ndvi-group")
 NDVI_STREAM_CONSUMER = env("NDVI_STREAM_CONSUMER", default="consumer_1")

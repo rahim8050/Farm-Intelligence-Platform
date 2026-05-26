@@ -273,6 +273,14 @@ representation_query_param = OpenApiParameter(
     description="Response representation version (v1 or v2).",
 )
 
+external_farm_id_query_param = OpenApiParameter(
+    name="external_farm_id",
+    type=OpenApiTypes.UUID,
+    location=OpenApiParameter.QUERY,
+    required=False,
+    description="Resolve farm by external_farm_id (integration tokens).",
+)
+
 timeseries_query_params = [
     OpenApiParameter(
         name="start",
@@ -302,6 +310,7 @@ timeseries_query_params = [
     ),
     engine_query_param,
     representation_query_param,
+    external_farm_id_query_param,
 ]
 
 latest_query_params = [
@@ -319,15 +328,8 @@ latest_query_params = [
     ),
     engine_query_param,
     representation_query_param,
+    external_farm_id_query_param,
 ]
-
-external_farm_id_query_param = OpenApiParameter(
-    name="external_farm_id",
-    type=OpenApiTypes.UUID,
-    location=OpenApiParameter.QUERY,
-    required=False,
-    description="Resolve farm by external_farm_id (integration tokens).",
-)
 
 raster_query_params = [
     OpenApiParameter(
@@ -407,6 +409,46 @@ class BaseFarmView(APIView):
             request_id,
         )
         return response
+
+    def _resolve_external_farm_id(self, request: Request) -> UUID | None:
+        raw = request.query_params.get("external_farm_id")
+        if not raw:
+            return None
+        try:
+            return UUID(str(raw))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "external_farm_id must be a valid UUID."
+            ) from exc
+
+    def _get_farm_for_request(self, request: Request, farm_id: int) -> Farm:
+        if isinstance(request.user, IntegrationTokenUser):
+            external_farm_id = self._resolve_external_farm_id(request)
+            lookup: dict[str, Any] = {
+                "is_active": True,
+                "integration_access__client_id": request.user.client_id,
+                "integration_access__is_active": True,
+            }
+            if external_farm_id is not None:
+                lookup["external_farm_id"] = external_farm_id
+            else:
+                lookup["id"] = farm_id
+            return get_object_or_404(Farm, **lookup)
+
+        user_id = getattr(request.user, "id", None)
+        if user_id is None:
+            raise Http404
+
+        return self._get_farm(farm_id, cast(int, user_id))
+
+    def _owner_id_for_request(self, request: Request, farm: Farm) -> int:
+        if isinstance(request.user, IntegrationTokenUser):
+            return farm.owner_id
+
+        user_id = getattr(request.user, "id", None)
+        if user_id is None:
+            raise Http404
+        return cast(int, user_id)
 
     def _get_farm(self, farm_id: int, user_id: int) -> Farm:
         from integrations.authentication import IntegrationTokenUser
@@ -520,13 +562,17 @@ class FarmStateView(BaseFarmView):
 
     def _get_farm_for_request(self, request: Request, farm_id: int) -> Farm:
         if isinstance(request.user, IntegrationTokenUser):
-            return get_object_or_404(
-                Farm,
-                id=farm_id,
-                is_active=True,
-                integration_access__client_id=request.user.client_id,
-                integration_access__is_active=True,
-            )
+            external_farm_id = self._resolve_external_farm_id(request)
+            lookup: dict[str, Any] = {
+                "is_active": True,
+                "integration_access__client_id": request.user.client_id,
+                "integration_access__is_active": True,
+            }
+            if external_farm_id is not None:
+                lookup["external_farm_id"] = external_farm_id
+            else:
+                lookup["id"] = farm_id
+            return get_object_or_404(Farm, **lookup)
 
         user_id = getattr(request.user, "id", None)
         if user_id is None:
@@ -537,7 +583,7 @@ class FarmStateView(BaseFarmView):
     @extend_schema(
         auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
         operation_id="v1_farm_state_retrieve",
-        parameters=[representation_query_param],
+        parameters=[representation_query_param, external_farm_id_query_param],
         responses={
             200: farm_state_success_response,
             401: ndvi_error_response,
@@ -778,7 +824,8 @@ class NdviTimeseriesView(BaseFarmView):
         Side effects: schedules gap-fill job when buckets are missing.
         """
 
-        farm = self._get_farm(farm_id, cast(int, request.user.id))
+        farm = self._get_farm_for_request(request, farm_id)
+        owner_id = self._owner_id_for_request(request, farm)
         engine_override = request.query_params.get("engine")
         representation = request.query_params.get("representation", "v1")
         try:
@@ -799,7 +846,7 @@ class NdviTimeseriesView(BaseFarmView):
         enforce_quota(farm, bbox)
 
         cached = get_cached_timeseries_response(
-            owner_id=cast(int, request.user.id),
+            owner_id=owner_id,
             farm_id=farm.id,
             engine=engine_name,
             params=params,
@@ -839,7 +886,7 @@ class NdviTimeseriesView(BaseFarmView):
 
         if missing:
             job = enqueue_job(
-                owner_id=cast(int, request.user.id),
+                owner_id=owner_id,
                 farm=farm,
                 engine_name=engine_override,
                 job_type=NdviJob.JobType.GAP_FILL,
@@ -870,7 +917,7 @@ class NdviTimeseriesView(BaseFarmView):
                 engine=engine_name,
             )
         cache_timeseries_response(
-            owner_id=cast(int, request.user.id),
+            owner_id=owner_id,
             farm_id=farm.id,
             engine=engine_name,
             params=params,
@@ -901,7 +948,8 @@ class NdviLatestView(BaseFarmView):
         Side effects: enqueues refresh_latest job when missing/stale.
         """
 
-        farm = self._get_farm(farm_id, cast(int, request.user.id))
+        farm = self._get_farm_for_request(request, farm_id)
+        owner_id = self._owner_id_for_request(request, farm)
         engine_override = request.query_params.get("engine")
         representation = request.query_params.get("representation", "v1")
         try:
@@ -919,7 +967,7 @@ class NdviLatestView(BaseFarmView):
         enforce_quota(farm, bbox)
 
         cached = get_cached_latest_response(
-            owner_id=cast(int, request.user.id),
+            owner_id=owner_id,
             farm_id=farm.id,
             engine=engine_name,
             params=params,
@@ -955,7 +1003,7 @@ class NdviLatestView(BaseFarmView):
         if stale:
             ndvi_farms_stale_total.labels(engine=engine_name).set(1)
             job = enqueue_job(
-                owner_id=cast(int, request.user.id),
+                owner_id=owner_id,
                 farm=farm,
                 engine_name=engine_override,
                 job_type=NdviJob.JobType.REFRESH_LATEST,
@@ -987,7 +1035,7 @@ class NdviLatestView(BaseFarmView):
                 obs_date=observation.bucket_date if observation else None,
             )
         cache_latest_response(
-            owner_id=cast(int, request.user.id),
+            owner_id=owner_id,
             farm_id=farm.id,
             engine=engine_name,
             params=params,

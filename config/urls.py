@@ -36,7 +36,7 @@ from drf_spectacular.views import (
 
 from activities.views import ActivityHealthView
 
-from .views import CachedSpectacularAPIView, home
+from .views import CachedSpectacularAPIView, home, prometheus_metrics
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -56,6 +56,8 @@ urlpatterns = [
         name="apple-touch-icon-precomposed",
     ),
     path("", home, name="home"),
+    path("metrics", prometheus_metrics, name="prometheus-metrics"),
+    path("metrics/", prometheus_metrics, name="prometheus-metrics-slash"),
     path("", include("django_prometheus.urls")),
     path(
         "api/schema/",
