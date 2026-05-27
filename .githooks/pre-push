@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Pre-push quick checks (ruff lint + format) ==="
+
+python -m ruff check .
+python -m ruff format --check .
+
+echo "=== Quick checks passed ==="
+echo "Run 'bash scripts/run-ci.sh' for full CI (mypy, bandit, Django checks, tests)."
