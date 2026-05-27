@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.cache import cache as django_cache
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
@@ -27,6 +28,7 @@ def disable_coverage_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class FarmStateApiTests(APITestCase):
     def setUp(self) -> None:
+        django_cache.clear()
         password = secrets.token_urlsafe(12)
         self.user = get_user_model().objects.create_user(
             username="owner",
