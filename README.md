@@ -8,6 +8,8 @@ radio metadata/stream discovery.
 This repo uses both JWT (for user sessions and API key management) and
 first-party API keys (`X-API-Key`) for service-to-service calls.
 
+For project documentation, start with [docs/README.md](docs/README.md).
+
 ## Features
 
 - Auth: register/login, token refresh, profile, password change/reset
@@ -418,6 +420,13 @@ ruff check .
 ./scripts/typecheck.sh
 bandit -c pyproject.toml -r .
 ```
+
+## Contributing and security
+
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [Changelog](CHANGELOG.md)
 
 ## Security notes
 
