@@ -97,7 +97,7 @@ dev = [
   "mysqlclient==2.2.8",
   "nodeenv==1.10.0",
   "numpy==2.4.2",
-  "packaging==25.0",
+  "packaging==26.2",
   "pathspec==1.0.3",
   "pillow==12.2.0",
   "platformdirs==4.9.2",
