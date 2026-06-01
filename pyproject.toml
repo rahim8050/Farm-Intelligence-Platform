@@ -140,7 +140,7 @@ dev = [
   "stevedore==5.6.0",
   "Twisted==26.4.0rc2",
   "txaio==25.12.2",
-  "types-PyYAML==6.0.12.20250915",
+  "types-PyYAML==6.0.12.20260518",
   "types-requests==2.32.4.20250913",
   "typing_extensions==4.15.0",
   "tzdata==2025.3",
