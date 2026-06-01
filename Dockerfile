@@ -14,11 +14,13 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 RUN python -m pip install --upgrade pip wheel uv && \
-    uv sync --system --no-install-project --group dev
+    uv sync --no-install-project --group dev
 
 COPY . .
 
 RUN mkdir -p logs tmp/celery-metrics
+
+ENV PATH="/app/.venv/bin:${PATH}"
 
 EXPOSE 8000
 

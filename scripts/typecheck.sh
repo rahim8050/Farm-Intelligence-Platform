@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python -m mypy --config-file=pyproject.toml .
+uv run mypy --config-file=pyproject.toml .

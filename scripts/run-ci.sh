@@ -66,29 +66,29 @@ docker run --rm \
 set -euo pipefail
 
 echo "--- Ruff lint ---"
-python -m ruff check .
+uv run ruff check .
 
 echo "--- Ruff format check ---"
-python -m ruff format --check .
+uv run ruff format --check .
 
 echo "--- MyPy ---"
-python -m mypy --config-file=pyproject.toml .
+uv run mypy --config-file=pyproject.toml .
 
 echo "--- Bandit ---"
-python -m bandit -c pyproject.toml -r .
+uv run bandit -c pyproject.toml -r .
 
 echo "--- Django system checks ---"
-python manage.py check
-python manage.py check --deploy
+uv run python manage.py check
+uv run python manage.py check --deploy
 
 echo "--- Migration consistency ---"
-python manage.py makemigrations --check --dry-run
+uv run python manage.py makemigrations --check --dry-run
 
 echo "--- Migrate ---"
-python manage.py migrate --no-input
+uv run python manage.py migrate --no-input
 
 echo "--- Pytest with coverage (gate: ${COVERAGE_FAIL_UNDER}%) ---"
-python -m pytest -q \
+uv run pytest -q \
   -x \
   --durations=5 \
   --cov=. \

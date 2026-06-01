@@ -14,7 +14,7 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 RUN python -m pip install --upgrade pip wheel uv && \
-    uv sync --system --no-install-project --group dev
+    uv sync --no-install-project --group dev
 
 COPY . .
 
@@ -28,5 +28,7 @@ ENV DJANGO_ENV=ci \
     MYSQL_USER=test_user \
     MYSQL_PASSWORD=test_pass \
     DATABASE_URL=mysql://test_user:test_pass@mysql:3306/test_db
+
+ENV PATH="/app/.venv/bin:${PATH}"
 
 CMD ["python", "-m", "pytest", "-q", "--cov=.", "--cov-report=term-missing", "--cov-fail-under=96"]

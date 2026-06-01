@@ -84,7 +84,7 @@ jobs:
             default-libmysqlclient-dev build-essential pkg-config
 
       - name: Install Python deps
-        run: uv sync --system --no-install-project --group dev
+        run: uv sync --no-install-project --group dev
 
       - name: Python import sanity (compileall)
         run: python -m compileall -q .
@@ -104,36 +104,36 @@ jobs:
           exit 1
 
       - name: Ruff (lint)
-        run: python -m ruff check .
+        run: uv run ruff check .
 
       - name: Ruff (format check)
-        run: python -m ruff format --check .
+        run: uv run ruff format --check .
 
       - name: Typecheck import guard
-        run: python -c "import numpy; print(numpy.__version__)"
+        run: uv run python -c "import numpy; print(numpy.__version__)"
 
       - name: MyPy (types)
-        run: python -m mypy --config-file=pyproject.toml .
+        run: uv run mypy --config-file=pyproject.toml .
 
       - name: Bandit (security)
         run: |
           if [ -f pyproject.toml ]; then
-            python -m bandit -c pyproject.toml -r .
+            uv run bandit -c pyproject.toml -r .
           else
-            python -m bandit -r . -x ".venv,tests,**/migrations/*"
+            uv run bandit -r . -x ".venv,tests,**/migrations/*"
           fi
 
       - name: Django checks (migrations + system checks + migrate)
         run: |
           set -e
           if [ -f manage.py ]; then
-            python manage.py check
+            uv run python manage.py check
             # Deployment-oriented checks (won't fail on warnings by default)
-            python manage.py check --deploy
+            uv run python manage.py check --deploy
             # Fail CI if there are model changes without migrations
-            python manage.py makemigrations --check --dry-run
+            uv run python manage.py makemigrations --check --dry-run
             # Ensure migrations apply cleanly on a fresh DB
-            python manage.py migrate --no-input
+            uv run python manage.py migrate --no-input
           else
             echo "No manage.py found; skipping Django checks."
           fi
@@ -142,17 +142,17 @@ jobs:
         run: |
           set -e
           if [ -f pytest.ini ]; then
-            python -m pytest -q \
+            uv run pytest -q \
               --cov=. \
               --cov-report=term-missing \
               --cov-report=xml \
               --cov-fail-under="${COVERAGE_FAIL_UNDER}"
           elif [ -f manage.py ]; then
-            python -m coverage run --source="." manage.py test --verbosity 2 --no-input
-            python -m coverage xml
-            python -m coverage report --fail-under="${COVERAGE_FAIL_UNDER}"
+            uv run coverage run --source="." manage.py test --verbosity 2 --no-input
+            uv run coverage xml
+            uv run coverage report --fail-under="${COVERAGE_FAIL_UNDER}"
           else
-            python -m pytest -q \
+            uv run pytest -q \
               --cov=. \
               --cov-report=term-missing \
               --cov-report=xml \
