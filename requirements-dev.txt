@@ -1,4 +1,5 @@
-django-stubs[compatible-mypy]
-djangorestframework-stubs[compatible-mypy]
-django-extensions>=3.2.3
-
+# Legacy compatibility stub.
+#
+# The dependency source of truth for this repository is `pyproject.toml`.
+# Use `uv sync --no-install-project --group dev` to install the local
+# development environment.

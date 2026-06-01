@@ -5,6 +5,7 @@ This repo uses pytest + pytest-django.
 ## Run the test suite
 
 ```bash
+uv sync --no-install-project --group dev
 uv run pytest
 ```
 

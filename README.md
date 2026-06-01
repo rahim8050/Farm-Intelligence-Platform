@@ -53,18 +53,7 @@ See [NDVI Pipeline Evolution](docs/architecture/ndvi-pipeline-evolution.md) for 
 ### Setup
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv pip install -r requirements.txt -r requirements-dev.txt
-```
-
-If you do not want to use `uv` yet, the legacy pip workflow still works:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
+uv sync --no-install-project --group dev
 ```
 
 ### Environment

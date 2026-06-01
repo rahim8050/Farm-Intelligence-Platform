@@ -12,9 +12,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt requirements-dev.txt ./
+COPY pyproject.toml ./
 RUN python -m pip install --upgrade pip wheel uv && \
-    uv pip install --system -r requirements.txt -r requirements-dev.txt
+    uv sync --system --no-install-project --group dev
 
 COPY . .
 
