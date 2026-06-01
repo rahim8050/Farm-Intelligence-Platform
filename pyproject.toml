@@ -59,7 +59,7 @@ dev = [
   "django-prometheus==2.4.1",
   "django-redis==5.4.0",
   "django-stubs==5.2.9",
-  "django-stubs-ext==5.2.9",
+  "django-stubs-ext==6.0.5",
   "django-timezone-field==7.2.1",
   "djangorestframework==3.16.1",
   "djangorestframework-stubs==3.16.8",
