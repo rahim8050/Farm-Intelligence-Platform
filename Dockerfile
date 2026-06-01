@@ -18,15 +18,8 @@ RUN python -m pip install --upgrade pip wheel uv && \
 
 COPY . .
 
-ENV DJANGO_ENV=ci \
-    DJANGO_DEBUG=0 \
-    DJANGO_SECRET_KEY=ci-secret-key-not-for-prod \
-    DJANGO_API_KEY_PEPPER=ci-pepper-not-a-secret \
-    MYSQL_HOST=mysql \
-    MYSQL_PORT=3306 \
-    MYSQL_DATABASE=test_db \
-    MYSQL_USER=test_user \
-    MYSQL_PASSWORD=test_pass \
-    DATABASE_URL=mysql://test_user:test_pass@mysql:3306/test_db
+RUN mkdir -p logs tmp/celery-metrics
 
-CMD ["python", "-m", "pytest", "-q", "--cov=.", "--cov-report=term-missing", "--cov-fail-under=96"]
+EXPOSE 8000
+
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

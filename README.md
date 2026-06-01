@@ -53,6 +53,14 @@ See [NDVI Pipeline Evolution](docs/architecture/ndvi-pipeline-evolution.md) for 
 ### Setup
 
 ```bash
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt -r requirements-dev.txt
+```
+
+If you do not want to use `uv` yet, the legacy pip workflow still works:
+
+```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -226,8 +234,8 @@ implemented weather providers are configured via `OPEN_METEO_BASE_URL`,
 ### Run
 
 ```bash
-python manage.py migrate
-python manage.py runserver
+uv run python manage.py migrate
+uv run python manage.py runserver
 ```
 
 Default timezone behavior:
@@ -235,12 +243,83 @@ Default timezone behavior:
 - Celery uses `CELERY_TIMEZONE=Africa/Nairobi` with `CELERY_ENABLE_UTC=True`
   (from code: `config/settings.py`).
 
-## Quickstart (Docker / docker-compose)
+## Quickstart (Docker)
 
-This repo includes a monitoring stack compose file: `docker-compose.monitoring.yml`.
-It does not (currently) include a compose definition for the Django app itself.
+The root [Dockerfile](Dockerfile) is the standalone local-dev image. It
+installs the Python dependencies, exposes port `8000`, and defaults to Django's
+development server.
 
-### Monitoring stack
+Build the image:
+
+```bash
+docker build -t weather-apis-dev .
+```
+
+Run it with a local `.env` file:
+
+Start from [`.env.example`](.env.example) and fill in the required values.
+
+```bash
+docker run --rm -it \
+  --env-file .env \
+  -p 8000:8000 \
+  -v "$(pwd):/app" \
+  weather-apis-dev
+```
+
+The standalone container works with the repo's SQLite default if
+`DATABASE_URL` is unset.
+
+Useful overrides:
+
+```bash
+docker run --rm -it --env-file .env weather-apis-dev \
+  python manage.py migrate
+
+docker run --rm -it --env-file .env weather-apis-dev \
+  celery -A config worker -l info
+```
+
+For the full local stack, use the root [docker-compose.yml](docker-compose.yml):
+
+Start from [`.env.compose.example`](.env.compose.example) for compose-specific
+defaults, then copy it to `.env` and adjust any secrets or host values.
+
+```bash
+make up
+```
+
+That brings up:
+
+- `web` on `http://localhost:8000`
+- `db` (MySQL)
+- `redis`
+
+The compose file runs `python manage.py migrate --noinput` in a one-shot
+`migrate` service before the web and Celery services start.
+
+`worker` and `beat` are optional profiles:
+
+```bash
+make up-full
+```
+
+Use the second command when you want the full local stack with Celery worker
+and beat enabled.
+
+The `web` service includes a healthcheck that probes `http://127.0.0.1:8000/`
+inside the container.
+
+Useful compose commands:
+
+```bash
+make logs
+make createsuperuser
+make down
+```
+
+The repository also includes a monitoring stack compose file for Prometheus and
+Grafana:
 
 ```bash
 docker compose -f docker-compose.monitoring.yml up -d
@@ -261,8 +340,8 @@ prefixed with `CELERY_` (from code: `config/celery.py`).
 Example commands:
 
 ```bash
-celery -A config worker -l info
-celery -A config beat -l info
+uv run celery -A config worker -l info
+uv run celery -A config beat -l info
 ```
 
 If you run workers in a separate process, set a real broker URL (e.g., via
@@ -413,12 +492,12 @@ Repo tooling is configured in `pyproject.toml` and `.pre-commit-config.yaml`.
 Type checking is enforced in pre-commit and CI via the same mypy invocation.
 
 ```bash
-pre-commit run --all-files
-pytest
-ruff format .
-ruff check .
-./scripts/typecheck.sh
-bandit -c pyproject.toml -r .
+uv run pre-commit run --all-files
+uv run pytest
+uv run ruff format .
+uv run ruff check .
+uv run ./scripts/typecheck.sh
+uv run bandit -c pyproject.toml -r .
 ```
 
 ## Contributing and security
