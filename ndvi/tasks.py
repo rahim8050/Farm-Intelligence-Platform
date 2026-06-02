@@ -4,7 +4,7 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import date, timedelta
-from typing import Any, TypeVar
+from typing import Any
 
 from celery import shared_task
 from celery.exceptions import (  # type: ignore[import-untyped]
@@ -58,10 +58,7 @@ from .services import (
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T")
-
-
-def _with_fresh_connection(func: Callable[[], T]) -> T:
+def _with_fresh_connection[T](func: Callable[[], T]) -> T:
     """Run a DB-bound callback after refreshing stale Django connections.
 
     Celery workers are long-lived, so a MySQL connection can go stale while

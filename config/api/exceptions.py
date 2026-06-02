@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from rest_framework.response import Response
 
 
-JSONValue: TypeAlias = (
+type JSONValue = (
     None
     | bool
     | int
     | float
     | str
-    | list["JSONValue"]
-    | dict[str, "JSONValue"]
+    | list[JSONValue]
+    | dict[str, JSONValue]
 )
 
 

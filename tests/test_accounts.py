@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from typing import Final, Protocol, TypeAlias, cast
+from typing import Final, Protocol, cast
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -17,8 +17,8 @@ from rest_framework.test import APITestCase
 from accounts.auth_backends import UsernameOrEmailBackend
 from accounts.serializers import PasswordChangeSerializer
 
-JSONScalar: TypeAlias = str | int | float | bool | None
-JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
+type JSONScalar = str | int | float | bool | None
+type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 
 
 class JsonClientResponse(Protocol):

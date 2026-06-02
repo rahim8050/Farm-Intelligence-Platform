@@ -11,7 +11,7 @@ All successful responses are wrapped by
 
 from __future__ import annotations
 
-from typing import TypeAlias, cast
+from typing import cast
 
 from django.conf import settings
 from django.contrib.auth import password_validation
@@ -55,8 +55,8 @@ from .serializers import (
     RegisterSerializer,
 )
 
-JSONScalar: TypeAlias = str | int | float | bool | None
-JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
+type JSONScalar = str | int | float | bool | None
+type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 
 auth_error_response = error_envelope_serializer("AuthErrorResponse")
 

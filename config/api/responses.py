@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import TypeAlias
-
 from rest_framework import status
 from rest_framework.response import Response
 
-JSONScalar: TypeAlias = str | int | float | bool | None
-JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
+type JSONScalar = str | int | float | bool | None
+type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 
 
 def success_response(
