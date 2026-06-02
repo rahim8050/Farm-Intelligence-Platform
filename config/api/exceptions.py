@@ -8,13 +8,7 @@ if TYPE_CHECKING:
 
 
 type JSONValue = (
-    None
-    | bool
-    | int
-    | float
-    | str
-    | list[JSONValue]
-    | dict[str, JSONValue]
+    None | bool | int | float | str | list[JSONValue] | dict[str, JSONValue]
 )
 
 

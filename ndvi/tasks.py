@@ -58,6 +58,7 @@ from .services import (
 
 logger = logging.getLogger(__name__)
 
+
 def _with_fresh_connection[T](func: Callable[[], T]) -> T:
     """Run a DB-bound callback after refreshing stale Django connections.
 
