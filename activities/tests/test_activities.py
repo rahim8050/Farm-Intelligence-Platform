@@ -541,6 +541,168 @@ class TestServicesCoverage(TestCase):
         with self.assertRaises(ValueError):
             activity.save()
 
+    def test_cron_parse_field_star_slash(self) -> None:
+        """Test _parse_cron_field with */N syntax."""
+        result = Activity._parse_cron_field("*/15", 0, 59)
+        self.assertIn(0, result)
+        self.assertIn(15, result)
+        self.assertIn(30, result)
+        self.assertIn(45, result)
+        self.assertNotIn(7, result)
+
+    def test_cron_parse_field_range_slash(self) -> None:
+        """Test _parse_cron_field with N-M/N syntax."""
+        result = Activity._parse_cron_field("1-10/3", 0, 59)
+        self.assertIn(1, result)
+        self.assertIn(4, result)
+        self.assertIn(7, result)
+        self.assertIn(10, result)
+        self.assertNotIn(2, result)
+
+    def test_cron_parse_field_number_slash(self) -> None:
+        """Test _parse_cron_field with N/N syntax (base=number)."""
+        result = Activity._parse_cron_field("5/10", 0, 59)
+        self.assertIn(5, result)
+        self.assertIn(15, result)
+        self.assertIn(25, result)
+        self.assertNotIn(4, result)
+
+    def test_cron_parse_field_list(self) -> None:
+        """Test _parse_cron_field with list syntax."""
+        result = Activity._parse_cron_field("1,3,5", 0, 59)
+        self.assertIn(1, result)
+        self.assertIn(3, result)
+        self.assertIn(5, result)
+        self.assertNotIn(2, result)
+
+    def test_cron_parse_field_wildcard(self) -> None:
+        """Test _parse_cron_field with wildcard."""
+        result = Activity._parse_cron_field("*", 0, 59)
+        self.assertEqual(len(result), 60)
+
+    def test_cron_parse_field_exact(self) -> None:
+        """Test _parse_cron_field with exact value."""
+        result = Activity._parse_cron_field("42", 0, 59)
+        self.assertEqual(result, {42})
+
+    def test_cron_next_advances_month(self) -> None:
+        """Test _compute_cron_next advances month when needed."""
+        scheduled = timezone.make_aware(datetime(2026, 6, 30, 10, 0, 0))
+        # Only matches in July (month 7)
+        next_due = Activity._compute_cron_next("30 9 * 7 1-5", scheduled)
+        self.assertEqual(next_due.month, 7)
+        self.assertGreater(next_due, scheduled)
+
+    def test_cron_next_advances_day(self) -> None:
+        """Test _compute_cron_next advances day for weekend constraint."""
+        # June 6, 2026 is Saturday (dow=5). Only weekdays match.
+        scheduled = timezone.make_aware(datetime(2026, 6, 6, 8, 0, 0))
+        next_due = Activity._compute_cron_next("30 9 * * 1-5", scheduled)
+        # Monday June 8 at 09:30
+        self.assertEqual(next_due.day, 8)
+        self.assertEqual(next_due.hour, 9)
+        self.assertEqual(next_due.minute, 30)
+
+    def test_cron_next_advances_hour(self) -> None:
+        """Test _compute_cron_next advances hour when needed."""
+        # From 10:00 on a weekday, next 09:30 should be next day
+        scheduled = timezone.make_aware(datetime(2026, 6, 1, 10, 0, 0))
+        next_due = Activity._compute_cron_next("30 9 * * 1-5", scheduled)
+        self.assertEqual(next_due.day, 2)
+        self.assertEqual(next_due.hour, 9)
+        self.assertEqual(next_due.minute, 30)
+
+    def test_cron_next_no_match_raises(self) -> None:
+        """Test _compute_cron_next raises when no match found."""
+        scheduled = timezone.make_aware(datetime(2026, 1, 1, 0, 0, 0))
+        # February 30 never exists
+        with self.assertRaises(ValueError):
+            Activity._compute_cron_next("0 0 30 2 *", scheduled)
+
+    def test_str_method(self) -> None:
+        """Test Activity.__str__."""
+        activity = Activity(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            scheduled_at=timezone.now(),
+        )
+        activity.save()
+        str_repr = str(activity)
+        self.assertIn(str(activity.id), str_repr)
+        self.assertIn("vaccination", str_repr)
+
+    def test_can_transition_with_enum_values(self) -> None:
+        """Test can_transition with enum values (not strings)."""
+        self.assertTrue(
+            ActivityStateMachine.can_transition(
+                Activity.Status.PENDING, Activity.Status.DISPATCHED
+            )
+        )
+
+    def test_recover_stale_deleted_activity(self) -> None:
+        """Test recover_stale_activity with non-existent activity."""
+        from unittest.mock import MagicMock
+
+        mock_activity = MagicMock(spec=Activity)
+        mock_activity.id = 99999
+        with patch("activities.models.Activity.objects.filter") as mock_filter:
+            (
+                mock_filter.return_value.select_for_update.return_value.first.return_value
+            ) = None
+            result = recover_stale_activity(mock_activity)
+            self.assertIsNone(result)
+
+    def test_reschedule_cron_no_expression(self) -> None:
+        """Test reschedule returns early when cron_expression missing."""
+        from activities.services import reschedule_recurring
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.IRRIGATION,
+            status=Activity.Status.SUCCESS,
+            recurrence_type=Activity.RecurrenceType.CRON,
+            cron_expression=None,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+        # Should not raise and return the activity unchanged
+        updated = reschedule_recurring(activity)
+        self.assertEqual(updated.status, Activity.Status.SUCCESS)
+
+    def test_reschedule_interval(self) -> None:
+        """Test reschedule_recurring with interval recurrence."""
+        from activities.services import reschedule_recurring
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.FERTILIZER,
+            status=Activity.Status.SUCCESS,
+            recurrence_type=Activity.RecurrenceType.INTERVAL,
+            interval_days=14,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+        updated = reschedule_recurring(activity)
+        self.assertEqual(updated.status, Activity.Status.PENDING)
+        self.assertIsNotNone(updated.next_due_at)
+
+    def test_reschedule_interval_no_days(self) -> None:
+        """Test reschedule returns early when interval_days missing."""
+        from activities.services import reschedule_recurring
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.FERTILIZER,
+            status=Activity.Status.SUCCESS,
+            recurrence_type=Activity.RecurrenceType.INTERVAL,
+            interval_days=None,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+        updated = reschedule_recurring(activity)
+        self.assertEqual(updated.status, Activity.Status.SUCCESS)
+
 
 # Tasks Tests - cover uncovered paths
 @pytest.mark.django_db

@@ -132,3 +132,13 @@ because:
 - `ruff format .` — clean
 - `mypy activities/` — no issues
 - `pytest activities/tests/test_activities.py -k "cron"` — 10/10 passed
+
+### Post-implementation coverage bump
+
+Added 16 additional tests targeting uncovered branches across `models.py`,
+`services.py`, and `serializers.py` to push coverage toward 96%:
+- Cron parser field variants: `*/N`, `N-M/N`, `N/N`, list, wildcard, exact
+- Parser algorithm: month advance, day advance (weekend skip), hour advance,
+  no-match `ValueError`
+- `__str__()`, `can_transition()` with enum args, `recover_stale()` on
+  deleted activity, `reschedule_recurring()` edge cases
