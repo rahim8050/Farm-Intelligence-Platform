@@ -47,7 +47,7 @@ See [NDVI Pipeline Evolution](docs/architecture/ndvi-pipeline-evolution.md) for 
 
 ### Requirements
 
-- Python: see `pyproject.toml` (project requires Python `>=3.11`)
+- Python: see `pyproject.toml` (project requires Python `>=3.12`)
 - Recommended: a local Redis instance for cache and Celery broker/backends
 
 ### Setup
