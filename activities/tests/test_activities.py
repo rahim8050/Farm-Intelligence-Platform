@@ -1,7 +1,7 @@
 import asyncio
 import secrets
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -83,6 +83,40 @@ class TestActivitySerializerValidation(TestCase):
             "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
             "recurrence_type": "interval",
             "interval_days": 30,
+        }
+        serializer = ActivityCreateSerializer(data=data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_validate_cron_requires_expression(self) -> None:
+        """Test that cron recurrence requires cron_expression."""
+        data = {
+            "type": "vaccination",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "recurrence_type": "cron",
+        }
+        serializer = ActivityCreateSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("cron_expression", serializer.errors)
+
+    def test_validate_cron_invalid_expression(self) -> None:
+        """Test that invalid cron expression is rejected."""
+        data = {
+            "type": "vaccination",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "recurrence_type": "cron",
+            "cron_expression": "not-a-cron",
+        }
+        serializer = ActivityCreateSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("cron_expression", serializer.errors)
+
+    def test_valid_cron_passes(self) -> None:
+        """Test valid cron data passes validation."""
+        data = {
+            "type": "irrigation",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "recurrence_type": "cron",
+            "cron_expression": "30 9 * * 1-5",
         }
         serializer = ActivityCreateSerializer(data=data)
         self.assertTrue(serializer.is_valid())
@@ -477,6 +511,36 @@ class TestServicesCoverage(TestCase):
             )
         )
 
+    def test_cron_save_computes_next_due(self) -> None:
+        """Test save computes next_due_at from cron expression."""
+        scheduled = timezone.make_aware(datetime(2026, 6, 1, 8, 0, 0))
+        activity = Activity(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.IRRIGATION,
+            recurrence_type=Activity.RecurrenceType.CRON,
+            cron_expression="30 9 * * 1-5",
+            scheduled_at=scheduled,
+        )
+        activity.save()
+        self.assertIsNotNone(activity.next_due_at)
+        # Next weekday at 09:30 from June 1 (Monday) should be June 1 09:30
+        self.assertEqual(activity.next_due_at.hour, 9)
+        self.assertEqual(activity.next_due_at.minute, 30)
+
+    def test_cron_save_rejects_invalid_expression(self) -> None:
+        """Test save with invalid cron expression raises."""
+        activity = Activity(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.IRRIGATION,
+            recurrence_type=Activity.RecurrenceType.CRON,
+            cron_expression="bad",
+            scheduled_at=timezone.now(),
+        )
+        with self.assertRaises(ValueError):
+            activity.save()
+
 
 # Tasks Tests - cover uncovered paths
 @pytest.mark.django_db
@@ -726,6 +790,45 @@ class TestActivityAPI(TestCase):
         response = self.client.post("/api/v1/activities/", data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_create_activity_with_cron(self) -> None:
+        """Test create activity with cron recurrence."""
+        data = {
+            "type": "irrigation",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "recurrence_type": "cron",
+            "cron_expression": "30 9 * * 1-5",
+            "farm": self.farm.id,
+        }
+        response = self.client.post("/api/v1/activities/", data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["data"]["recurrence_type"], "cron")
+        self.assertEqual(
+            response.data["data"]["cron_expression"], "30 9 * * 1-5"
+        )
+
+    def test_create_activity_cron_missing_expression(self) -> None:
+        """Test create activity with cron but no expression fails."""
+        data = {
+            "type": "irrigation",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "recurrence_type": "cron",
+            "farm": self.farm.id,
+        }
+        response = self.client.post("/api/v1/activities/", data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_activity_cron_invalid_expression(self) -> None:
+        """Test create activity with invalid cron expression fails."""
+        data = {
+            "type": "irrigation",
+            "scheduled_at": (timezone.now() + timedelta(days=1)).isoformat(),
+            "recurrence_type": "cron",
+            "cron_expression": "bad-expr",
+            "farm": self.farm.id,
+        }
+        response = self.client.post("/api/v1/activities/", data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_list_activities(self) -> None:
         Activity.objects.create(
             owner=self.user,
@@ -963,6 +1066,42 @@ class TestActivityServices(TestCase):
 
         self.assertEqual(recovered.status, Activity.Status.RETRY)
         self.assertEqual(recovered.retry_count, 1)
+
+    def test_reschedule_cron_recurring(self) -> None:
+        """Test reschedule_recurring resets to PENDING with next due."""
+        from activities.services import reschedule_recurring
+
+        scheduled = timezone.make_aware(datetime(2026, 6, 1, 8, 0, 0))
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.IRRIGATION,
+            status=Activity.Status.SUCCESS,
+            recurrence_type=Activity.RecurrenceType.CRON,
+            cron_expression="30 9 * * 1-5",
+            scheduled_at=scheduled,
+            next_due_at=scheduled,
+        )
+
+        updated = reschedule_recurring(activity)
+        self.assertEqual(updated.status, Activity.Status.PENDING)
+        self.assertGreater(updated.next_due_at, scheduled)
+
+    def test_reschedule_none_does_nothing(self) -> None:
+        """Test reschedule_recurring skips non-recurring activities."""
+        from activities.services import reschedule_recurring
+
+        activity = Activity.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            type=Activity.Type.VACCINATION,
+            status=Activity.Status.SUCCESS,
+            recurrence_type=Activity.RecurrenceType.NONE,
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+
+        updated = reschedule_recurring(activity)
+        self.assertEqual(updated.status, Activity.Status.SUCCESS)
 
     def test_state_machine_valid_transition(self) -> None:
         self.assertTrue(

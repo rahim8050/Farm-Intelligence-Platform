@@ -54,6 +54,7 @@ class _ActivityListSerializer(serializers.Serializer):
     next_due_at = serializers.DateTimeField(allow_null=True)
     recurrence_type = serializers.CharField(allow_null=True)
     interval_days = serializers.IntegerField(allow_null=True)
+    cron_expression = serializers.CharField(allow_null=True)
     farm = serializers.IntegerField(allow_null=True)
     created_at = serializers.DateTimeField()
 

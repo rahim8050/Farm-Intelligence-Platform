@@ -184,6 +184,7 @@ def execute_activity(
     """
     from activities.consumers import emit_activity_event
     from activities.services import (
+        reschedule_recurring,
         transition_to_failed,
         transition_to_running,
         transition_to_success,
@@ -203,6 +204,8 @@ def execute_activity(
         result = handler.execute(activity)
 
         transition_to_success(activity)
+        activity.refresh_from_db()
+        reschedule_recurring(activity)
 
         duration = time.time() - start_time
         activity_duration_seconds.labels(type=activity.type).observe(duration)

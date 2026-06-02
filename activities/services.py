@@ -316,6 +316,56 @@ def recover_stale_activity(activity: Activity) -> Activity:
     return activity
 
 
+def reschedule_recurring(activity: Activity) -> Activity:
+    """Reschedule a recurring activity after successful execution.
+
+    For cron-recurring activities, computes the next due time and
+    transitions the activity back to PENDING so the scheduler pick it up.
+    For interval-recurring activities, does the same using interval_days.
+
+    Returns:
+        The updated activity, or the original if not recurring.
+    """
+    from activities.models import Activity as ActivityModel
+
+    if activity.recurrence_type == ActivityModel.RecurrenceType.NONE:
+        return activity
+
+    if activity.recurrence_type == ActivityModel.RecurrenceType.CRON:
+        if not activity.cron_expression:
+            return activity
+        next_due = activity.__class__._compute_cron_next(
+            activity.cron_expression, timezone.now()
+        )
+        activity.next_due_at = next_due
+        activity.status = ActivityModel.Status.PENDING
+        activity.save(update_fields=["status", "next_due_at", "updated_at"])
+        logger.info(
+            "rescheduled_cron activity_id=%d next_due_at=%s",
+            activity.id,
+            next_due,
+        )
+        return activity
+
+    if activity.recurrence_type == ActivityModel.RecurrenceType.INTERVAL:
+        if not activity.interval_days:
+            return activity
+        next_due = timezone.now() + timezone.timedelta(
+            days=activity.interval_days
+        )
+        activity.next_due_at = next_due
+        activity.status = ActivityModel.Status.PENDING
+        activity.save(update_fields=["status", "next_due_at", "updated_at"])
+        logger.info(
+            "rescheduled_interval activity_id=%d next_due_at=%s",
+            activity.id,
+            next_due,
+        )
+        return activity
+
+    return activity
+
+
 def cleanup_completed_activities(
     *, older_than_days: int = 30, batch_size: int = 500
 ) -> int:

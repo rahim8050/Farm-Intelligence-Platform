@@ -1,3 +1,5 @@
+import datetime
+
 from rest_framework import serializers
 
 from activities.models import Activity
@@ -15,6 +17,7 @@ class ActivitySerializer(serializers.ModelSerializer):
             "last_executed_at",
             "recurrence_type",
             "interval_days",
+            "cron_expression",
             "farm",
             "metadata",
             "execution_id",
@@ -50,6 +53,7 @@ class ActivityCreateSerializer(serializers.ModelSerializer):
             "scheduled_at",
             "recurrence_type",
             "interval_days",
+            "cron_expression",
             "farm",
             "metadata",
         ]
@@ -57,6 +61,7 @@ class ActivityCreateSerializer(serializers.ModelSerializer):
     def validate(self, attrs: dict) -> dict:
         recurrence_type = attrs.get("recurrence_type")
         interval_days = attrs.get("interval_days")
+        cron_expression = attrs.get("cron_expression")
 
         if recurrence_type == Activity.RecurrenceType.INTERVAL:
             if not interval_days:
@@ -67,6 +72,20 @@ class ActivityCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"interval_days": "interval_days must be at least 1"}
                 )
+
+        if recurrence_type == Activity.RecurrenceType.CRON:
+            if not cron_expression:
+                raise serializers.ValidationError(
+                    {"cron_expression": "cron_expression required for cron"}
+                )
+            try:
+                Activity._compute_cron_next(
+                    cron_expression, datetime.datetime.now()
+                )
+            except (ValueError, KeyError, IndexError) as e:
+                raise serializers.ValidationError(
+                    {"cron_expression": f"Invalid cron expression: {e}"}
+                ) from e
 
         valid_types = [t[0] for t in Activity.Type.choices]
         if attrs.get("type") not in valid_types:

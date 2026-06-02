@@ -37,6 +37,7 @@ Key fields:
 | `next_due_at` | DateTime | Next execution time |
 | `recurrence_type` | CharField | none, interval, cron |
 | `interval_days` | PositiveInteger | Days between recurrences |
+| `cron_expression` | CharField | 5-field cron expression (e.g. `30 9 * * 1-5`) |
 | `metadata` | JSONField | Type-specific data |
 | `last_error` | TextField | Error message on failure |
 | `retry_count` | PositiveInteger | Number of retries |
@@ -58,7 +59,7 @@ All successful JSON responses use the project envelope produced by
 | Method | Path | Auth | Purpose | Key params |
 |--------|------|------|--------|------------|
 | GET | `/api/v1/activities/` | JWT, API key, or Integration JWT | List activities (owner/integration-scoped) | none |
-| POST | `/api/v1/activities/` | JWT, API key, or Integration JWT | Create an activity | body: `type`, `scheduled_at`, optional `recurrence_type`, `interval_days`, `farm`, `metadata` |
+| POST | `/api/v1/activities/` | JWT, API key, or Integration JWT | Create an activity | body: `type`, `scheduled_at`, optional `recurrence_type`, `interval_days`, `cron_expression`, `farm`, `metadata` |
 | GET | `/api/v1/activities/<id>/` | JWT, API key, or Integration JWT | Retrieve an activity | path: `id` |
 | PATCH | `/api/v1/activities/<id>/` | JWT, API key, or Integration JWT | Update an activity | path: `id` |
 | DELETE | `/api/v1/activities/<id>/` | JWT, API key, or Integration JWT | Delete an activity | path: `id` |
@@ -82,7 +83,7 @@ All successful JSON responses use the project envelope produced by
 |------|-------------|
 | `none` | One-time activity |
 | `interval` | Repeats every `interval_days` |
-| `cron` | Reserved for future cron-style scheduling |
+| `cron` | Repeats according to a 5-field cron expression (`cron_expression`) |
 
 ### Examples
 
@@ -135,6 +136,26 @@ curl -sS -X POST http://localhost:8000/api/v1/activities/ \
   }'
 ```
 
+#### Create a cron-recurring activity
+
+```bash
+curl -sS -X POST http://localhost:8000/api/v1/activities/ \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "type": "irrigation",
+    "scheduled_at": "2026-06-01T09:00:00Z",
+    "recurrence_type": "cron",
+    "cron_expression": "30 9 * * 1-5",
+    "farm": 1,
+    "metadata": {"zone": "A1"}
+  }'
+```
+
+Runs weekdays at 09:30 UTC. After each successful execution the activity
+is automatically rescheduled to the next matching cron time and set back to
+`pending`.
+
 #### List activities
 
 ```bash
@@ -165,7 +186,7 @@ Response:
 - Owner scoping: `ActivityViewSet.get_queryset()` returns only the current user's activities.
 - Integration scoping: integration tokens must have `read` for GET and `write` or `admin` for write requests.
 - Recurrence computation: `Activity.save()` computes `next_due_at` from `scheduled_at` when unset.
-- Validation: Serializer validates `type` and requires `interval_days` for `interval` recurrence.
+- Validation: Serializer validates `type`, requires `interval_days` for `interval` recurrence, and requires a valid 5-field `cron_expression` for `cron` recurrence.
 - Execution flow: `activities.scheduler.poll` claims due activities, `activities.execute` runs handlers, and `activities.recover_stale` resets stuck work.
 - NDVI trigger handling: `NdviTriggerHandler` reads farm state and returns recommended actions instead of creating activities directly.
 
@@ -183,9 +204,9 @@ Response:
 
 ## Background jobs
 
-- `activities.scheduler.poll`: Celery Beat task (every minute) for batch activity polling
+- `activities.scheduler.poll`: Celery Beat task (every 60 seconds) for batch activity polling
+- `activities.recover_stale`: Celery Beat task (every 5 minutes) for stuck activity recovery
 - `activities.execute`: Celery worker task with 5 minute hard timeout and 4.5 minute soft timeout
-- `activities.recover_stale`: Recovery task (every 5 min) for stuck activities
 - `activities.cleanup_completed`: Retention task (daily) for old terminal activities
 - WebSocket notifications via Django Channels (`ActivityConsumer`)
 
@@ -218,6 +239,7 @@ Prometheus metrics (from `activities/metrics.py`):
 - The scheduler uses a cache-based lock to avoid multiple concurrent pollers.
 - `activities.cleanup_completed` removes old terminal activities.
 - The NDVI trigger handler is implemented, but it returns recommendations for downstream dispatch rather than creating new activity records itself.
+- Cron recurrence uses a built-in 5-field parser (standard cron format). After successful execution, `reschedule_recurring()` computes the next matching datetime and transitions the activity back to `PENDING` for the scheduler to pick up.
 
 ## Related docs
 

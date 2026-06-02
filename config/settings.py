@@ -949,6 +949,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ndvi.tasks.enqueue_daily_farm_state_coverage",
         "schedule": crontab(hour=3, minute=45),
     },
+    "activities-scheduler-poll": {
+        "task": "activities.scheduler.poll",
+        "schedule": 60,
+    },
+    "activities-recover-stale": {
+        "task": "activities.recover_stale",
+        "schedule": 300,
+    },
     "activities-cleanup-completed": {
         "task": "activities.cleanup_completed",
         "schedule": crontab(hour=4, minute=30),
