@@ -327,14 +327,14 @@ def get_provider(slug: str) -> RadioProvider:
 
 ## Feature Roadmap
 
-| Priority | Feature | Complexity | Dependencies |
-|----------|---------|------------|--------------|
-| P0 | BBC 1Xtra MVP | Low | None |
-| P1 | More BBC stations | Low | P0 |
-| P2 | Station health checks | Medium | P0 |
-| P3 | Favorites | Medium | Auth |
-| P3 | Listening history | Medium | Auth |
-| P4 | Podcasts | High | P0 |
-| P4 | Farm audio alerts | High | Activities, NDVI |
-| P5 | Emergency broadcasts | Medium | P0 |
+| Priority | Feature | Complexity | Dependencies | Status |
+|----------|---------|------------|--------------|--------|
+| P0 | BBC 1Xtra MVP | Low | None | ✅ shipped 2026-05 |
+| P1 | More BBC stations | Low | P0 | ✅ shipped (8 BBC stations seeded) |
+| P2 | Station health checks | Medium | P0 | ✅ shipped 2026-06-03 — see `09_operational.md` § Health Checks |
+| P3 | Favorites | Medium | Auth | ⏳ planned |
+| P3 | Listening history | Medium | Auth | ⏳ planned |
+| P4 | Podcasts | High | P0 | ⏳ planned |
+| P4 | Farm audio alerts | High | Activities, NDVI | ⏳ planned |
+| P5 | Emergency broadcasts | Medium | P0 | ⏳ planned |
 | P5 | TTS | High | External API |

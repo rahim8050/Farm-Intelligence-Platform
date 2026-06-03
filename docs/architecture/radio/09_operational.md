@@ -1,6 +1,10 @@
 # Operational Considerations
 
-> **Status**: ⏳ PARTIALLY IMPLEMENTED (No custom logging/metrics yet)
+> **Status**: ✅ IMPLEMENTED (Periodic station health checks, Prometheus metrics, envelope errors)
+> **Phase 2 delivered**: 2026-06-03 — see `IMPLEMENTATION_SUMMARY.md` § Phase 2.
+> **Still out of scope**: structured `extra=` logging, Grafana dashboard JSON, station-list
+> caching layer, fallback-station redirect, `radio_api_request_latency` /
+> `radio_api_request_errors` counters.
 
 ## Logging Strategy
 
@@ -41,12 +45,15 @@ def get_station_by_id(station_id: str):
 
 ### Key Metrics
 
-| Metric | Description | Alert Threshold |
-|--------|-------------|-----------------|
-| `radio_stations_total` | Total active stations | < 1 |
-| `radio_station_health_failures` | Failed health checks | > 5/min |
-| `radio_api_request_latency` | API response time | > 500ms |
-| `radio_api_request_errors` | Failed requests | > 10/min |
+| Metric | Type | Description | Alert Threshold |
+|--------|------|-------------|-----------------|
+| `radio_stations_total` | Gauge | Stations evaluated in the last health-check run | < 1 |
+| `radio_station_health_failures_total` | Counter | Per-station failed health checks (label: `station_id`) | rate > 0.1/s for 5m |
+| `radio_station_health_successes_total` | Counter | Per-station successful health checks (label: `station_id`) | n/a |
+| `radio_station_health_latency_seconds` | Histogram | Probe round-trip time in seconds | n/a |
+| `radio_health_checks_last_run_timestamp` | Gauge | Unix timestamp of the last successful task run | now - value > 10m → stale |
+| `radio_api_request_latency` | Counter (planned) | API response time | > 500ms — **not implemented yet** |
+| `radio_api_request_errors` | Counter (planned) | Failed requests | > 10/min — **not implemented yet** |
 
 ### Prometheus Integration
 
@@ -79,37 +86,78 @@ Recommended panels:
 
 ### Endpoint
 
+`GET /api/v1/radio/health/` — public, `AllowAny`. Returns the standard envelope.
+
 ```python
-# radio/views.py
+# radio/views.py — implemented in Phase 2
 
-class HealthCheckView(APIView):
-    """Radio service health check."""
+class RadioHealthView(APIView):
+    """Public radio-service health summary.
 
-    def get(self, request):
-        station_count = Station.objects.filter(is_active=True).count()
+    Auth:        AllowAny
+    Throttle:    none
+    Response:    envelope with `data` = RadioHealthPayload
+    """
 
-        return Response({
-            "status": "healthy" if station_count > 0 else "degraded",
-            "stations_active": station_count,
-            "timestamp": timezone.now().isoformat()
-        })
+    @extend_schema(
+        responses={200: RadioHealthEnvelope},
+        auth=[],
+    )
+    def get(self, request: Request) -> Response:
+        """Return aggregate availability of all active stations."""
+        return success_response(
+            summarize_health(),
+            status_code=status.HTTP_200_OK,
+        )
 ```
+
+`RadioHealthPayload` shape (defined inline in `radio/views.py`):
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `status` | `"healthy" \| "degraded" \| "unhealthy"` | `healthy` = all available, `unhealthy` = reachable=0 AND unreachable>0, else `degraded`; 0 stations = `degraded` |
+| `stations_total` | int | Active stations in the catalogue |
+| `stations_available` | int | Active stations with `is_available=True` |
+| `stations_unavailable` | int | Active stations with `is_available=False` |
+| `stations_unchecked` | int | Active stations with `is_available=None` (never checked yet) |
+| `timestamp` | str (ISO 8601) | Server time of the response |
+
+`is_available` semantics (per `radio/models.py`):
+
+- `None`  → never probed yet. Bootstrap: not gated.
+- `True`  → last probe succeeded. Playback permitted.
+- `False` → last probe failed. `StationStreamView` returns **HTTP 503** with envelope
+  `{"success": 1, "message": "Station is currently unavailable", "data": null,
+  "errors": {"station_id": "<uuid>", "reason": "health_check_failed"}}`.
 
 ### Celery Health Check Task
 
-```python
-# radio/tasks.py
+`radio.tasks.check_all_stations_health` — registered in `CELERY_BEAT_SCHEDULE` as
+`radio-health-check` with schedule `RADIO_HEALTH_CHECK_INTERVAL_SECONDS` (default 300 s).
 
-@app.task
-def check_station_health(station_id: str) -> bool:
-    """Verify station stream is reachable."""
-    station = Station.objects.get(id=station_id)
-    try:
-        response = requests.head(station.stream_url, timeout=5)
-        return response.status_code == 200
-    except requests.RequestException:
-        return False
+```python
+# radio/tasks.py — implemented in Phase 2
+
+@app.task(bind=True, name="radio.tasks.check_all_stations_health",
+          max_retries=0, time_limit=300, soft_time_limit=270)
+def check_all_stations_health(self) -> dict[str, int]:
+    """Iterate every active station, probe, record, and update metrics.
+
+    Returns {"checked": int, "available": int, "unavailable": int} for logging
+    and downstream dashboards.
+    """
+    summary = probe_all_active_stations()
+    radio_stations_total.set(summary["checked"])
+    radio_health_checks_last_run_timestamp.set(time.time())
+    return summary
 ```
+
+Probing lives in `radio/services.py` (`probe_station`, `record_probe_result`,
+`probe_all_active_stations`). The probe issues a `httpx.Client.head(...)` request and
+**falls back to GET** on `405`/`501`, since some providers reject HEAD. Timeouts and
+network exceptions both produce an unreachable result; only HTTP 2xx/3xx codes are
+considered reachable. The station's aggregate `is_available` is updated atomically
+with a single `Station.objects.filter(pk=...).update(...)` call.
 
 ## Failure Handling
 
@@ -198,17 +246,37 @@ def get_stream_url_with_fallback(station_id: str) -> dict:
 
 ### Monitoring Alerts
 
-```yaml
-# prometheus/alerts.yml
+Three alerts live in `monitoring/prometheus/alerts.yml` under group `radio`:
 
-- alert: RadioStationDown
-  expr: radio_station_health_failures > 5
+```yaml
+# prometheus/alerts.yml — radio group, shipped 2026-06-03
+
+- alert: RadioStationHealthCheckFailing
+  expr: rate(radio_station_health_failures_total[5m]) > 0.1
   for: 5m
   labels:
     severity: warning
   annotations:
-    summary: "Radio station unavailable"
-    description: "{{ $value }} health checks failed"
+    summary: "Radio station failing health checks"
+    description: "Station {{ $labels.station_id }} failing for 5m."
+
+- alert: RadioStationsAllUnavailable
+  expr: radio_stations_total > 0 and radio_station_health_successes_total == 0
+  for: 2m
+  labels:
+    severity: critical
+  annotations:
+    summary: "All radio stations are unreachable"
+    description: "No station has succeeded in the last run."
+
+- alert: RadioHealthCheckStale
+  expr: time() - radio_health_checks_last_run_timestamp > 600
+  for: 2m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Radio health-check task is stale"
+    description: "Last run > 10m ago. Check Celery worker / beat."
 ```
 
 ## Runbook
@@ -243,4 +311,5 @@ def get_stream_url_with_fallback(station_id: str) -> dict:
 | djangorestframework | ^3.14 | API framework |
 | django-cors-headers | ^4.0 | CORS |
 | prometheus-client | ^0.19 | Metrics |
-| requests | ^2.31 | HTTP client |
+| requests | ^2.31 | (not used; see httpx) |
+| httpx | ^0.27 | HTTP client (probes) |

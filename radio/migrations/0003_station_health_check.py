@@ -32,7 +32,7 @@ class Migration(migrations.Migration):
             model_name="station",
             index=models.Index(
                 fields=["is_available"],
-                name="radio_stati_is_avai_4b0e1c_idx",
+                name="radio_stati_is_avai_973d05_idx",
             ),
         ),
         migrations.CreateModel(
@@ -75,7 +75,7 @@ class Migration(migrations.Migration):
             model_name="stationhealthcheck",
             index=models.Index(
                 fields=["station", "-checked_at"],
-                name="radio_stati_station__b0d5f2_idx",
+                name="radio_stati_station_bb44e7_idx",
             ),
         ),
     ]

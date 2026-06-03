@@ -1,6 +1,7 @@
 # Data Model Planning
 
-> **Status**: ✅ IMPLEMENTED (Station + Provider models)
+> **Status**: ✅ IMPLEMENTED (Station + Provider + StationHealthCheck models,
+> `is_available` / `last_health_check_at` fields on Station)
 
 ## Station Metadata Schema
 
@@ -101,18 +102,49 @@ class Station(models.Model):
 
 ### Station Extensions
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `description` | text | Station description |
-| `genre` | string | Music genre |
-| `bitrate` | int | Stream bitrate in kbps |
-| `format` | string | Audio format (MP3, AAC, HLS) |
-| `logo_url` | string | Station artwork |
-| `website_url` | string | Station website |
-| `last_checked` | datetime | Last health check timestamp |
-| `is_available` | bool | Current availability status |
+| Field | Type | Description | Status |
+|-------|------|-------------|--------|
+| `description` | text | Station description | ⏳ planned |
+| `genre` | string | Music genre | ⏳ planned |
+| `bitrate` | int | Stream bitrate in kbps | ⏳ planned |
+| `format` | string | Audio format (MP3, AAC, HLS) | ⏳ planned |
+| `logo_url` | string | Station artwork | ⏳ planned |
+| `website_url` | string | Station website | ⏳ planned |
+| `last_health_check_at` | datetime (nullable) | Timestamp of the most recent probe. `null` until first probe. | ✅ shipped 2026-06-03 |
+| `is_available` | bool (nullable) | Result of the last probe. `null` = never checked, `true` = reachable, `false` = unreachable. | ✅ shipped 2026-06-03 |
 
 ### Future Models
+
+#### Station Health Check (✅ shipped 2026-06-03)
+
+The model that was sketched here as a future model is now implemented at
+`radio/models.py:StationHealthCheck`. The migration is `radio/migrations/0003_station_health_check.py`.
+Indexes:
+
+- `idx_station_checked` — composite `(station, -checked_at)` for time-series reads.
+- `db_index=True` on `checked_at` for window queries.
+
+```python
+# radio/models.py — actual implementation
+class StationHealthCheck(models.Model):
+    """One row per probe of a station's stream URL."""
+
+    station = models.ForeignKey(
+        Station, on_delete=models.CASCADE, related_name="health_checks"
+    )
+    checked_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    is_reachable = models.BooleanField()
+    response_time_ms = models.IntegerField(blank=True, null=True)
+    status_code = models.IntegerField(blank=True, null=True)
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "radio_station_health_check"
+        verbose_name = "Station health check"
+        verbose_name_plural = "Station health checks"
+        ordering = ["-checked_at"]
+        indexes = [models.Index(fields=["station", "-checked_at"])]
+```
 
 #### Listening History
 
@@ -165,20 +197,6 @@ class StationAnalytics(models.Model):
         unique_together = ["station", "date"]
 ```
 
-#### Station Health Check
-
-```python
-class StationHealthCheck(models.Model):
-    """Track station availability over time."""
-
-    station = models.ForeignKey(Station, on_delete=models.CASCADE)
-    checked_at = models.DateTimeField(auto_now_add=True)
-    is_reachable = models.BooleanField()
-    response_time_ms = models.IntegerField(null=True)
-    status_code = models.IntegerField(null=True)
-    error_message = models.TextField(blank=True)
-```
-
 #### Currently Playing Metadata
 
 ```python
@@ -220,8 +238,22 @@ erDiagram
         url logo_url
         url website_url
         bool is_active
+        bool is_available "nullable"
+        datetime last_health_check_at "nullable"
         datetime created_at
         datetime updated_at
+    }
+
+    STATION ||--o{ STATION_HEALTH_CHECK : "probed by"
+
+    STATION_HEALTH_CHECK {
+        int id PK
+        string station FK
+        datetime checked_at
+        bool is_reachable
+        int response_time_ms "nullable"
+        int status_code "nullable"
+        text error_message
     }
 
     PROVIDER ||--o{ STATION : "has"
@@ -244,6 +276,10 @@ erDiagram
 
 ## Migration Strategy
 
-1. **Initial migration**: Create `Provider` and `Station` tables
-2. **Seed data**: Load BBC 1Xtra as initial station
-3. **Future migrations**: Add new tables as needed (no migration for unused features)
+1. **Initial migration** (`0001_initial`): Create `Provider` and `Station` tables
+2. **`0002_add_provider_type`**: Add `Provider.provider_type`
+3. **Seed data**: Load BBC 1Xtra as initial station
+4. **`0003_station_health_check` (Phase 2, 2026-06-03)**: Add `is_available`,
+   `last_health_check_at` to `Station`; create `StationHealthCheck` with
+   composite `(station, -checked_at)` index
+5. **Future migrations**: Add new tables as needed (no migration for unused features)

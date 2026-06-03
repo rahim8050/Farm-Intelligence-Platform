@@ -2,12 +2,16 @@
 
 **Date:** May 11, 2026 (architecture)
 **Date:** June 03, 2026 (implementation verified)
-**Status:** ✅ **COMPLETE** — architecture and implementation are both shipped.
+**Date:** June 03, 2026 (Phase 2: station health checks shipped)
+**Status:** ✅ **COMPLETE** — architecture, MVP, and Phase 2 are all shipped.
 
 The original 2026-05-11 snapshot was captured before any code was written and
 ended with the line *"Status: Architecture complete, implementation not
 started"*. That line is now stale. This document records the current
 implementation state and the evidence in the repo.
+
+The MVP was verified on 2026-06-03. Phase 2 (station health checks) shipped the
+same day and is documented in the § Phase 2 section below.
 
 > For the architecture design, see [`docs/architecture/radio/`](./README.md).
 > For live status, see this document.
@@ -99,6 +103,72 @@ The view tests assert the `success_response` envelope shape
 
 ---
 
+---
+
+## Phase 2 — Station Health Checks (2026-06-03)
+
+Phase 2 ships the periodic station health-check loop and the gating on the
+stream endpoint. It is the second item on the
+[`08_future_expansion.md`](./08_future_expansion.md) roadmap (P2: "Station
+health checks", medium complexity). The full design is in
+[`09_operational.md`](./09_operational.md) § Health Checks.
+
+### New and changed files
+
+| File | Purpose |
+|---|---|
+| `radio/models.py:74-119` | `StationHealthCheck` model; `Station.is_available`, `Station.last_health_check_at` |
+| `radio/migrations/0003_station_health_check.py` | Adds fields + model + indexes (`is_available`, `(station, -checked_at)`) |
+| `radio/services.py` | `probe_station`, `record_probe_result`, `probe_and_record`, `probe_all_active_stations`, `summarize_health`; `HealthProbeResult`, `StationUnavailableError` |
+| `radio/tasks.py` | `check_all_stations_health` Celery task (`max_retries=0`, `time_limit=300`) |
+| `radio/metrics.py` | Prometheus metrics (see table below) |
+| `radio/views.py` | `RadioHealthView` (envelope with `RadioHealthPayload`); `StationStreamView` returns **HTTP 503** when `is_available is False` |
+| `radio/urls.py` | `path("radio/health/", views.RadioHealthView.as_view(), name="radio-health")` |
+| `radio/admin.py` | `StationHealthCheckAdmin` (read-only); `StationAdmin` shows the new fields |
+| `radio/tests/test_services.py` | 14 service-layer tests |
+| `radio/tests/test_health.py` | 9 endpoint + task tests (incl. 503 path, never-checked path) |
+| `config/settings.py` | `RADIO_HEALTH_CHECK_INTERVAL_SECONDS=300`, `RADIO_HEALTH_CHECK_TIMEOUT_SECONDS=5.0`; `CELERY_BEAT_SCHEDULE` entry `radio-health-check` |
+| `monitoring/prometheus/alerts.yml` | Three alerts under the `radio` group (see below) |
+| `schema.yml` | Regenerated; `v1_radio_health` and `RadioHealthEnvelope` present |
+
+### Metrics emitted (`radio/metrics.py`)
+
+| Metric | Type | Labels |
+|---|---|---|
+| `radio_stations_total` | Gauge | — |
+| `radio_station_health_failures_total` | Counter | `station_id` |
+| `radio_station_health_successes_total` | Counter | `station_id` |
+| `radio_station_health_latency_seconds` | Histogram | `station_id` |
+| `radio_health_checks_last_run_timestamp` | Gauge | — |
+
+### Prometheus alerts (`monitoring/prometheus/alerts.yml` group `radio`)
+
+| Alert | Severity | Expression |
+|---|---|---|
+| `RadioStationHealthCheckFailing` | warning | `rate(radio_station_health_failures_total[5m]) > 0.1` for 5m |
+| `RadioStationsAllUnavailable` | critical | `radio_stations_total > 0 and radio_station_health_successes_total == 0` for 2m |
+| `RadioHealthCheckStale` | warning | `time() - radio_health_checks_last_run_timestamp > 600` for 2m |
+
+### `is_available` semantics
+
+| Value | Meaning | Stream endpoint behavior |
+|---|---|---|
+| `None` | Never probed (e.g. just deployed, or station created mid-cycle) | 200 — graceful bootstrap |
+| `True` | Last probe returned 2xx/3xx | 200 |
+| `False` | Last probe failed (timeout, 4xx, 5xx, or network error) | **503** with envelope `{"success": 1, "message": "Station is currently unavailable", "data": null, "errors": {"station_id": "<uuid>", "reason": "health_check_failed"}}` |
+
+### Verification
+
+- `python manage.py makemigrations --check --dry-run` → "No changes detected"
+  (after correcting index-name hashes to match Django's auto-generated names).
+- `ruff check .` — clean.
+- `ruff format .` — clean.
+- `mypy --config-file=pyproject.toml .` — no issues.
+- `bandit -c pyproject.toml -r .` — no issues.
+- `pytest radio/` — 53 passed, no regressions in the 117-test full suite.
+
+---
+
 ## What Is Intentionally Out of Scope
 
 These items come from the future-expansion document
@@ -112,6 +182,9 @@ implemented, by design:
 
 These are documented in [`08_future_expansion.md`](./08_future_expansion.md)
 as future work; no current code path references them.
+
+Note: the P2 row "Station health checks" is **not** in this list — it shipped
+on 2026-06-03 and is documented in § Phase 2 above.
 
 ---
 
@@ -149,3 +222,4 @@ all reflected in the code:
 |---------|------|-------|
 | 1.0 | May 11, 2026 | Initial architecture documentation; implementation not started. |
 | 2.0 | June 03, 2026 | Implementation verified; views, serializers, providers, seed data, and tests are all in place. |
+| 2.1 | June 03, 2026 | Phase 2 (station health checks) shipped: model, services, task, metrics, alerts, `/radio/health/` endpoint, stream 503 gating, full doc alignment, migration index-name fix. |
