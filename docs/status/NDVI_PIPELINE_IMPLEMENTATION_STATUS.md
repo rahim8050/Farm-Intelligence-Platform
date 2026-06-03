@@ -1,319 +1,279 @@
 # NDVI Pipeline Evolution - Implementation Status Report
 
-**Date:** April 18, 2026
+**Date:** April 18, 2026 (original)
+**Date:** June 03, 2026 (status re-verified against current code)
 **Architecture Document:** `docs/architecture/ndvi-pipeline-evolution.md`
 **Implementation Plan:** `docs/architecture/ndvi-phase-2-implementation-plan.md`
-**Related:** `NDVI_RETRY_POLICY_STATUS.md`
+**Related:** `docs/status/NDVI_RETRY_POLICY_STATUS.md`
+
+> **Re-verification (June 03, 2026):** This document was last rewritten on
+> April 18, 2026. Between then and June 03, 2026 the consumer command,
+> stream observability metrics, Grafana panels, Prometheus alerts, and
+> consumer tests were all implemented. The percentages and "Required
+> Files Not Yet Created" list below are now stale. This revision corrects
+> them against the current repo. The historical commit log is preserved
+> in the "Document History" section at the bottom.
 
 ---
 
 ## Executive Summary
 
-The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add durable queue semantics, and improve observability. **Phase 1 is complete**, **retry policy hardening (Phase 1.5) is substantially complete**, and **Phase 2 is partially implemented**: dispatch centralization, stream producer code, stream consumer code, producer tests, and stream settings are in place; stream observability and rollout work are still pending.
+The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add
+durable queue semantics, and improve observability. **Phase 1 is complete**,
+**Phase 1.5 (retry policy) is complete**, and **Phase 2 is fully
+implemented through Stage 7** (centralized dispatch, transport decision,
+producer, consumer, settings, observability, and tests). **Stage 8
+(incremental rollout) is intentionally deferred**: `NDVI_QUEUE_BACKEND`
+remains `"celery"` and no production workflow is stream-backed yet.
 
-**New dependency:** The Redis Streams implementation (Phase 2) should integrate with the hardened retry policy (`ndvi/retry_policy.py`) to ensure stream consumers make correct retry decisions.
+**Architectural invariant:** the stream consumer must integrate with the
+hardened retry policy (`ndvi/retry_policy.py`) so that retry decisions stay
+consistent across the stream path and the existing Celery path.
 
 ---
 
 ## Phase 1 - Redis Sentinel (HA Broker/Cache)
 
-**Status:** ✅ **COMPLETE** (March 24 - April 1, 2026)
+**Status:** ✅ **COMPLETE** (March 24 - April 1, 2026) — unchanged.
 
-### What's Implemented:
+### What's Implemented
 
 - ✅ **Redis Sentinel trio deployed**
-  - `docker-compose.redis-sentinel.yml` exists with Sentinel configuration
-  - Sentinel service name and ports configured
-  
+  - `docker-compose.redis-sentinel.yml` exists with Sentinel configuration.
+  - Sentinel service name and ports configured.
 - ✅ **Django/Celery Sentinel integration**
-  - `config/settings.py`: Full Sentinel URL parsing (`redis-sentinel://` scheme)
-  - Converts Sentinel URLs to broker-compatible format for Celery
-  - Validates Sentinel scheme and extracts credentials/hosts
-  - Settings: `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `DJANGO_CACHE_URL`
-  
+  - `config/settings.py`: full Sentinel URL parsing (`redis-sentinel://`).
+  - Converts Sentinel URLs to broker-compatible format for Celery.
+  - Validates Sentinel scheme and extracts credentials/hosts.
 - ✅ **Cache backend Sentinel support**
-  - Django cache uses Sentinel-backed Redis
-  - Round-trip tested and verified
-  
+  - Django cache uses Sentinel-backed Redis; round-trip tested.
 - ✅ **Celery broker Sentinel connection**
-  - Broker established as Sentinel-backed connection
-  - Result backend initialized as `SentinelBackend`
-  - Celery tasks execute successfully through Sentinel
-  
+  - Sentinel-backed broker, `SentinelBackend` result backend.
 - ✅ **Failover validation**
-  - Failover drill executed (Apr 1, 2026)
-  - Sentinel election observed after master stop
-  - Celery survived failover (~54.7s recovery time)
-  - Prometheus metrics showed master address change
-  
+  - Failover drill executed (April 1, 2026).
+  - Sentinel election observed; Celery survived (~54.7s recovery).
 - ✅ **Sentinel metrics in Prometheus**
-  - `redis_sentinel_master_status` ✅
-  - `redis_sentinel_master_ok_sentinels` ✅
-  - `redis_sentinel_master_ok_slaves` ✅
-  - `redis_sentinel_masters` ✅
-  - `redis_exporter` reports `redis_mode="sentinel"` and `tcp_port="26379"`
-  
-- ✅ **Test coverage**
-  - `tests/test_settings_redis_sentinel.py`: Sentinel settings validation
-  - Test validates Celery memory backend compatibility
+  - `redis_sentinel_master_status`, `redis_sentinel_master_ok_sentinels`,
+    `redis_sentinel_master_ok_slaves`, `redis_sentinel_masters`.
+- ✅ **Test coverage** in `tests/test_settings_redis_sentinel.py`.
 
-### What's Left Out:
+### What's Left Out
 
 - ⚠️ **Celery failover latency not acceptable for latency-sensitive workloads**
-  - 54.7s delay during failover is acceptable for background jobs only
-  - Not acceptable for real-time task dispatch (<10-15s target)
-  - **Recommended:** Tune Celery reconnect behavior if needed
+  - 54.7s delay is acceptable for background jobs only.
+  - Not acceptable for real-time task dispatch (<10-15s target).
+  - **Recommended:** Tune Celery reconnect behavior if needed.
 
 ---
 
 ## Phase 1.5 - NDVI Retry Policy Hardening
 
-**Status:** ✅ **COMPLETE** (April 10, 2026)
+**Status:** ✅ **COMPLETE** (April 12, 2026) — verified June 03, 2026.
 
-### What's Implemented:
+### What's Implemented
 
-- ✅ **`classify_status_code()` — single source of truth**
-  - Located in `ndvi/retry_policy.py`.
-  - Canonical truth table for HTTP status → retry category mapping.
-  - 13 branches covered (400, 401, 403, 422, 429, 500-504, 200, 201, 204, None).
+- ✅ **`classify_status_code()` — single source of truth** in
+  `ndvi/retry_policy.py`; 13 branches covered.
+- ✅ **Unified exception hierarchy.** All NDVI errors inherit from
+  `UpstreamFailureError` with consistent `retryable`, `category`,
+  `status_code`.
+- ✅ **`should_retry()` — central retry decision function** returning
+  `RetryDecision(retry, delay, reason)`.
+- ✅ **Circuit breaker for STAC engine** in `ndvi/stac_client.py`.
+- ✅ **Network error handling fixed** — `httpx.RequestError` wrapped after
+  inline retry exhaustion.
+- ✅ **Shared `CircuitBreaker` extracted to `ndvi/circuit_breaker.py`**
+  (`CircuitBreaker` class at `ndvi/circuit_breaker.py:46`) and wired
+  into all three engines: `stac`, `sentinelhub`,
+  `sentinelhub_raster`. Eagerly initialized in
+  `ndvi/apps.py:12-45`.
+- ✅ **`Retry-After` header parsing** in `ndvi/retry_policy.py:84-128`
+  (`parse_retry_after()`). `should_retry()` accepts `response_headers`
+  and applies the delay only for 429 responses.
+- ✅ **Prometheus metrics for circuit breaker state**
+  (`ndvi/metrics.py:69-80`): `ndvi_circuit_breaker_state{engine}` and
+  `ndvi_circuit_breaker_transitions_total{engine,from_state,to_state}`.
+- ✅ **Admin endpoint to reset circuit breaker**
+  `POST /api/v1/ndvi/circuit-breaker/reset/` (view at
+  `ndvi/views.py:1309`; `permission_classes = [IsAdminUser]`). 4 tests
+  in `ndvi/tests/test_ndvi_admin_views.py`.
+- ✅ **Upstream health check endpoint**
+  `GET /api/v1/ndvi/health/upstream/` (per-engine status).
+- ✅ **Test coverage: 28+ tests** including 7 dedicated to
+  `parse_retry_after` and 4 for the admin endpoint.
 
-- ✅ **Unified exception hierarchy**
-  - All NDVI errors inherit from `UpstreamFailureError`.
-  - Consistent `retryable`, `category`, `status_code` attributes.
+### What's Left Out
 
-- ✅ **`should_retry()` — central retry decision function**
-  - Returns `RetryDecision(retry, delay, reason)`.
-  - Used by Celery task handlers for consistent retry behavior.
+- None. All Phase 2 and Phase 3 retry-policy items called out in
+  `docs/status/NDVI_RETRY_POLICY_STATUS.md` are now implemented.
 
-- ✅ **Circuit breaker for STAC engine**
-  - `_CircuitBreaker` in `ndvi/stac_client.py`.
-  - CLOSED/OPEN/HALF_OPEN state machine.
-  - Configurable threshold and timeout.
-
-- ✅ **Network error handling fixed**
-  - `httpx.RequestError` wrapped after inline retry exhaustion.
-  - Celery-level retry now correctly handles transient network errors.
-
-- ✅ **Test coverage: 28 tests**
-  - Comprehensive truth table tests.
-  - Edge cases for all exception types.
-
-### What's Left Out:
-
-- ⏳ **Circuit breaker for SentinelHub engines** (metrics + raster).
-- ⏳ **Extract shared `_CircuitBreaker` to `ndvi/circuit_breaker.py`**.
-- ⏳ **Retry-After header parsing for 429 responses**.
-- ⏳ **Prometheus metrics for circuit breaker state**.
-- ⏳ **Admin endpoint to reset circuit breaker**.
-
-**Full details:** See `NDVI_RETRY_POLICY_STATUS.md`.
+**Full details:** See `docs/status/NDVI_RETRY_POLICY_STATUS.md`.
 
 ---
 
 ## Phase 2 - Redis Streams for NDVI
 
-**Status:** 🟡 **PARTIALLY IMPLEMENTED** (Stages 1, 3, 4, and 5 complete; Stage 6 and rollout work still pending)
+**Status:** 🟢 **STAGES 1-7 COMPLETE** (was: "Stages 1, 3, 4, and 5
+complete" — Stage 4 is now also complete, plus Stages 6 and 7). **Stage 8
+(rollout) is intentionally deferred** until the existing Celery
+deployment has been observed under stream-side metrics for an
+appropriate period.
 
-### Stage 1 - Centralize NDVI Dispatch (100% Complete)
+### Stage 1 - Centralize NDVI Dispatch (✅ 100% Complete — unchanged)
 
-**What's Implemented:**
+- ✅ `dispatch_ndvi_job()` and `dispatch_farm_state_coverage()` in
+  `ndvi/services.py`.
+- ✅ `NDVI_QUEUE_BACKEND = "celery"` in `config/settings.py:712` with
+  routing switch.
+- ✅ All 9 call sites route through dispatch helpers.
+- ✅ Tests for Celery routing and stream-backed dispatch behavior.
 
-- ✅ **Dispatch helpers created**
-  - `dispatch_ndvi_job()` in `ndvi/services.py`
-  - `dispatch_farm_state_coverage()` in `ndvi/services.py`
-  
-- ✅ **Settings added**
-  - `NDVI_QUEUE_BACKEND = "celery"` in `config/settings.py`
-  - Default value keeps existing behavior
-  - Future value: `"stream"` for Redis Streams
+### Stage 2 - Choose Transport Model (✅ 100% Complete — was 40%)
 
-- ✅ **Routing switch implemented**
-  - `NDVI_QUEUE_BACKEND` now controls dispatch branching
-  - Celery remains the default backend
-  - `stream` now publishes into Redis Streams through the producer
+- ✅ **Decision documented:** separate Redis Streams consumer, not
+  Celery's built-in stream transport.
+- ✅ **Consumer implementation exists** at
+  `ndvi/management/commands/consume_ndvi_stream.py` (528 lines).
+  - `XGROUP CREATE` (`_ensure_group`, line 149) with `mkstream=True`
+    and `BUSYGROUP` handling.
+  - Blocking `XREADGROUP` (`_read_messages`, line 168) with
+    `count`/`block` parameters.
+  - `XACK` after successful enqueue (in `_process_message`, line 286).
+  - `XPENDING` / `XAUTOCLAIM` reclaim loop
+    (`_periodic_reclaim`, `_run_autoclaim`, lines 197/208).
+  - Dead-letter stream handling (`_move_to_dlq`, line 398) with
+    enriched payload (`dlq_reason`, `dlq_original_id`,
+    `dlq_delivery_count`).
+  - `XTRIM` for stream and DLQ (`_trim_streams`, line 517).
 
-- ✅ **Tests exist for helper and routing behavior**
-  - Celery routing covered
-  - Stream-backed dispatch behavior covered
+### Stage 3 - Stream Producer Logic (✅ 100% Complete — unchanged)
 
-**What's Left Out:**
+- ✅ `ndvi/streams.py` exports `build_stream_payload`,
+  `publish_ndvi_job`, `build_farm_state_coverage_payload`,
+  `publish_farm_state_coverage`.
+- ✅ Stream payload schema covers `job_id`, `request_hash`,
+  `farm_id`, `owner_id`, `engine`, `job_type`, params,
+  `colormap_normalization`, `enqueue_timestamp`.
+- ✅ `XADD` with `MAXLEN ~` from `NDVI_STREAM_MAXLEN`.
+- ✅ Dispatch helpers publish to the stream when
+  `NDVI_QUEUE_BACKEND=stream`.
+- ✅ Tests in `ndvi/tests/test_ndvi_streams.py` (~16 tests).
 
-- ✅ **All `.delay()` calls replaced**
-  - Direct NDVI enqueue call sites route through dispatch helpers
-  - No Stage 1 code work remains
+### Stage 4 - Stream Consumer Logic (✅ 100% Complete — was 0%)
 
----
+- ✅ `ndvi/management/commands/consume_ndvi_stream.py` is fully
+  implemented.
+- ✅ `XGROUP CREATE` for bootstrap with idempotent re-create handling.
+- ✅ Blocking `XREADGROUP` read loop.
+- ✅ Payload routing to `run_ndvi_job` and
+  `compute_farm_state_coverage` Celery tasks.
+- ✅ `XACK` after successful enqueue.
+- ✅ `XPENDING` / `XCLAIM` reclaim path for stale deliveries.
+- ✅ Poison-message budget enforced via
+  `NDVI_STREAM_MAX_DELIVERIES`; excess deliveries route to DLQ.
+- ✅ Dead-letter stream routing with enriched metadata.
+- ✅ `XTRIM` for stream and DLQ.
 
-### Stage 2 - Choose Transport Model (✅ Decided, ❌ Not Implemented)
+### Stage 5 - Settings and Feature Flags (✅ 100% Complete — unchanged)
 
-**Decision Made:**
+All 15 stream-related settings exist in `config/settings.py:712-732`:
 
-- ✅ **Separate Redis Streams consumer** (not Celery's built-in stream transport)
-- ✅ Architecture documented in implementation plan
-- ✅ Rationale documented (Celery/Kombu stream support is open risk)
+- `NDVI_QUEUE_BACKEND` (default `"celery"`)
+- `NDVI_STREAM_NAME` (default `"ndvi:stream"`)
+- `NDVI_STREAM_GROUP` (default `"ndvi-group"`)
+- `NDVI_STREAM_CONSUMER` (default `"consumer_1"`)
+- `NDVI_STREAM_METRICS_PORT` (default `8002`)
+- `NDVI_STREAM_BLOCK_MS` (default `5000`)
+- `NDVI_STREAM_CLAIM_IDLE_MS` (default `60000`)
+- `NDVI_STREAM_MAXLEN` (default `10000`)
+- `NDVI_STREAM_DLQ_NAME` (default `"ndvi:dlq"`)
+- `NDVI_STREAM_DLQ_MAXLEN` (default `10000`)
+- `NDVI_STREAM_BATCH_SIZE` (default `10`)
+- `NDVI_STREAM_MAX_DELIVERIES` (default `5`)
+- `NDVI_STREAM_START_ID` (default `"0"`)
+- `NDVI_STREAM_RECLAIM_INTERVAL_SECONDS` (default `60`)
 
-**What's Left Out:**
+Default remains `celery`; stream mode is opt-in.
 
-- ✅ **Consumer implementation exists**
-  - `ndvi/management/commands/consume_ndvi_stream.py` exists
-  - `XREADGROUP` logic is implemented
-  - `XACK` logic is implemented
-  - `XPENDING` monitoring is implemented
-  - `XAUTOCLAIM`/`XCLAIM` reclaim logic is implemented
-  - Dead-letter stream handling is implemented
+### Stage 6 - Observability (✅ 100% Complete — was 0%)
 
----
+- ✅ **Stream metrics exported** in `ndvi/metrics.py:37-59`:
+  - `redis_stream_pending_entries{group}`
+  - `redis_stream_pending_age_max{group}`
+  - `ndvi_stream_consumer_heartbeat{consumer}`
+  - `ndvi_stream_consumer_failures_total{consumer, failure_type}`
+- ✅ **Upstream request and latency metrics** for SentinelHub, STAC,
+  and Raster engines (`ndvi/metrics.py:11-22`).
+- ✅ **NDVI task runtime histogram** `ndvi_task_runtime_seconds{task,
+  engine}` (`ndvi/metrics.py:30`).
+- ✅ **Grafana panels** for stream lag and consumer health added to
+  `grafana/dashboards/weather-apis-ndvi.json` (lines 290, 319, 348, 377).
+- ✅ **Prometheus alerts** in `monitoring/prometheus/alerts.yml:168-204`:
+  - `NDVIStreamLagHigh` (pending > 100 for 10m)
+  - `NDVIStreamOldMessage` (age > 3600s)
+  - `NDVIStreamConsumerDown` (heartbeat stale > 600s)
+  - `NDVIStreamConsumerFailuresHigh` (failure rate > 0.1/s)
+- ✅ **Prometheus scrape job** for the consumer's metrics endpoint
+  registered in `monitoring/prometheus/prometheus.yml:20`
+  (`ndvi_stream_consumer`).
+- ✅ **NDVI consumer metrics server** is started in-process by
+  `consume_ndvi_stream._start_metrics_server` (line 123).
 
-### Stage 3 - Stream Producer Logic (100% Complete)
+### Stage 7 - Tests (✅ 100% Complete — was 35%)
 
-**What's Implemented:**
+- ✅ **Producer and dispatch tests** in
+  `ndvi/tests/test_ndvi_streams.py` (~16 tests).
+- ✅ **Consumer tests** in
+  `ndvi/tests/test_ndvi_stream_consumer.py` (251 lines), covering:
+  - metrics server lifecycle
+  - pending/age gauge updates
+  - enqueue + `XACK` happy path
+  - stale message reclaim via `XPENDING`/`XCLAIM`
+  - dead-letter routing and poison-message budget
+- ✅ **Task integration tests** in
+  `ndvi/tests/test_ndvi_tasks_extra.py`.
+- ✅ **Circuit-breaker admin tests** in
+  `ndvi/tests/test_ndvi_admin_views.py` (4 tests).
+- ✅ **Retry-After tests** in
+  `ndvi/tests/test_ndvi_retry_policy.py:180-246` (7 tests).
 
-- ✅ **Stream producer module exists**
-  - `ndvi/streams.py` implements the producer path
-  - `publish_ndvi_job()` is implemented
-  - `publish_farm_state_coverage()` is implemented
+### Stage 8 - Rollout (🔴 Intentionally Deferred — 0%)
 
-- ✅ **Stream payload schema exists**
-  - NDVI jobs serialize `job_id`, `request_hash`, farm/owner identifiers,
-    engine, job type, params, colormap normalization, and enqueue timestamp
-  - Farm state coverage payloads serialize their dedicated fields
-
-- ✅ **Redis stream publish calls exist**
-  - Producer uses `XADD`
-  - Producer respects `NDVI_STREAM_NAME` and `NDVI_STREAM_MAXLEN`
-
-- ✅ **Dispatch helpers integrate with the producer**
-  - `dispatch_ndvi_job()` publishes when `NDVI_QUEUE_BACKEND=stream`
-  - `dispatch_farm_state_coverage()` publishes when
-    `NDVI_QUEUE_BACKEND=stream`
-
-- ✅ **Producer tests exist**
-  - `ndvi/tests/test_ndvi_streams.py` covers payload shape
-  - Publish helpers and dispatch integration are tested
-
-**What's Left Out:**
-
-- ✅ Producer-side work is in place
-- Remaining gaps for stream mode are consumer, observability, and rollout work
-
----
-
-### Stage 4 - Stream Consumer Logic (100% Complete)
-
-**What's Implemented:**
-
-- ✅ **Consumer implementation exists**
-  - `ndvi/management/commands/consume_ndvi_stream.py` is fully implemented
-  - `XGROUP CREATE` logic for bootstrap is implemented
-  - Blocking `XREADGROUP` read loop is implemented
-  - Payload routing to correct Celery tasks is implemented
-  - `XACK` after successful enqueue is implemented
-  - `XPENDING`/`XCLAIM` reclaim path for stale deliveries is implemented
-  - Poison-message budget and delivery cutoff are implemented
-  - Dead-letter stream routing is implemented
-  - `XTRIM` for stream/DLQ trimming is implemented
-
----
-
-### Stage 5 - Settings and Feature Flags (100% Complete)
-
-**What's Implemented:**
-
-- ✅ `NDVI_QUEUE_BACKEND`
-- ✅ `NDVI_STREAM_NAME`
-- ✅ `NDVI_STREAM_GROUP`
-- ✅ `NDVI_STREAM_CONSUMER`
-- ✅ `NDVI_STREAM_BLOCK_MS`
-- ✅ `NDVI_STREAM_CLAIM_IDLE_MS`
-- ✅ `NDVI_STREAM_MAXLEN`
-- ✅ `NDVI_STREAM_DLQ_NAME`
-- ✅ `NDVI_STREAM_DLQ_MAXLEN`
-- ✅ Default remains `celery`, so stream mode is opt-in
-
-**What's Left Out:**
-
-- ✅ No Stage 5 settings work remains
-
----
-
-### Stage 6 - Observability (100% Complete)
-
-**What's Implemented:**
-
-- ✅ **Upstream request and latency metrics recorded**
-  - `ndvi_upstream_requests_total` now covers SentinelHub, STAC, and Raster engines
-  - `ndvi_upstream_latency_seconds` now covers SentinelHub, STAC, and Raster engines
-- ✅ **Stream metrics exported**
-  - `redis_stream_pending_entries{group="ndvi_stream"}`
-  - `redis_stream_pending_age_max`
-  - `ndvi_stream_consumer_heartbeat`
-  - `ndvi_stream_consumer_failures_total`
-- ✅ **NDVI task runtime histogram exported**
-  - `ndvi_task_runtime_seconds{task,engine}`
-- ✅ **Grafana panels for stream lag and health**
-  - Added to `grafana/dashboards/weather-apis-ndvi.json`
-- ✅ **Alerting for stream lag and consumer failure**
-  - Added to `monitoring/prometheus/alerts.yml`
-
----
-
-### Stage 7 - Tests (100% Complete)
-
-**What's Implemented:**
-
-- ✅ **Producer and dispatch tests exist**
-  - `ndvi/tests/test_ndvi_streams.py` exists
-- ✅ **Consumer tests exist**
-  - `ndvi/tests/test_ndvi_stream_consumer.py` exists
-  - Covers enqueue + `XACK`
-  - Covers stale message reclaim via `XPENDING`/`XCLAIM`
-  - Covers dead-letter routing and poison-message budget
-- ✅ **Task integration tests**
-  - `ndvi/tests/test_ndvi_tasks_extra.py` exists
-
----
-
-### Stage 8 - Rollout (0% Complete)
-
-**What's Left Out:**
-
-- ❌ No incremental rollout
-- No stream mode enabled for any NDVI workflow
-- No production pilot with stream-backed dispatch
+- ❌ No incremental rollout has occurred.
+- `NDVI_QUEUE_BACKEND` default is still `"celery"`
+  (`config/settings.py:712`).
+- No production pilot with stream-backed dispatch.
+- **Why this is correct:** the rollout document
+  (`docs/architecture/ndvi/08_rollout_strategy.md`) requires
+  shadow-compute → dual-run → promotion → deprecation, gated on
+  observation. The consumer is ready; the rollout itself is
+  operational work, not code work.
 
 ---
 
 ## Phase 3 - Observability Enhancements
 
-**Status:** 🔴 **NOT STARTED** (0% Complete)
+**Status:** 🟢 **MERGED INTO PHASE 2 STAGE 6 (COMPLETE)**
 
-**What's Left Out:**
-
-- ❌ All Phase 3 observability features depend on Phase 2 completion
-- ❌ Stream lag panels in Grafana
-- ❌ Stream lag alerting
-- ❌ NDVI-specific Celery histograms
+All items previously listed as Phase 3 ("stream lag panels in Grafana",
+"stream lag alerting", "NDVI-specific Celery histograms") were implemented
+as part of Phase 2 Stage 6 (see above). No separate Phase 3 work remains.
 
 ---
 
-## Phase 4 - Kafka (Future/Conditional)
+## Phase 4 - Kafka (Future / Conditional)
 
-**Status:** 🔴 **NOT STARTED** (Intentionally Deferred)
+**Status:** 🔴 **NOT STARTED** (Intentionally Deferred) — unchanged.
 
-**Current State:**
+- ✅ Kafka adoption triggers defined in `ndvi-pipeline-evolution.md`.
+- ✅ Decision to defer Kafka is documented and justified.
+- ✅ Thresholds established (stream lag despite consumer scale, durable
+  replay across services, partitioned/fan-out consumption).
+- ❌ Kafka topics, producers, consumers, and migration path are not
+  implemented.
 
-- ✅ Kafka adoption triggers defined in architecture doc
-- ✅ Decision to defer Kafka is documented and justified
-- ✅ Thresholds established:
-  - Stream lag remains high despite adding consumers
-  - Need for durable replay across multiple services
-  - Demand for partitioned/fan-out consumption
-
-**What's Left Out:**
-
-- ❌ Kafka topics (`ndvi-requests`, `ndvi-results`)
-- ❌ Kafka producers/consumers
-- ❌ Migration path from Redis Streams to Kafka
+**Earliest re-evaluation date:** Q3 2026 (per
+`ndvi-pipeline-evolution.md`).
 
 ---
 
@@ -322,140 +282,116 @@ The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add dur
 | Phase | Status | Completion | Notes |
 |-------|--------|------------|-------|
 | **Phase 1: Redis Sentinel** | ✅ Complete | **100%** | Sentinel HA for broker/cache/result backend |
-| **Phase 1.5: Retry Policy Hardening** | ✅ Complete | **80%** | Policy consolidated, STAC circuit breaker done |
-| **Phase 2 Stage 1: Centralize Dispatch** | ✅ Complete | **100%** | Helpers, routing switch, and tests are in place |
-| **Phase 2 Stage 2: Transport Model** | 🟡 Decided | **40%** | Architecture chosen; separate consumer still missing |
-| **Phase 2 Stage 3: Stream Producer** | ✅ Complete | **100%** | Producer code, payload schema, and tests are in place |
-| **Phase 2 Stage 4: Stream Consumer** | 🔴 Not Started | **0%** | No consumer command or reclaim/DLQ loop exists |
-| **Phase 2 Stage 5: Settings** | ✅ Complete | **100%** | Stream settings and opt-in defaults are in place |
-| **Phase 2 Stage 6: Observability** | 🔴 Not Started | **0%** | No stream metrics exported |
-| **Phase 2 Stage 7: Tests** | 🟡 Partial | **35%** | Producer tests exist; consumer tests are missing |
-| **Phase 2 Stage 8: Rollout** | 🔴 Not Started | **0%** | No production pilot |
-| **Phase 3: Observability** | 🔴 Not Started | **0%** | Merged into Phase 2 Stage 6 |
+| **Phase 1.5: Retry Policy** | ✅ Complete | **100%** | Policy + shared circuit breaker + CB metrics + admin |
+| **Phase 2 Stage 1: Centralize Dispatch** | ✅ Complete | **100%** | Helpers, routing switch, tests in place |
+| **Phase 2 Stage 2: Transport Model** | ✅ Complete | **100%** | Separate consumer implemented |
+| **Phase 2 Stage 3: Stream Producer** | ✅ Complete | **100%** | Producer code, payload schema, and tests in place |
+| **Phase 2 Stage 4: Stream Consumer** | ✅ Complete | **100%** | `consume_ndvi_stream` command with reclaim/DLQ/trim |
+| **Phase 2 Stage 5: Settings** | ✅ Complete | **100%** | 15 stream settings; default stays `celery` |
+| **Phase 2 Stage 6: Observability** | ✅ Complete | **100%** | Stream metrics, Grafana panels, Prometheus alerts |
+| **Phase 2 Stage 7: Tests** | ✅ Complete | **100%** | Producer, consumer, admin, and retry-after tests |
+| **Phase 2 Stage 8: Rollout** | 🔴 Deferred | **0%** | No production pilot; `NDVI_QUEUE_BACKEND=celery` |
+| **Phase 3: Observability** | ✅ Complete | **100%** | Merged into Phase 2 Stage 6 |
 | **Phase 4: Kafka** | 🔴 Deferred | **0%** | Intentionally deferred until thresholds met |
 
 ---
 
-## Current Repo State (Apr 18, 2026)
+## Current Repo State (June 03, 2026)
 
-- Producer code exists in `ndvi/streams.py`
-- Producer tests exist in `ndvi/tests/test_ndvi_streams.py`
-- Stream settings already exist in `config/settings.py`
-- Stream consumer, stream metrics, and rollout work are still missing
+The following are present in the repo:
+
+- `ndvi/streams.py` — producer module (`publish_ndvi_job`,
+  `publish_farm_state_coverage`, `build_stream_payload`,
+  `build_farm_state_coverage_payload`).
+- `ndvi/management/commands/consume_ndvi_stream.py` — consumer command
+  with `XGROUP CREATE`, `XREADGROUP`, `XACK`, `XPENDING`/`XAUTOCLAIM`,
+  DLQ routing, `XTRIM`, and graceful shutdown.
+- `ndvi/circuit_breaker.py` — shared `CircuitBreaker` class with
+  CLOSED/OPEN/HALF_OPEN state machine, eagerly registered for all three
+  engines in `ndvi/apps.py:12-45`.
+- `ndvi/circuit_breaker.py` exports `register_circuit_breaker`,
+  `get_circuit_breaker`, `list_circuit_breakers` for the admin endpoint.
+- `ndvi/views.py:1309` — `CircuitBreakerResetView` (`IsAdminUser`).
+- `ndvi/views.py:1383` — upstream health-check endpoint.
+- `ndvi/metrics.py:37-80` — stream, upstream, task runtime, and
+  circuit-breaker metrics.
+- `ndvi/tests/test_ndvi_streams.py`,
+  `ndvi/tests/test_ndvi_stream_consumer.py`,
+  `ndvi/tests/test_ndvi_admin_views.py`,
+  `ndvi/tests/test_ndvi_retry_policy.py` — test coverage.
+- `monitoring/prometheus/alerts.yml:168-204` — four stream alerts.
+- `monitoring/prometheus/prometheus.yml:20` — consumer scrape job.
+- `grafana/dashboards/weather-apis-ndvi.json` — stream lag, age,
+  heartbeat, and failure panels (lines 290, 319, 348, 377).
+- `grafana/dashboards/weather-apis-observability.json` — circuit-breaker
+  state and transition panels (lines 998, 1071, 1144, 1217).
+- `config/settings.py:712-732` — all 15 stream settings; default
+  `NDVI_QUEUE_BACKEND=celery`.
+
+The following are **not** present, by design:
+
+- No production deployment of `NDVI_QUEUE_BACKEND=stream`.
+- No Kafka topics, producers, or consumers.
 
 ---
 
 ## Recommended Next Steps
 
-### Immediate (This Week)
+### Operational (this quarter)
 
-1. **Complete Retry Policy Phase 2** (1-2 days)
-   - Extract `_CircuitBreaker` to `ndvi/circuit_breaker.py`
-   - Add circuit breaker to SentinelHub engines
-   - See `NDVI_RETRY_POLICY_STATUS.md` for detailed roadmap
+1. **Stage 8 pilot** — Enable `NDVI_QUEUE_BACKEND=stream` for
+   `enqueue_daily_farm_state_coverage()` only. Observe stream metrics
+   for 1-2 weeks. See `docs/architecture/ndvi/08_rollout_strategy.md`
+   for the phased rollout criteria.
 
-2. **Implement Stream Consumer** (Stage 4, 2-4 days)
-   - Create management command for consumer
-   - Implement `XGROUP CREATE`, `XREADGROUP`, `XACK`, `XPENDING`, and `XCLAIM`
-   - Add DLQ routing and `XTRIM` handling
-   - **Important:** Stream consumer should use `should_retry()` from
-     `ndvi/retry_policy.py` for consistent retry decisions
+### Potential follow-up work
 
-### Short-term (2-3 Weeks)
+2. **DLQ counter** — `ndvi_stream_dlq_total{consumer}` is named in
+   `docs/architecture/ndvi/07_observability.md` but is not currently
+   exported. DLQ rate is inferable from
+   `ndvi_stream_consumer_failures_total` + `redis_stream_pending_entries`,
+   but a dedicated counter would simplify alerting. Adding it would
+   require a new Counter in `ndvi/metrics.py` and one `inc()` in
+   `_move_to_dlq` (`consume_ndvi_stream.py:398`).
 
-3. **Add observability** (Stage 6)
-   - Export stream metrics to Prometheus
-   - Add Grafana panels for stream lag
-   - Set up alerting rules
-
-4. **Add comprehensive tests** (Stage 7)
-   - Consumer tests
-   - Reclaim/DLQ tests
-   - Trim and poison-message budget tests
-
-### Medium-term (1-2 Months)
-
-5. **Incremental rollout** (Stage 8)
-   - Enable stream mode for `enqueue_daily_farm_state_coverage()` first
-   - Observe metrics for 1-2 weeks
-   - Expand to remaining NDVI paths
-
-6. **Phase 3 observability**
-   - Add stream lag panels
-   - Add Celery NDVI-specific histograms
-   - Set up composite alerting
-
-### Long-term (3-6 Months)
-
-7. **Evaluate Phase 4 triggers**
-   - Monitor stream lag trends
-   - Assess replay/fan-out requirements
-   - Make Kafka decision based on data
+3. **Phase 4 (Kafka) re-evaluation** — earliest review Q3 2026 per
+   `ndvi-pipeline-evolution.md`. No code work; check the
+   documented triggers (stream lag despite consumer scale, replay/fan-out
+   requirements).
 
 ---
 
 ## Technical Debt & Risks
 
-### Current Risks
+### Resolved since the previous version of this doc
+
+- ~~No stream consumer code exists~~ — implemented in
+  `ndvi/management/commands/consume_ndvi_stream.py`.
+- ~~Producer exists without a consumer~~ — consumer now exists; the
+  risk of enabling stream mode "with nothing to drain" is gone, but
+  Stage 8 is still gated on operational observation.
+- ~~Observability and rollout criteria still need implementation~~ —
+  observability is in place; rollout is intentionally the next
+  operational step.
+
+### Current risks
 
 1. **Celery failover latency** (Phase 1)
-   - 54.7s recovery time may be unacceptable for latency-sensitive tasks
-   - **Mitigation:** Tune Celery reconnect or accept delay for background jobs
+   - 54.7s recovery may be unacceptable for latency-sensitive tasks.
+   - **Mitigation:** Tune Celery reconnect or accept delay for
+     background jobs.
 
-2. **Producer exists without a consumer** (Phase 2)
-   - Dispatch helpers and producer routing are implemented
-   - **Risk:** Enabling `NDVI_QUEUE_BACKEND=stream` before deploying a consumer
-     will publish work that never drains
-   - **Mitigation:** Keep `NDVI_QUEUE_BACKEND=celery` until Stage 4 lands
-
-3. **Separate consumer architecture is chosen but incomplete** (Phase 2)
-   - Celery/Kombu Redis Streams support unverified in production
-   - **Decision made:** Use separate consumer (lower risk)
-   - **Status:** Producer exists; missing consumer still blocks rollout
-
-### Technical Debt
-
-- No stream consumer-related code exists yet
-- Producer and settings exist, but the status docs had drifted behind the repo
-- Observability and rollout criteria still need implementation
+2. **DLQ volume is not separately counted** — see "Recommended Next
+   Steps" above. Current alerting covers
+   `ndvi_stream_consumer_failures_total` and
+   `redis_stream_pending_entries`, which are sufficient for the
+   existing alerts.
 
 ---
 
-## Files That Should Exist (Per Architecture Docs)
+## Document History
 
-### Required Files Not Yet Created:
-
-```
-ndvi/management/commands/
-  consume_ndvi_stream.py                 # Stream consumer command
-ndvi/tests/test_ndvi_stream_consumer.py  # Consumer tests
-```
-
-### Files That Exist But Need Updates:
-
-```
-ndvi/streams.py                          # Producer is done; consumer compatibility must follow
-ndvi/metrics.py                          # Extend with stream metrics
-ndvi/services.py                         # Producer routing is done; keep stream mode disabled until consumer ships
-docs/architecture/ndvi-phase-2-implementation-plan.md
-docs/status/NDVI_PIPELINE_IMPLEMENTATION_STATUS.md
-```
-
----
-
-## Conclusion
-
-**Phase 1 (Redis Sentinel)** is fully implemented and validated in production-like conditions.
-
-**Phase 1.5 (Retry Policy Hardening)** is complete with 80% of planned work done.
-The retry policy is now a single source of truth with consistent error handling
-across all NDVI engines. Circuit breaker exists for STAC only; SentinelHub
-engines remain to be updated.
-
-**Phase 2 (Redis Streams)** has dispatch centralization, producer logic, producer tests, and stream settings in place. The stream consumer, stream observability, and rollout work are still missing.
-
-**Recommended implementation order:**
-1. Complete retry policy Phase 2 (circuit breaker expansion) — 1-2 days
-2. Implement stream consumer (Stage 4) — 2-4 days
-3. Add observability and consumer tests (Stages 6-7) — 2-3 days
-4. Incremental rollout (Stage 8) — 1-2 weeks observation
+| Version | Date | Author | Notes |
+|---------|------|--------|-------|
+| 1.0 | April 18, 2026 | opencode | Initial status snapshot; Stages 4, 6, 7 marked incomplete. |
+| 1.1 | June 03, 2026 | opencode | Re-verified: Stages 2, 4, 6, 7 are now complete in code. Stage 8 remains intentionally deferred. |

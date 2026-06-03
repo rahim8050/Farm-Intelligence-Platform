@@ -1,8 +1,18 @@
 # NDVI Retry Policy – Implementation Status
 
-**Date:** April 10, 2026
+**Date:** April 10, 2026 (Phase 1)
+**Date:** April 12, 2026 (Phases 2 and 3)
+**Date:** June 03, 2026 (re-verified)
 **Policy Module:** `ndvi/retry_policy.py`
 **Related:** `docs/contributing_weather_engines.md`, `NDVI_PIPELINE_IMPLEMENTATION_STATUS.md`
+
+> **Re-verification (June 03, 2026):** This document was last rewritten on
+> April 12, 2026. Re-verified against the current code: all three phases
+> remain complete. The shared `CircuitBreaker` is in
+> `ndvi/circuit_breaker.py:46`; the admin reset endpoint is at
+> `ndvi/views.py:1309`; the upstream health endpoint is at
+> `ndvi/views.py:1383`; circuit-breaker metrics are in
+> `ndvi/metrics.py:69-80`. No drift detected.
 
 ---
 
@@ -222,3 +232,14 @@ expansion) and Phase 3 (observability) remain.
 - `fd4baf4` fix(ndvi): make farm state GET read-only with cache layer
 - `bdca6b7` fix(ndvi): harden farm state cache with stampede protection
 - `6e59ed6` fix(ndvi): align test assertions with _safe_error_message() codes
+
+---
+
+## Document History
+
+| Version | Date | Notes |
+|---------|------|-------|
+| 1.0 | April 10, 2026 | Phase 1 (policy consolidation) complete. |
+| 1.1 | April 11, 2026 | Phase 2 (circuit breaker expansion) complete. |
+| 1.2 | April 12, 2026 | Phase 3 (observability + admin controls) complete. |
+| 1.3 | June 03, 2026 | Re-verified; no drift from code.

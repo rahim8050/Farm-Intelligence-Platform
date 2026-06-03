@@ -1,85 +1,151 @@
 # Radio Architecture Implementation Summary
 
-## Overview
+**Date:** May 11, 2026 (architecture)
+**Date:** June 03, 2026 (implementation verified)
+**Status:** ✅ **COMPLETE** — architecture and implementation are both shipped.
 
-Created production-grade architecture documentation for integrating internet radio streaming into the Django + Nextcloud ecosystem.
+The original 2026-05-11 snapshot was captured before any code was written and
+ended with the line *"Status: Architecture complete, implementation not
+started"*. That line is now stale. This document records the current
+implementation state and the evidence in the repo.
 
-> **Implementation Status**: ✅ COMPLETE
-
-## Documents Created
-
-### Core Documentation (docs/architecture/radio/)
-
-| Document | Description |
-|----------|-------------|
-| [README.md](./README.md) | Index and overview |
-| [01_system_overview.md](./01_system_overview.md) | Purpose, Django-Nextcloud relationship, architecture diagrams |
-| [02_api_architecture.md](./02_api_architecture.md) | Endpoint structure, versioning, response envelopes |
-| [03_streaming_architecture.md](./03_streaming_architecture.md) | Metadata-only approach, direct streaming rationale |
-| [04_app_structure.md](./04_app_structure.md) | Folder hierarchy, service layer pattern |
-| [05_data_model.md](./05_data_model.md) | Station/Provider models, future schemas |
-| [06_security.md](./06_security.md) | HTTPS, throttling, auth strategy |
-| [07_nextcloud_integration.md](./07_nextcloud_integration.md) | Frontend consumption flow, audio player |
-| [08_future_expansion.md](./08_future_expansion.md) | Podcasts, emergency broadcasts, TTS, multi-provider |
-| [09_operational.md](./09_operational.md) | Logging, monitoring, health checks, failure handling |
-
-### ADRs (docs/architecture/radio/adr/)
-
-| ADR | Title | Decision |
-|-----|-------|----------|
-| 001 | Dedicated Radio App | New `radio/` app |
-| 002 | No Stream Proxying | Django doesn't proxy audio |
-| 003 | Metadata APIs Preferred | Django returns metadata only |
-| 004 | Direct Provider Streaming | Clients stream directly from providers |
-
-## Key Architectural Decisions
-
-1. **Metadata-only API**: Django returns station info and stream URLs, not audio
-2. **Direct streaming**: Audio flows from provider to client, bypassing Django
-3. **Dedicated app**: Radio in own Django app for isolation and future growth
-4. **Public access**: No authentication required - radio streams are public
-5. **Database-backed**: Future-proof schema supports favorites, history, analytics
-
-## Files Created: 13 markdown documents
-
-```
-docs/architecture/radio/
-├── README.md
-├── 01_system_overview.md
-├── 02_api_architecture.md
-├── 03_streaming_architecture.md
-├── 04_app_structure.md
-├── 05_data_model.md
-├── 06_security.md
-├── 07_nextcloud_integration.md
-├── 08_future_expansion.md
-├── 09_operational.md
-└── adr/
-    ├── 001_dedicated_radio_app.md
-    ├── 002_no_stream_proxying.md
-    ├── 003_metadata_apis_preferred.md
-    └── 004_direct_provider_streaming.md
-```
-
-## Alignment with Existing Patterns
-
-- `/api/v1/` prefix consistency
-- Response envelope format (`status`, `message`, `data`, `errors`)
-- App structure matching `activities/`, `weather/`, `ndvi/`
-- DRF + drf-spectacular for OpenAPI docs
-
-## Next Steps (Implementation Phase)
-
-When implementation begins:
-1. Create `radio/` Django app
-2. Add `Station` and `Provider` models
-3. Create serializers and views
-4. Configure URLs under `/api/v1/radio/`
-5. Load BBC 1Xtra seed data
-6. Add tests
-7. Document with @extend_schema
+> For the architecture design, see [`docs/architecture/radio/`](./README.md).
+> For live status, see this document.
 
 ---
 
-*Created: May 11, 2026*
-*Status: Architecture complete, implementation not started*
+## Executive Summary
+
+The Radio app is implemented end-to-end and exposed under `/api/v1/radio/`.
+The app is registered in `INSTALLED_APPS`, models are migrated, four endpoints
+return the standard `success_response` envelope, three providers (SomaFM,
+TuneIn, and a built-in BBC catalog) auto-register on import, and the test
+suite covers views, providers, and the seed-data management command.
+
+---
+
+## What Is Implemented
+
+### App and configuration
+
+- `radio/` Django app registered as `RadioConfig` (`radio/apps.py:4-7`).
+- Listed in `INSTALLED_APPS` (`config/settings.py:106`).
+- Mounted at `/api/v1/radio/` (`config/urls.py:95`).
+- Two migrations present: `radio/migrations/0001_initial.py`,
+  `radio/migrations/0002_add_provider_type.py`.
+
+### Models
+
+- `Provider` model with `ProviderType` choices (`radio/models.py:12-36`).
+- `Station` model with HTTPS upgrade logic, `is_active`, `provider`
+  foreign-key, and station metadata (`radio/models.py:39-73`).
+- Admin registration (`radio/admin.py:6-17`).
+
+### Endpoints (all public, no authentication)
+
+| URL | View | File |
+|---|---|---|
+| `GET /api/v1/radio/stations/` | `StationListView` | `radio/views.py:76` |
+| `GET /api/v1/radio/stations/<id>/` | `StationDetailView` | `radio/views.py` |
+| `GET /api/v1/radio/stations/<id>/stream/` | `StationStreamView` | `radio/views.py` |
+| `GET /api/v1/radio/providers/` | `ProviderListView` | `radio/views.py` |
+
+All four views are declared `permission_classes = [AllowAny]` and document
+their response shape with `inline_serializer` envelopes (`radio/views.py:27-73,
+86-91, 119-124, 164-169, 214-219`).
+
+### Serializers
+
+- `ProviderSerializer` (`radio/serializers.py:15-`).
+- `StationSerializer` and `StationDetailSerializer` with HTTPS upgrade logic
+  (`radio/serializers.py:39-94`).
+
+### Provider abstraction
+
+- Abstract base: `RadioProvider` (`radio/providers/base.py:20-36`).
+- SomaFM provider with 7 stations (`radio/providers/somafm.py:4-89`,
+  `radio/providers/somafm.py:92-105`).
+- TuneIn provider with BBC World Service fallback
+  (`radio/providers/tunein.py:7-72`, `radio/providers/tunein.py:20-33`).
+- Provider registry with auto-registration on import
+  (`radio/providers/registry.py:5-23`).
+
+### Seed data
+
+- `radio/management/commands/load_stations.py` seeds:
+  - BBC 1Xtra (`radio/management/commands/load_stations.py:59-69`)
+  - BBC Radio 1 (`radio/management/commands/load_stations.py:47`)
+  - BBC Radio 2 (`radio/management/commands/load_stations.py:71`)
+  - 7 SomaFM stations via the SomaFM provider
+  - TuneIn catalog with BBC World Service fallback
+
+### Tests
+
+| File | Lines | Coverage |
+|---|---|---|
+| `radio/tests/test_views.py` | 85 | views, envelope shape, HTTPS upgrade |
+| `radio/tests/test_providers.py` | 177 | provider discovery and stream URLs |
+| `radio/tests/test_management.py` | 65 | `load_stations` management command |
+
+The view tests assert the `success_response` envelope shape
+(`radio/tests/test_views.py:34-36, 43-45, 56-58, 69-71`).
+
+### OpenAPI
+
+- `drf-spectacular` schemas registered for every endpoint with
+  `inline_serializer` envelopes, so Swagger UI shows the response shape
+  rather than "No response body".
+- Schema is regenerated by `python manage.py spectacular --file schema.yml`.
+
+---
+
+## What Is Intentionally Out of Scope
+
+These items come from the future-expansion document
+([`08_future_expansion.md`](./08_future_expansion.md)) and are **not**
+implemented, by design:
+
+- Podcast ingestion and feeds.
+- Emergency-broadcast routing and TTS-driven announcements.
+- Multi-tenant provider credentials (per-user API keys).
+- Per-user listening history and analytics.
+
+These are documented in [`08_future_expansion.md`](./08_future_expansion.md)
+as future work; no current code path references them.
+
+---
+
+## Architectural Decisions (Recap)
+
+The four ADRs in [`docs/architecture/radio/adr/`](./adr/) are unchanged and
+all reflected in the code:
+
+1. **001 — Dedicated Radio App.** Implemented as a top-level `radio/`
+   Django app.
+2. **002 — No Stream Proxying.** Django does not proxy audio; the
+   `StationStreamView` returns the provider's stream URL via the
+   `success_response` envelope.
+3. **003 — Metadata APIs Preferred.** Endpoints return station metadata;
+   no audio bytes flow through Django.
+4. **004 — Direct Provider Streaming.** The client opens the stream URL
+   directly; the provider abstraction in `radio/providers/` makes this
+   provider-agnostic.
+
+---
+
+## Verification
+
+- `python manage.py check` passes with the radio app installed.
+- `pytest radio/` runs the test suite for views, providers, and the
+  management command.
+- `python manage.py spectacular --file schema.yml` regenerates the
+  OpenAPI document with the four radio endpoints annotated.
+
+---
+
+## Document History
+
+| Version | Date | Notes |
+|---------|------|-------|
+| 1.0 | May 11, 2026 | Initial architecture documentation; implementation not started. |
+| 2.0 | June 03, 2026 | Implementation verified; views, serializers, providers, seed data, and tests are all in place. |

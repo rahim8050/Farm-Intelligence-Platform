@@ -7,6 +7,17 @@
 > `docs/architecture/ndvi-system-evolution-phased-spec.md`.
 > For live status, see `docs/status/NDVI_PIPELINE_IMPLEMENTATION_STATUS.md`.
 
+> **Update (June 03, 2026):** The body of this document still accurately
+> describes what was required for Stage 1, and that stage remains
+> complete. The downstream stages called out at the end of this
+> document ("Stage 3 Streams work", "Stage 4 consumer implementation")
+> are also complete in the current code. See the
+> [`NDVI Pipeline Implementation Status`](../../status/NDVI_PIPELINE_IMPLEMENTATION_STATUS.md)
+> doc for the verified state of all Phase 2 stages. The only item
+> still intentionally deferred is Stage 8 (incremental rollout);
+> `NDVI_QUEUE_BACKEND` remains `"celery"` until a production pilot is
+> approved.
+
 **Reference:** `docs/architecture/ndvi-phase-2-implementation-plan.md` - Stage 1  
 **Date:** April 4, 2026  
 **Status:** ✅ **Resolved** - Routing switch implementation is complete
