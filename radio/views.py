@@ -1,15 +1,17 @@
 """Radio API endpoints.
 
-This module provides endpoints for radio station discovery and streaming.
+This module provides endpoints for radio station discovery, streaming,
+and a lightweight health probe.
 
 Auth: Public access (no authentication required)
-Response: All responses use success_response envelope.
+Response: All responses use success_response envelope. Errors follow
+the standard DRF error envelope.
 """
 
 from __future__ import annotations
 
 from drf_spectacular.utils import extend_schema, inline_serializer
-from rest_framework import serializers
+from rest_framework import serializers, status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
@@ -23,6 +25,7 @@ from radio.serializers import (
     StationDetailSerializer,
     StationSerializer,
 )
+from radio.services import summarize_health
 
 StationListEnvelope = inline_serializer(
     name="StationListEnvelope",
@@ -68,6 +71,30 @@ StreamUrlEnvelope = inline_serializer(
                 "station_name": serializers.CharField(),
             },
         ),
+        "errors": serializers.JSONField(allow_null=True),
+    },
+)
+
+RadioHealthData = inline_serializer(
+    name="RadioHealthData",
+    fields={
+        "status": serializers.CharField(
+            help_text='"healthy", "degraded", or "unhealthy"'
+        ),
+        "timestamp": serializers.DateTimeField(),
+        "stations_total": serializers.IntegerField(),
+        "stations_available": serializers.IntegerField(),
+        "stations_unavailable": serializers.IntegerField(),
+        "stations_unchecked": serializers.IntegerField(),
+    },
+)
+
+RadioHealthEnvelope = inline_serializer(
+    name="RadioHealthEnvelope",
+    fields={
+        "status": serializers.IntegerField(),
+        "message": serializers.CharField(),
+        "data": RadioHealthData,
         "errors": serializers.JSONField(allow_null=True),
     },
 )
@@ -154,9 +181,17 @@ class StationDetailView(APIView):
 class StationStreamView(APIView):
     """Get stream URL for playback.
 
+    The station must be active and currently available (i.e. the
+    most recent health check was successful). Unavailable stations
+    return HTTP 503 with an explanatory error so clients can fall
+    back to an alternative or surface a "station down" UI state.
+
     Auth: Public
     Throttle: None
     Response: envelope with `data` containing stream_url and format.
+    Errors:
+        - 404 if the station does not exist or is inactive
+        - 503 if the station is not currently available
     """
 
     permission_classes = [AllowAny]
@@ -164,7 +199,11 @@ class StationStreamView(APIView):
     @extend_schema(
         responses={200: StreamUrlEnvelope},
         summary="Get stream URL",
-        description="Returns stream URL and metadata for playback.",
+        description=(
+            "Returns the stream URL and metadata for playback. "
+            "Returns 503 if the station's most recent health check "
+            "marked it unavailable."
+        ),
         operation_id="v1_radio_stations_stream",
     )
     def get(self, request: Request, station_id: str) -> Response:
@@ -177,6 +216,9 @@ class StationStreamView(APIView):
             - status: 0
             - message: "Stream URL retrieved successfully"
             - data: stream_url, format, bitrate, station_name
+
+        Side effects:
+            - None (read-only).
         """
         station = (
             Station.objects.filter(
@@ -190,6 +232,20 @@ class StationStreamView(APIView):
         if not station:
             raise NotFound("Station not found")
 
+        if station.is_available is False:
+            return Response(
+                {
+                    "status": 1,
+                    "message": "Station is currently unavailable",
+                    "data": None,
+                    "errors": {
+                        "station_id": station.id,
+                        "reason": "health_check_failed",
+                    },
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
         return success_response(
             {
                 "stream_url": station.stream_url,
@@ -199,6 +255,43 @@ class StationStreamView(APIView):
             },
             message="Stream URL retrieved successfully",
         )
+
+
+class RadioHealthView(APIView):
+    """Health probe for the radio service.
+
+    Returns a snapshot of station availability derived from the most
+    recent health-check pass. The endpoint is intended for ops
+    dashboards and uptime monitoring; it does not require auth.
+
+    Auth: Public
+    Throttle: None
+    Response: envelope with `data` = RadioHealthData fields.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        responses={200: RadioHealthEnvelope},
+        summary="Radio service health",
+        description=(
+            "Returns aggregate station availability: total active "
+            "stations, available, unavailable, and unchecked counts, "
+            "with a status flag of 'healthy', 'degraded', or "
+            "'unhealthy'."
+        ),
+        operation_id="v1_radio_health",
+    )
+    def get(self, request: Request) -> Response:
+        """Return a lightweight health snapshot for the radio service.
+
+        Outputs:
+            - data.status: one of 'healthy', 'degraded', 'unhealthy'
+            - data.stations_total / available / unavailable / unchecked
+            - data.timestamp: server time at which the snapshot was built
+        """
+        data = summarize_health()
+        return success_response(data, message="Radio health OK")
 
 
 class ProviderListView(APIView):

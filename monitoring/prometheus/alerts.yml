@@ -203,6 +203,48 @@ groups:
           summary: "NDVI stream consumer failures high"
           description: "NDVI stream consumer '{{ $labels.consumer }}' is failing ({{ $labels.failure_type }}) > 0.1/s for 10m."
 
+  - name: radio
+    rules:
+      - alert: RadioStationHealthCheckFailing
+        expr: |
+          sum by (station_id, provider_slug) (
+            rate(radio_station_health_failures_total[5m])
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Radio station health check failing ({{ $labels.station_id }})"
+          description: >
+            Station {{ $labels.station_id }} ({{ $labels.provider_slug }}) is
+            failing health checks > 0.1/s for 5m.
+
+      - alert: RadioStationsAllUnavailable
+        expr: |
+          (radio_stations_total > 0)
+          and
+          (
+            count(rate(radio_station_health_failures_total[5m]) > 0)
+            ==
+            count(radio_stations_total)
+          )
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "All radio stations unavailable"
+          description: "Every active radio station has at least one failed health probe in the last 5m."
+
+      - alert: RadioHealthCheckStale
+        expr: |
+          (time() - radio_health_checks_last_run_timestamp) > 900
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Radio health check stale"
+          description: "radio.health.check_all_stations has not run for > 15m."
+
   - name: weather
     rules:
       - alert: WeatherProviderErrorRateHigh

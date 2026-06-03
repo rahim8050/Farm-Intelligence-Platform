@@ -750,6 +750,16 @@ NDVI_VALID_PIXEL_THRESHOLD = env.float(
     default=0.30,
 )
 
+# Radio health-check scheduling
+RADIO_HEALTH_CHECK_INTERVAL_SECONDS = env.int(
+    "RADIO_HEALTH_CHECK_INTERVAL_SECONDS",
+    default=300,
+)
+RADIO_HEALTH_CHECK_TIMEOUT_SECONDS = env.float(
+    "RADIO_HEALTH_CHECK_TIMEOUT_SECONDS",
+    default=5.0,
+)
+
 # V2 Quality Engine thresholds (Phase 2)
 NDVI_V2_ROLLING_WINDOW = env.int("NDVI_V2_ROLLING_WINDOW", default=5)
 NDVI_V2_OUTLIER_THRESHOLD = env.float(
@@ -968,6 +978,10 @@ CELERY_BEAT_SCHEDULE = {
     "schema-cache-warm": {
         "task": "weather.tasks.warm_openapi_schema_cache",
         "schedule": SCHEMA_CACHE_WARM_INTERVAL_SECONDS,
+    },
+    "radio-health-check": {
+        "task": "radio.tasks.check_all_stations_health",
+        "schedule": RADIO_HEALTH_CHECK_INTERVAL_SECONDS,
     },
 }
 CELERY_ENABLE_UTC = True

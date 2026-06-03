@@ -55,6 +55,19 @@ class Station(models.Model):
     logo_url = models.URLField(blank=True)
     website_url = models.URLField(blank=True)
     is_active = models.BooleanField(default=True)
+    is_available = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Set by the periodic health check. None = never checked, "
+            "True = reachable, False = unreachable."
+        ),
+    )
+    last_health_check_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp of the most recent health check.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -67,7 +80,44 @@ class Station(models.Model):
             models.Index(fields=["is_active"]),
             models.Index(fields=["provider"]),
             models.Index(fields=["genre"]),
+            models.Index(fields=["is_available"]),
         ]
 
     def __str__(self) -> str:
         return f"{self.name} ({self.provider.name})"
+
+
+class StationHealthCheck(models.Model):
+    """A single health-check probe of a station's stream URL.
+
+    One row per probe. The most recent row per station drives
+    `Station.is_available` and the `radio_last_health_check_at`
+    timestamp. Older rows are kept for audit and trending.
+    """
+
+    station = models.ForeignKey(
+        Station,
+        on_delete=models.CASCADE,
+        related_name="health_checks",
+    )
+    checked_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    is_reachable = models.BooleanField()
+    response_time_ms = models.IntegerField(null=True, blank=True)
+    status_code = models.IntegerField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "radio_station_health_check"
+        verbose_name = "Station health check"
+        verbose_name_plural = "Station health checks"
+        ordering = ["-checked_at"]
+        indexes = [
+            models.Index(fields=["station", "-checked_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.station_id} "
+            f"{'up' if self.is_reachable else 'down'} "
+            f"@ {self.checked_at.isoformat()}"
+        )

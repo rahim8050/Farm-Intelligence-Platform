@@ -21,4 +21,9 @@ urlpatterns = [
         views.ProviderListView.as_view(),
         name="provider-list",
     ),
+    path(
+        "radio/health/",
+        views.RadioHealthView.as_view(),
+        name="radio-health",
+    ),
 ]

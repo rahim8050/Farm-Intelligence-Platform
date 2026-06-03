@@ -442,9 +442,9 @@ paths:
         Return the derived farm state for the requested farm.
 
         Inputs: path param farm_id.
-        Query params: optional representation, optional external_farm_id
-        (integration tokens).
+        Query params: optional representation.
         Output: success envelope with NDVI metrics + classification.
+        When representation=v2, payload includes v2_observation.
         Side effects: none.
       parameters:
       - in: query
@@ -453,15 +453,16 @@ paths:
           type: string
           format: uuid
         description: Resolve farm by external_farm_id (integration tokens).
-      - in: query
-        name: representation
-        schema:
-          type: string
       - in: path
         name: farm_id
         schema:
           type: integer
         required: true
+      - in: query
+        name: representation
+        schema:
+          type: string
+        description: Response representation version (v1 or v2).
       tags:
       - v1
       security:
@@ -842,8 +843,10 @@ paths:
         Return the most recent NDVI observation if present.
 
         Query params: lookback_days (optional), max_cloud (optional),
-        engine (optional), external_farm_id (integration tokens).
+        engine (optional), representation (optional).
         Success: envelope with `observation` or null, plus stale flag.
+        When representation=v2, payload includes v2_observation
+        and representation fields.
         Side effects: enqueues refresh_latest job when missing/stale.
       parameters:
       - in: query
@@ -870,6 +873,11 @@ paths:
         name: max_cloud
         schema:
           type: integer
+      - in: query
+        name: representation
+        schema:
+          type: string
+        description: Response representation version (v1 or v2).
       tags:
       - v1
       security:
@@ -1087,9 +1095,10 @@ paths:
         Return NDVI observations for the requested range.
 
         Query params: start, end, optional step_days, optional max_cloud,
-        optional engine, external_farm_id (integration tokens).
+        optional engine, optional representation.
         Success: envelope containing observations + metadata
-        (is_partial, missing_buckets_count).
+        (is_partial, missing_buckets_count). When representation=v2,
+        payload includes v2_observations and representation.
         Side effects: schedules gap-fill job when buckets are missing.
       parameters:
       - in: query
@@ -1119,6 +1128,11 @@ paths:
         schema:
           type: integer
         description: Maximum cloud coverage percent (0-100)
+      - in: query
+        name: representation
+        schema:
+          type: string
+        description: Response representation version (v1 or v2).
       - in: query
         name: start
         schema:
@@ -2575,6 +2589,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/NdviErrorResponse'
           description: ''
+  /api/v1/radio/health/:
+    get:
+      operationId: v1_radio_health
+      description: 'Returns aggregate station availability: total active stations,
+        available, unavailable, and unchecked counts, with a status flag of ''healthy'',
+        ''degraded'', or ''unhealthy''.'
+      summary: Radio service health
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioHealthEnvelope'
+          description: ''
   /api/v1/radio/providers/:
     get:
       operationId: v1_radio_providers_list
@@ -2638,7 +2672,8 @@ paths:
   /api/v1/radio/stations/{station_id}/stream/:
     get:
       operationId: v1_radio_stations_stream
-      description: Returns stream URL and metadata for playback.
+      description: Returns the stream URL and metadata for playback. Returns 503 if
+        the station's most recent health check marked it unavailable.
       summary: Get stream URL
       parameters:
       - in: path
@@ -2931,14 +2966,18 @@ components:
           description: |-
             * `none` - One-time
             * `interval` - Interval
-            * `cron` - Cron (future)
-          x-spec-enum-id: 0558a0275e55b584
+            * `cron` - Cron
+          x-spec-enum-id: 5d0ec82f8777f131
         interval_days:
           type: integer
           maximum: 4294967295
           minimum: 0
           format: int64
           nullable: true
+        cron_expression:
+          type: string
+          nullable: true
+          maxLength: 100
         farm:
           type: integer
           nullable: true
@@ -3019,14 +3058,18 @@ components:
           description: |-
             * `none` - One-time
             * `interval` - Interval
-            * `cron` - Cron (future)
-          x-spec-enum-id: 0558a0275e55b584
+            * `cron` - Cron
+          x-spec-enum-id: 5d0ec82f8777f131
         interval_days:
           type: integer
           maximum: 4294967295
           minimum: 0
           format: int64
           nullable: true
+        cron_expression:
+          type: string
+          nullable: true
+          maxLength: 100
         farm:
           type: integer
           nullable: true
@@ -4449,6 +4492,28 @@ components:
       - errors
       - message
       - status
+    NdviDerivedObservation:
+      type: object
+      properties:
+        smoothed_ndvi:
+          type: number
+          format: double
+          nullable: true
+          description: Temporally smoothed NDVI value
+        confidence:
+          type: number
+          format: double
+          description: Confidence score in [0, 1]
+        source:
+          type: string
+          description: Source engine that produced this V2 observation
+          maxLength: 32
+        quality_flags:
+          description: 'Quality flags: cloud_heavy, low_confidence, outlier_removed,
+            etc.'
+      required:
+      - confidence
+      - source
     NdviErrorResponse:
       type: object
       properties:
@@ -4659,6 +4724,13 @@ components:
           type: integer
         stale:
           type: boolean
+        v2_observation:
+          allOf:
+          - $ref: '#/components/schemas/NdviDerivedObservation'
+          nullable: true
+        representation:
+          type: string
+          nullable: true
       required:
       - engine
       - lookback_days
@@ -4792,6 +4864,14 @@ components:
           type: boolean
         missing_buckets_count:
           type: integer
+        v2_observations:
+          type: array
+          items:
+            $ref: '#/components/schemas/NdviDerivedObservation'
+          nullable: true
+        representation:
+          type: string
+          nullable: true
       required:
       - end
       - engine
@@ -5074,14 +5154,18 @@ components:
           description: |-
             * `none` - One-time
             * `interval` - Interval
-            * `cron` - Cron (future)
-          x-spec-enum-id: 0558a0275e55b584
+            * `cron` - Cron
+          x-spec-enum-id: 5d0ec82f8777f131
         interval_days:
           type: integer
           maximum: 4294967295
           minimum: 0
           format: int64
           nullable: true
+        cron_expression:
+          type: string
+          nullable: true
+          maxLength: 100
         farm:
           type: integer
           nullable: true
@@ -5147,14 +5231,18 @@ components:
           description: |-
             * `none` - One-time
             * `interval` - Interval
-            * `cron` - Cron (future)
-          x-spec-enum-id: 0558a0275e55b584
+            * `cron` - Cron
+          x-spec-enum-id: 5d0ec82f8777f131
         interval_days:
           type: integer
           maximum: 4294967295
           minimum: 0
           format: int64
           nullable: true
+        cron_expression:
+          type: string
+          nullable: true
+          maxLength: 100
         farm:
           type: integer
           nullable: true
@@ -5309,6 +5397,46 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Provider'
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    RadioHealthData:
+      type: object
+      properties:
+        status:
+          type: string
+          description: '"healthy", "degraded", or "unhealthy"'
+        timestamp:
+          type: string
+          format: date-time
+        stations_total:
+          type: integer
+        stations_available:
+          type: integer
+        stations_unavailable:
+          type: integer
+        stations_unchecked:
+          type: integer
+      required:
+      - stations_available
+      - stations_total
+      - stations_unavailable
+      - stations_unchecked
+      - status
+      - timestamp
+    RadioHealthEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/RadioHealthData'
+        status:
+          type: integer
+        message:
+          type: string
         errors:
           nullable: true
       required:
@@ -5734,6 +5862,9 @@ components:
         interval_days:
           type: integer
           nullable: true
+        cron_expression:
+          type: string
+          nullable: true
         farm:
           type: integer
           nullable: true
@@ -5742,6 +5873,7 @@ components:
           format: date-time
       required:
       - created_at
+      - cron_expression
       - farm
       - id
       - interval_days
