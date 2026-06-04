@@ -334,7 +334,7 @@ def get_provider(slug: str) -> RadioProvider:
 | P2 | Station health checks | Medium | P0 | ✅ shipped 2026-06-03 — see `09_operational.md` § Health Checks |
 | P3 | Favorites | Medium | Auth | ✅ shipped 2026-06-04 — see `IMPLEMENTATION_SUMMARY.md` § Phase 3 |
 | P3 | Listening history | Medium | Auth | ✅ shipped 2026-06-04 — see `IMPLEMENTATION_SUMMARY.md` § Phase 3 |
-| P4 | Podcasts | High | P0 | ⏳ planned |
+| P4 | Podcasts | High | P0 | ✅ shipped 2026-06-04 — see `IMPLEMENTATION_SUMMARY.md` § Phase 4 |
 | P4 | Farm audio alerts | High | Activities, NDVI | ⏳ planned |
 | P5 | Emergency broadcasts | Medium | P0 | ⏳ planned |
 | P5 | TTS | High | External API |

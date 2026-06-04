@@ -104,6 +104,7 @@ INSTALLED_APPS = [
     "weather",
     "activities",
     "radio",
+    "podcasts",
     "django_celery_beat",
 ]
 
@@ -584,6 +585,7 @@ REST_FRAMEWORK = {
         "nextcloud_hmac": env("API_KEY_THROTTLE_RATE", default="10/min"),
         "radio_favorites": "60/min",
         "radio_history": "60/min",
+        "podcasts_refresh": "5/min",
     },
     "EXCEPTION_HANDLER": "config.api.exceptions.custom_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -760,6 +762,16 @@ RADIO_HEALTH_CHECK_INTERVAL_SECONDS = env.int(
 RADIO_HEALTH_CHECK_TIMEOUT_SECONDS = env.float(
     "RADIO_HEALTH_CHECK_TIMEOUT_SECONDS",
     default=5.0,
+)
+
+# Podcast feed refresh scheduling
+PODCASTS_REFRESH_INTERVAL_SECONDS = env.int(
+    "PODCASTS_REFRESH_INTERVAL_SECONDS",
+    default=3600,
+)
+PODCASTS_REFRESH_TIMEOUT_SECONDS = env.float(
+    "PODCASTS_REFRESH_TIMEOUT_SECONDS",
+    default=15.0,
 )
 
 # V2 Quality Engine thresholds (Phase 2)
@@ -984,6 +996,10 @@ CELERY_BEAT_SCHEDULE = {
     "radio-health-check": {
         "task": "radio.tasks.check_all_stations_health",
         "schedule": RADIO_HEALTH_CHECK_INTERVAL_SECONDS,
+    },
+    "podcasts-refresh-feeds": {
+        "task": "podcasts.tasks.refresh_all_feeds",
+        "schedule": PODCASTS_REFRESH_INTERVAL_SECONDS,
     },
 }
 CELERY_ENABLE_UTC = True

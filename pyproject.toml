@@ -12,6 +12,7 @@ dependencies = [
   "django-prometheus==2.4.1",
   "django-redis==5.4.0",
   "httpx==0.28.1",
+  "feedparser==6.0.11",
   "matplotlib==3.10.8",
   "python-dotenv==1.2.2",
   "django-environ==0.12.1",
@@ -223,7 +224,7 @@ module = ["*.migrations.*"]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
-module = ["environ"]
+module = ["environ", "feedparser"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

@@ -21,6 +21,7 @@ For project documentation, start with [docs/README.md](docs/README.md).
 - Weather: current/daily/weekly with provider selection (`/api/v1/weather/…`)
 - Farm weather: current/hourly/daily by farm id (`/api/v1/farms/<id>/weather/…`)
 - Radio: station/provider metadata and stream URLs (`/api/v1/radio/…`)
+- Podcasts: RSS-driven podcast catalogue and per-episode audio URLs (`/api/v1/podcasts/…`)
 - Caching: Redis (recommended/required in production) or local-memory cache
 - Background jobs: Celery tasks for activities, NDVI refresh/backfill, and raster rendering
 - Observability: Prometheus metrics via `django-prometheus` at `/metrics`
@@ -75,6 +76,7 @@ See the app-level READMEs for the current feature surface:
 - [NDVI](ndvi/README.md)
 - [Weather](weather/README.md)
 - [Radio](radio/README.md)
+- [Podcasts](podcasts/README.md)
 - [Monitoring](monitoring/README.md)
 
 Minimum variables for local development:

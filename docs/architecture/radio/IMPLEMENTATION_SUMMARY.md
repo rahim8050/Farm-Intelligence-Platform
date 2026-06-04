@@ -4,7 +4,9 @@
 **Date:** June 03, 2026 (implementation verified)
 **Date:** June 03, 2026 (Phase 2: station health checks shipped)
 **Date:** June 04, 2026 (Phase 3: favorites + listening history shipped)
-**Status:** ✅ **COMPLETE** — architecture, MVP, Phase 2, and Phase 3 are all shipped.
+**Date:** June 04, 2026 (Phase 4: podcasts shipped)
+**Status:** ✅ **COMPLETE** — architecture, MVP, Phase 2, Phase 3, and Phase 4
+are all shipped.
 
 The original 2026-05-11 snapshot was captured before any code was written and
 ended with the line *"Status: Architecture complete, implementation not
@@ -187,7 +189,8 @@ as future work; no current code path references them.
 Note: the P2 row "Station health checks" is **not** in this list — it shipped
 on 2026-06-03 and is documented in § Phase 2 above. Same for the two P3 rows
 "favorites" and "listening history", which shipped 2026-06-04 (see § Phase 3
-below).
+below). Same for the P4 row "Podcasts", which shipped 2026-06-04 (see
+§ Phase 4 below).
 
 ---
 
@@ -260,6 +263,121 @@ scopes are added to `REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]` in
 
 ---
 
+## Phase 4 — Podcasts (Shipped 2026-06-04)
+
+The `podcasts/` app is implemented end-to-end and exposed under
+`/api/v1/podcasts/`. It is a **new top-level Django app**, not nested under
+`radio/`, because podcasts are a separate content domain with their own
+ingestion cadence, schema, and operational profile.
+
+### App and configuration
+
+- `podcasts/` Django app registered as `PodcastsConfig`
+  (`podcasts/apps.py:1-7`).
+- Listed in `INSTALLED_APPS` (`config/settings.py:114`).
+- Mounted at `/api/v1/podcasts/` (`config/urls.py:96`).
+- One initial migration: `podcasts/migrations/0001_initial.py`.
+- Runtime dep: `feedparser==6.0.11` (`pyproject.toml:41`).
+- mypy: `feedparser` and `environ` are listed under
+  `[[tool.mypy.overrides]] ignore_missing_imports` (`pyproject.toml:140-141`).
+
+### Models
+
+- `Podcast` model — id (short slug PK), title, description, author,
+  feed_url (unique, validator-enforced HTTP/HTTPS), image_url, language,
+  is_active, last_refreshed_at, last_refresh_status (`ok`/`error`/`""`),
+  last_refresh_error (capped at 500 chars), created_at, updated_at
+  (`podcasts/models.py`).
+- `PodcastEpisode` model — FK to `Podcast`, guid, title, description,
+  audio_url, audio_mime_type, duration_seconds, published_at, image_url,
+  with `unique(podcast, guid)` and `(podcast, -published_at)` index
+  (`podcasts/models.py`).
+- Admin registration: `PodcastAdmin` (with the nested `PodcastEpisode`
+  inline) and `PodcastEpisodeAdmin` (`podcasts/admin.py`).
+
+### Feed ingestion
+
+- `podcasts.services.ingest_podcast` is the single entry point
+  (`podcasts/services.py`). It:
+  - Fetches the feed body with `httpx` using
+    `PODCASTS_REFRESH_TIMEOUT_SECONDS` (default 15s).
+  - Parses with `feedparser`.
+  - Coerces published dates via `email.utils.parsedate_to_datetime`
+    (RFC-822) and Django's `parse_datetime` / `parse_date` (ISO-8601 and
+    date-only).
+  - Coerces durations from seconds, `MM:SS`, and `HH:MM:SS`.
+  - Skips entries with no guid, title, or audio enclosure.
+  - Updates existing episodes in place when fields differ; inserts new
+    ones; never deletes.
+  - Sets `last_refresh_status`, `last_refresh_error`, and
+    `last_refreshed_at` on the `Podcast` row.
+  - Never raises; a single bad feed cannot break the periodic task.
+- `podcasts.tasks.refresh_all_feeds` iterates all active podcasts,
+  catches all exceptions, and returns a per-podcast report
+  (`podcasts/tasks.py`).
+- Celery beat entry `podcasts-refresh-feeds` runs hourly
+  (`PODCASTS_REFRESH_INTERVAL_SECONDS=3600`).
+- `IngestionReport` dataclass and `PodcastIngestionError` exception
+  surface totals (`fetched`, `created`, `updated`, `skipped`, `errors`).
+
+### API surface
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/api/v1/podcasts/` | Public | List active podcasts (alphabetised by title). |
+| GET | `/api/v1/podcasts/<slug>/` | Public | Podcast details. |
+| GET | `/api/v1/podcasts/<slug>/episodes/?limit=N` | Public | Episode list (1..500, default 100, newest first). |
+| GET | `/api/v1/podcasts/episodes/<id>/stream/` | Public | Audio URL + metadata for one episode. |
+| POST | `/api/v1/podcasts/<slug>/refresh/` | Auth | Force an immediate re-ingestion. Throttled at `podcasts_refresh: 5/min`. |
+
+All five endpoints are documented in `schema.yml` (operation IDs
+`v1_podcasts_list`, `v1_podcasts_retrieve`, `v1_podcasts_episodes_list`,
+`v1_podcasts_episode_stream`, `v1_podcasts_refresh`) with envelope schemas
+matching `config.api.responses.success_response`.
+
+### Idempotency and safety
+
+- `load_sample_podcasts` uses `update_or_create` keyed on `feed_url`, so
+  it is safe to re-run.
+- `ingest_podcast` is fully idempotent: re-running with an unchanged feed
+  produces zero new rows and zero updates.
+- The refresh endpoint throttles at 5/min per user; the periodic task
+  is best-effort and never raises.
+- A failed ingestion is recorded on `Podcast.last_refresh_status` and
+  `last_refresh_error` and does not stop the other feeds.
+
+### Settings
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `PODCASTS_REFRESH_INTERVAL_SECONDS` | 3600 | Celery beat schedule for `podcasts-refresh-feeds`. |
+| `PODCASTS_REFRESH_TIMEOUT_SECONDS` | 15.0 | Per-feed HTTP timeout. |
+| `DEFAULT_THROTTLE_RATES["podcasts_refresh"]` | `5/min` | Per-user throttle on the refresh endpoint. |
+
+### Privacy and security
+
+- `audio_url` and `image_url` are validated by the URLField validators
+  (HTTP/HTTPS only).
+- The refresh endpoint requires authentication; anonymous traffic can
+  list and read but cannot trigger refresh.
+- No user data is recorded for podcast consumption (per-app privacy
+  boundary; the `radio/` listening-history hooks are explicitly out of
+  scope for `podcasts/`).
+
+### Verification
+
+- `python manage.py makemigrations --check --dry-run` → No changes detected.
+- `ruff check .` — all checks passed.
+- `ruff format .` — clean.
+- `mypy --config-file=pyproject.toml podcasts/` — no issues found in 18 source files.
+- `bandit -c pyproject.toml -r podcasts/` — no issues.
+- `pytest podcasts/` — 31 passed (4 models, 14 services, 13 views).
+- `python manage.py spectacular --file schema.yml` regenerates
+  `schema.yml` with all five new podcast endpoints and envelope
+  schemas.
+
+---
+
 ## Architectural Decisions (Recap)
 
 The four ADRs in [`docs/architecture/radio/adr/`](./adr/) are unchanged and
@@ -296,3 +414,4 @@ all reflected in the code:
 | 2.0 | June 03, 2026 | Implementation verified; views, serializers, providers, seed data, and tests are all in place. |
 | 2.1 | June 03, 2026 | Phase 2 (station health checks) shipped: model, services, task, metrics, alerts, `/radio/health/` endpoint, stream 503 gating, full doc alignment, migration index-name fix. |
 | 3.0 | June 04, 2026 | Phase 3 (favorites + listening history) shipped: `Favorite` and `ListeningHistory` models, auth'd endpoints, idempotent add/remove, `StationStreamView` auto-records history for auth'd clients, throttle scopes, doc alignment. |
+| 4.0 | June 04, 2026 | Phase 4 (podcasts) shipped: new top-level `podcasts/` app, `Podcast` + `PodcastEpisode` models, 5 endpoints (incl. auth'd refresh), `httpx` + `feedparser` RSS ingestion, hourly Celery task, sample data management command. |

@@ -2589,6 +2589,157 @@ paths:
               schema:
                 $ref: '#/components/schemas/NdviErrorResponse'
           description: ''
+  /api/v1/podcasts/:
+    get:
+      operationId: v1_podcasts_list
+      description: Returns all active podcasts.
+      summary: List podcasts
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastListEnvelope'
+          description: ''
+  /api/v1/podcasts/{podcast_id}/:
+    get:
+      operationId: v1_podcasts_retrieve
+      description: Returns details for a specific podcast.
+      summary: Get podcast details
+      parameters:
+      - in: path
+        name: podcast_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastDetailEnvelope'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastsErrorResponse'
+          description: ''
+  /api/v1/podcasts/{podcast_id}/episodes/:
+    get:
+      operationId: v1_podcasts_episodes_list
+      description: Returns the most recent ``limit`` episodes for a podcast (default
+        100, max 500).
+      summary: List podcast episodes
+      parameters:
+      - in: path
+        name: podcast_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastEpisodeListEnvelope'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastsErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastsErrorResponse'
+          description: ''
+  /api/v1/podcasts/{podcast_id}/refresh/:
+    post:
+      operationId: v1_podcasts_refresh
+      description: Triggers an immediate ingestion of the podcast's upstream feed.
+        Auth required.
+      summary: Refresh a podcast feed
+      parameters:
+      - in: path
+        name: podcast_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastRefreshReportEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastsErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastsErrorResponse'
+          description: ''
+  /api/v1/podcasts/episodes/{episode_id}/stream/:
+    get:
+      operationId: v1_podcasts_episode_stream
+      description: Returns the audio URL, format hint, and episode metadata for playback.
+      summary: Get episode stream URL
+      parameters:
+      - in: path
+        name: episode_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastEpisodeStreamEnvelope'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PodcastsErrorResponse'
+          description: ''
   /api/v1/radio/favorites/:
     get:
       operationId: v1_radio_favorites_list
@@ -5595,6 +5746,248 @@ components:
           maxLength: 128
         is_active:
           type: boolean
+    Podcast:
+      type: object
+      description: Public-facing serializer for a :class:`Podcast` row.
+      properties:
+        id:
+          type: string
+          readOnly: true
+        title:
+          type: string
+          readOnly: true
+        description:
+          type: string
+          readOnly: true
+        author:
+          type: string
+          readOnly: true
+        feed_url:
+          type: string
+          format: uri
+          readOnly: true
+        image_url:
+          type: string
+          format: uri
+          readOnly: true
+        language:
+          type: string
+          readOnly: true
+        is_active:
+          type: boolean
+          readOnly: true
+        last_refreshed_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        last_refresh_status:
+          type: string
+          readOnly: true
+          description: 'Outcome of the most recent ingestion: "ok", "error", or ""
+            (never refreshed).'
+      required:
+      - author
+      - description
+      - feed_url
+      - id
+      - image_url
+      - is_active
+      - language
+      - last_refresh_status
+      - last_refreshed_at
+      - title
+    PodcastDetailEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Podcast'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    PodcastEpisode:
+      type: object
+      description: Public-facing serializer for a :class:`PodcastEpisode` row.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        podcast_id:
+          type: string
+          readOnly: true
+        guid:
+          type: string
+          readOnly: true
+        title:
+          type: string
+          readOnly: true
+        description:
+          type: string
+          readOnly: true
+        audio_url:
+          type: string
+          format: uri
+          readOnly: true
+        audio_mime_type:
+          type: string
+          readOnly: true
+        duration_seconds:
+          type: integer
+          readOnly: true
+          nullable: true
+        published_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        image_url:
+          type: string
+          format: uri
+          readOnly: true
+      required:
+      - audio_mime_type
+      - audio_url
+      - description
+      - duration_seconds
+      - guid
+      - id
+      - image_url
+      - podcast_id
+      - published_at
+      - title
+    PodcastEpisodeListEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PodcastEpisode'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    PodcastEpisodeStream:
+      type: object
+      description: Output for the ``GET /podcasts/episodes/<id>/stream/`` endpoint.
+      properties:
+        audio_url:
+          type: string
+          format: uri
+        format:
+          type: string
+        duration_seconds:
+          type: integer
+          nullable: true
+        episode_title:
+          type: string
+        podcast_title:
+          type: string
+        podcast_id:
+          type: string
+      required:
+      - audio_url
+      - duration_seconds
+      - episode_title
+      - format
+      - podcast_id
+      - podcast_title
+    PodcastEpisodeStreamEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/PodcastEpisodeStream'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    PodcastListEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Podcast'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    PodcastRefreshReport:
+      type: object
+      properties:
+        podcast_id:
+          type: string
+        episodes_seen:
+          type: integer
+        episodes_created:
+          type: integer
+        episodes_updated:
+          type: integer
+        error:
+          type: string
+      required:
+      - episodes_created
+      - episodes_seen
+      - episodes_updated
+      - error
+      - podcast_id
+    PodcastRefreshReportEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/PodcastRefreshReport'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    PodcastsErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - errors
+      - message
+      - status
     Provider:
       type: object
       description: Serialize provider for API responses.

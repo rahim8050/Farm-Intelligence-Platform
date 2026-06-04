@@ -217,6 +217,25 @@ class Favorite(models.Model):
         indexes = [models.Index(fields=["user", "-created_at"])]
 ```
 
+#### Podcast and PodcastEpisode (✅ shipped 2026-06-04)
+
+`Podcast` and `PodcastEpisode` are implemented in the new top-level
+`podcasts/` app (see `podcasts/models.py`). They are intentionally
+separate from `Station` / `Provider` because podcasts have a different
+ingestion cadence, schema, and operational profile.
+
+- `Podcast.id` is a short slug PK (human-readable).
+- `Podcast.feed_url` is `URLField` (HTTP/HTTPS only, validator-enforced)
+  and unique.
+- `PodcastEpisode.podcast` FK cascades on delete.
+- `unique(podcast, guid)` lets the same guid appear under different
+  podcasts without collision.
+- `(podcast, -published_at)` composite index supports the "newest
+  first" episode feed.
+- `last_refresh_status` (`ok`/`error`/`""`), `last_refresh_error` (capped
+  at 500 chars), and `last_refreshed_at` let operators see at a glance
+  which feeds are broken.
+
 #### Station Analytics
 
 ```python
@@ -331,6 +350,36 @@ erDiagram
 
     STATION ||--o{ FAVORITE : "favorited by"
     STATION ||--o{ LISTENING_HISTORY : "recorded by"
+
+    PODCAST {
+        string id PK
+        string title
+        string author
+        url feed_url "unique"
+        url image_url
+        string language
+        bool is_active
+        string last_refresh_status "ok/error/blank"
+        text last_refresh_error
+        datetime last_refreshed_at "nullable"
+        datetime created_at
+        datetime updated_at
+    }
+
+    PODCAST_EPISODE {
+        int id PK
+        string podcast FK
+        string guid
+        string title
+        text description
+        url audio_url
+        string audio_mime_type
+        int duration_seconds
+        datetime published_at
+        url image_url
+    }
+
+    PODCAST ||--o{ PODCAST_EPISODE : "publishes"
 ```
 
 ## Migration Strategy
@@ -343,4 +392,8 @@ erDiagram
    composite `(station, -checked_at)` index
 5. **`0004_favorite_listeninghistory` (Phase 3, 2026-06-04)**: Create
    `Favorite` (with `unique(user, station)`) and `ListeningHistory`
-6. **Future migrations**: Add new tables as needed (no migration for unused features)
+6. **`podcasts/0001_initial` (Phase 4, 2026-06-04)**: New top-level
+   `podcasts/` app — create `Podcast` (with unique `feed_url`) and
+   `PodcastEpisode` (with `unique(podcast, guid)` and composite
+   `(podcast, -published_at)` index).
+7. **Future migrations**: Add new tables as needed (no migration for unused features)
