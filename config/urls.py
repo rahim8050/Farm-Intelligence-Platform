@@ -94,4 +94,5 @@ urlpatterns = [
     path("api/v1/", include("activities.urls")),
     path("api/v1/", include("radio.urls")),
     path("api/v1/", include("podcasts.urls")),
+    path("api/v1/", include("alerts.urls")),
 ]

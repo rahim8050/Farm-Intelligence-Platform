@@ -236,6 +236,30 @@ ingestion cadence, schema, and operational profile.
   at 500 chars), and `last_refreshed_at` let operators see at a glance
   which feeds are broken.
 
+#### AudioAlertSubscription and AudioAlert (✅ shipped 2026-06-04)
+
+`AudioAlertSubscription` and `AudioAlert` are implemented in the new
+top-level `alerts/` app (see `alerts/models.py`). They are the
+storage layer for the farm-audio-alerts feature (Phase 4 audio
+alerts).
+
+- `AudioAlertSubscription.id` is a UUID PK.
+- `AudioAlertSubscription.alert_types` is a JSON list of
+  `AudioAlertType` values (`ndvi_decline`, `ndvi_low`,
+  `activity_completed`, `admin_broadcast`).
+- `unique(user, farm)` makes the subscription per-user, per-farm.
+- `AudioAlert.audio_file` is a `FileField` under
+  `MEDIA_ROOT/audio_alerts/%Y/%m/%d/<uuid>.wav`.
+- `AudioAlert.farm` uses `on_delete=SET_NULL` so the alert row
+  survives a farm deletion (with the source-farm FK cleared).
+- `is_delivered` is set when the WebSocket push has been
+  confirmed; clients that were offline catch up via
+  `?unread=true`.
+- Three composite indexes cover the read paths:
+  - `(user, -created_at)` for the user's alert list.
+  - `(user, is_acknowledged)` for the `?unread=true` filter.
+  - `(alert_type, -created_at)` for per-type scans.
+
 #### Station Analytics
 
 ```python
@@ -380,6 +404,36 @@ erDiagram
     }
 
     PODCAST ||--o{ PODCAST_EPISODE : "publishes"
+
+    AUDIO_SUB {
+        uuid id PK
+        int user FK
+        int farm FK
+        json alert_types
+    }
+
+    AUDIO_ALERT {
+        uuid id PK
+        int user FK
+        int farm FK "nullable"
+        string alert_type
+        string trigger_source
+        string title
+        text message
+        url audio_file "MEDIA_ROOT/audio_alerts"
+        int duration_ms
+        string mime_type
+        bool is_delivered
+        bool is_acknowledged
+        datetime delivered_at
+        datetime acknowledged_at
+        datetime created_at
+    }
+
+    USER ||--o{ AUDIO_SUB : "opts in"
+    FARM ||--o{ AUDIO_SUB : "scoped to"
+    USER ||--o{ AUDIO_ALERT : "receives"
+    FARM ||--o{ AUDIO_ALERT : "triggered by"
 ```
 
 ## Migration Strategy
@@ -396,4 +450,9 @@ erDiagram
    `podcasts/` app — create `Podcast` (with unique `feed_url`) and
    `PodcastEpisode` (with `unique(podcast, guid)` and composite
    `(podcast, -published_at)` index).
-7. **Future migrations**: Add new tables as needed (no migration for unused features)
+7. **`alerts/0001_initial` (Phase 4 audio alerts, 2026-06-04)**:
+   New top-level `alerts/` app — create `AudioAlertSubscription`
+   (with `unique(user, farm)`) and `AudioAlert` (with composite
+   indexes on `(user, -created_at)`, `(user, is_acknowledged)`,
+   `(alert_type, -created_at)`).
+8. **Future migrations**: Add new tables as needed (no migration for unused features)

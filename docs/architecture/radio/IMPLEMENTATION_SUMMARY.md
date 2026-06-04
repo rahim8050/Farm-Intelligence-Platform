@@ -5,8 +5,9 @@
 **Date:** June 03, 2026 (Phase 2: station health checks shipped)
 **Date:** June 04, 2026 (Phase 3: favorites + listening history shipped)
 **Date:** June 04, 2026 (Phase 4: podcasts shipped)
-**Status:** ✅ **COMPLETE** — architecture, MVP, Phase 2, Phase 3, and Phase 4
-are all shipped.
+**Date:** June 04, 2026 (Phase 4 audio alerts: farm audio alerts shipped)
+**Status:** ✅ **COMPLETE** — architecture, MVP, Phase 2, Phase 3, Phase 4
+(podcasts), and Phase 4 (farm audio alerts) are all shipped.
 
 The original 2026-05-11 snapshot was captured before any code was written and
 ended with the line *"Status: Architecture complete, implementation not
@@ -190,7 +191,8 @@ Note: the P2 row "Station health checks" is **not** in this list — it shipped
 on 2026-06-03 and is documented in § Phase 2 above. Same for the two P3 rows
 "favorites" and "listening history", which shipped 2026-06-04 (see § Phase 3
 below). Same for the P4 row "Podcasts", which shipped 2026-06-04 (see
-§ Phase 4 below).
+§ Phase 4 below). The second P4 row "Farm audio alerts" is documented in
+§ Phase 4 (audio alerts) below.
 
 ---
 
@@ -378,6 +380,130 @@ matching `config.api.responses.success_response`.
 
 ---
 
+## Phase 4 (audio alerts) — Farm audio alerts (Shipped 2026-06-04)
+
+The `alerts/` app is implemented end-to-end and exposed under
+`/api/v1/alerts/`. It is a new top-level Django app, parallel to
+`radio/` and `podcasts/`, that delivers TTS-synthesised audio
+notifications to farm owners and subscribers.
+
+### App and configuration
+
+- `alerts/` Django app registered as `AlertsConfig`
+  (`alerts/apps.py:1-7`).
+- Listed in `INSTALLED_APPS` (`config/settings.py:107`).
+- Mounted at `/api/v1/alerts/` (`config/urls.py:97`).
+- One initial migration: `alerts/migrations/0001_initial.py`.
+- Throttle scope: `alerts_admin: 30/min` (admin broadcast only;
+  other endpoints use the global user throttle).
+- Beat entries: `alerts-ndvi-decline-scan` and
+  `alerts-ndvi-low-scan`, both at
+  `ALERTS_NDVI_DECLINE_SCAN_INTERVAL_SECONDS` (default 900s).
+- TTS settings: `TTS_ENGINE` (default `espeak`), `TTS_VOICE`,
+  `TTS_TIMEOUT_SECONDS`, `TTS_MAX_TEXT_CHARS`,
+  `ALERTS_NDVI_LOW_THRESHOLD` (default 0.2),
+  `ALERTS_WEBHOOK_GROUP_PREFIX` (default `user_`).
+
+### Models
+
+- `AudioAlertSubscription` (UUID PK): `user`, `farm`, `alert_types`
+  (JSON list of `AudioAlertType`), unique `(user, farm)`, indexed
+  on `(user, farm)` (`alerts/models.py`).
+- `AudioAlert` (UUID PK): `user`, `farm` (nullable, `SET_NULL`),
+  `alert_type`, `trigger_source`, `title`, `message`,
+  `audio_file` (FileField under `MEDIA_ROOT/audio_alerts/...`),
+  `duration_ms`, `mime_type`, `source_object_id`, `is_delivered`,
+  `is_acknowledged`, `delivered_at`, `acknowledged_at`,
+  `created_at`. Indexed on `(user, -created_at)`,
+  `(user, is_acknowledged)`, `(alert_type, -created_at)`.
+
+### TTS service
+
+- `alerts/tts.py` is a pluggable backend. Select via `TTS_ENGINE`:
+  - `piper` — high-quality neural TTS, shells out to the `piper`
+    CLI; falls back to `espeak` when the binary is missing.
+  - `espeak` — default, low-fidelity, shells out to `espeak-ng`.
+  - `sine` — always-on 440Hz 1s tone WAV.
+  - `noop` — empty bytes; used in tests / CI.
+- Every backend returns a
+  `TTSResult(audio_bytes, mime_type, duration_ms)`.
+- A backend exception is logged and the function falls back to
+  the sine generator, so the persisted row is always created.
+
+### Triggers
+
+- **Activity completion** — `activities/tasks.py:execute`
+  registers a `transaction.on_commit` callback that calls
+  `alerts.triggers.on_activity_completed` for `success` and
+  `failed` terminal states. Subscriptions are looked up by
+  `(farm_id, alert_type)`.
+- **NDVI decline** — `alerts.tasks.scan_ndvi_declines` (beat,
+  every `ALERTS_NDVI_DECLINE_SCAN_INTERVAL_SECONDS`) iterates
+  active farms, calls `ndvi.farm_state.build_farm_state`, and
+  fires an alert when `state == "decline"`. De-duplicated
+  within a 24h window via `AudioAlert.created_at`.
+- **Low NDVI absolute** — `alerts.tasks.scan_low_ndvi_observations`
+  reads the latest valid `NdviObservation` per farm and fires
+  when `mean < ALERTS_NDVI_LOW_THRESHOLD` (default 0.2). Same
+  24h de-duplication window.
+- **Admin broadcast** — `POST /api/v1/alerts/admin/send/`
+  (admin only, throttled `30/min`) takes a `user_ids` list and
+  fires a one-shot alert to each user.
+
+### API surface
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/api/v1/alerts/subscriptions/` | Auth | List subscriptions. |
+| POST | `/api/v1/alerts/subscriptions/` | Auth | Upsert a subscription (idempotent). |
+| PATCH | `/api/v1/alerts/subscriptions/<id>/` | Auth | Update alert_types. |
+| DELETE | `/api/v1/alerts/subscriptions/<id>/` | Auth | Remove a subscription. |
+| GET | `/api/v1/alerts/?unread=true&limit=N` | Auth | List alerts. |
+| GET | `/api/v1/alerts/<id>/` | Auth | Get one alert (with audio URL). |
+| POST | `/api/v1/alerts/<id>/` | Auth | Acknowledge. |
+| POST | `/api/v1/alerts/admin/send/` | Admin | Manual broadcast. |
+
+All eight endpoints are documented in `schema.yml` (operation IDs
+`v1_alerts_*`) with envelope schemas matching
+`config.api.responses.success_response`.
+
+### WebSocket push
+
+`activities/consumers.py:ActivityConsumer` was extended with an
+`audio_alert` handler (`activities/consumers.py:97-115`). The
+group name is `user_<user.id>` (the same group that already
+carries `activity_event` frames), controlled by
+`ALERTS_WEBHOOK_GROUP_PREFIX` (default `user_`). The push is
+best-effort: a send failure is logged but does not affect the
+persisted `AudioAlert` row. Clients that were offline catch up
+via `GET /api/v1/alerts/?unread=true`.
+
+### Privacy and safety
+
+- `AudioAlert.farm` uses `on_delete=SET_NULL` so the alert
+  survives a farm deletion (with the source-farm FK cleared).
+- `record_listening_session` style ingestion is **not** used
+  for audio alerts — privacy boundary.
+- The TTS engine receives only the alert's `message` (a
+  short user-friendly string), never the source object.
+- WebSocket push is best-effort by design (Channels docs:
+  "PostgreSQL = authoritative source of truth; Redis/WebSocket
+  = best effort only").
+
+### Verification
+
+- `python manage.py makemigrations --check --dry-run` → No changes detected.
+- `ruff check .` — all checks passed.
+- `ruff format .` — clean.
+- `mypy .` — no issues found in 303 source files.
+- `bandit -c pyproject.toml -r .` — 0 issues across all severities.
+- `pytest alerts/ activities/tests/test_handlers.py podcasts/`
+  — 109 passed.
+- `python manage.py spectacular --file schema.yml` regenerates
+  `schema.yml` with the 8 new `v1_alerts_*` operation IDs.
+
+---
+
 ## Architectural Decisions (Recap)
 
 The four ADRs in [`docs/architecture/radio/adr/`](./adr/) are unchanged and
@@ -415,3 +541,4 @@ all reflected in the code:
 | 2.1 | June 03, 2026 | Phase 2 (station health checks) shipped: model, services, task, metrics, alerts, `/radio/health/` endpoint, stream 503 gating, full doc alignment, migration index-name fix. |
 | 3.0 | June 04, 2026 | Phase 3 (favorites + listening history) shipped: `Favorite` and `ListeningHistory` models, auth'd endpoints, idempotent add/remove, `StationStreamView` auto-records history for auth'd clients, throttle scopes, doc alignment. |
 | 4.0 | June 04, 2026 | Phase 4 (podcasts) shipped: new top-level `podcasts/` app, `Podcast` + `PodcastEpisode` models, 5 endpoints (incl. auth'd refresh), `httpx` + `feedparser` RSS ingestion, hourly Celery task, sample data management command. |
+| 4.1 | June 04, 2026 | Phase 4 (farm audio alerts) shipped: new top-level `alerts/` app, pluggable TTS (piper/espeak/sine/noop), `AudioAlertSubscription` + `AudioAlert` models, 5 alert types, 8 endpoints, WebSocket push via extended `ActivityConsumer`, REST polling fallback, NDVI-decline + low-NDVI-absolute periodic scans, admin manual broadcast. |

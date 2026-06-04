@@ -244,7 +244,27 @@ def execute_activity(
                 },
             )
 
+        def emit_audio_alert() -> None:
+            try:
+                from alerts.triggers import on_activity_completed
+
+                on_activity_completed(
+                    user_id=activity.owner_id,
+                    farm_id=activity.farm_id,
+                    activity_id=activity.id,
+                    activity_type=activity.type,
+                    status="success",
+                    message=message,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "audio alert hook failed for activity %d: %s",
+                    activity.id,
+                    exc.__class__.__name__,
+                )
+
         transaction.on_commit(emit_event)
+        transaction.on_commit(emit_audio_alert)
 
         return {
             "status": "success",
@@ -253,7 +273,8 @@ def execute_activity(
         }
 
     except Exception as e:
-        transition_to_failed(activity, str(e))
+        err = str(e)
+        transition_to_failed(activity, err)
         logger.error(
             "activity_failed activity_id=%d type=%s error=%s "
             "correlation_id=%s",
@@ -262,6 +283,27 @@ def execute_activity(
             e,
             correlation_id or "none",
         )
+
+        def emit_audio_alert_failed() -> None:
+            try:
+                from alerts.triggers import on_activity_completed
+
+                on_activity_completed(
+                    user_id=activity.owner_id,
+                    farm_id=activity.farm_id,
+                    activity_id=activity.id,
+                    activity_type=activity.type,
+                    status="failed",
+                    message=err,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "audio alert hook failed for activity %d: %s",
+                    activity.id,
+                    exc.__class__.__name__,
+                )
+
+        transaction.on_commit(emit_audio_alert_failed)
         raise
 
 

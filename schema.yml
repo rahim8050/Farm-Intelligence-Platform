@@ -200,6 +200,341 @@ paths:
               schema:
                 $ref: '#/components/schemas/ActivityHealthEnvelope'
           description: ''
+  /api/v1/alerts/:
+    get:
+      operationId: v1_alerts_list
+      description: |-
+        List the caller's audio alerts (newest first).
+
+        Auth: IsAuthenticated
+        Query params:
+            - ``unread=true`` to filter to unacknowledged rows.
+            - ``limit`` (1..500, default 100).
+        Response data: a list of :class:`AudioAlertSerializer`.
+      summary: List audio alerts
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertListEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+  /api/v1/alerts/{alert_id}/:
+    get:
+      operationId: v1_alerts_retrieve
+      description: |-
+        Retrieve or acknowledge a single audio alert.
+
+        Auth: IsAuthenticated
+        GET response data: :class:`AudioAlertSerializer`.
+        POST response data: ``null`` (acknowledge is a side-effect call).
+      summary: Get one audio alert
+      parameters:
+      - in: path
+        name: alert_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertDetailEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+    post:
+      operationId: v1_alerts_acknowledge
+      description: |-
+        Retrieve or acknowledge a single audio alert.
+
+        Auth: IsAuthenticated
+        GET response data: :class:`AudioAlertSerializer`.
+        POST response data: ``null`` (acknowledge is a side-effect call).
+      summary: Acknowledge an audio alert
+      parameters:
+      - in: path
+        name: alert_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertAckEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+  /api/v1/alerts/admin/send/:
+    post:
+      operationId: v1_alerts_admin_send
+      description: |-
+        Send a manual audio broadcast to a list of users (admin only).
+
+        Auth: IsAdminUser
+        Throttle: ``alerts_admin: 30/min``.
+        Body: :class:`AdminBroadcastSerializer` (``user_ids``, ``title``,
+        ``message``, optional ``farm_id``).
+      summary: Send a manual audio alert (admin)
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminBroadcast'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminBroadcast'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AdminBroadcast'
+        required: true
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertAdminSendEnvelope'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+  /api/v1/alerts/subscriptions/:
+    get:
+      operationId: v1_alerts_subscriptions_list
+      description: |-
+        List or create the caller's audio-alert subscriptions.
+
+        Auth: IsAuthenticated
+        Throttle: inherits the global user throttle (no app-specific scope).
+        Response data: a list of :class:`AudioAlertSubscriptionSerializer`
+        (for ``GET``) or a single instance (for ``POST``).
+      summary: List audio alert subscriptions
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertSubscriptionListEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+    post:
+      operationId: v1_alerts_subscriptions_create
+      description: |-
+        List or create the caller's audio-alert subscriptions.
+
+        Auth: IsAuthenticated
+        Throttle: inherits the global user throttle (no app-specific scope).
+        Response data: a list of :class:`AudioAlertSubscriptionSerializer`
+        (for ``GET``) or a single instance (for ``POST``).
+      summary: Create or update a subscription
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AudioAlertSubscription'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AudioAlertSubscription'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AudioAlertSubscription'
+        required: true
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertSubscriptionEnvelope'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+  /api/v1/alerts/subscriptions/{sub_id}/:
+    patch:
+      operationId: v1_alerts_subscriptions_update
+      description: |-
+        Update or delete a single subscription.
+
+        Auth: IsAuthenticated
+        Response data: the updated subscription (PATCH) or ``null`` (DELETE).
+      summary: Update a subscription
+      parameters:
+      - in: path
+        name: sub_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedAudioAlertSubscription'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedAudioAlertSubscription'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedAudioAlertSubscription'
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertSubscriptionEnvelope'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+    delete:
+      operationId: v1_alerts_subscriptions_delete
+      description: |-
+        Update or delete a single subscription.
+
+        Auth: IsAuthenticated
+        Response data: the updated subscription (PATCH) or ``null`` (DELETE).
+      summary: Delete a subscription
+      parameters:
+      - in: path
+        name: sub_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertAckEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertErrorEnvelope'
+          description: ''
   /api/v1/auth/login/:
     post:
       operationId: v1_auth_login_create
@@ -3454,6 +3789,141 @@ components:
       - errors
       - message
       - status
+    AdminBroadcast:
+      type: object
+      description: Input serializer for ``POST /api/v1/alerts/admin/send/``.
+      properties:
+        user_ids:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+          maxItems: 500
+        title:
+          type: string
+          maxLength: 200
+        message:
+          type: string
+        farm_id:
+          type: integer
+          nullable: true
+      required:
+      - message
+      - title
+      - user_ids
+    AlertAckEnvelope:
+      type: object
+      properties:
+        data:
+          nullable: true
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    AlertAdminSendEnvelope:
+      type: object
+      properties:
+        data:
+          nullable: true
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    AlertDetailEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/AudioAlert'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    AlertErrorEnvelope:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - errors
+      - message
+      - status
+    AlertListEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AudioAlert'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    AlertSubscriptionEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/AudioAlertSubscription'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    AlertSubscriptionListEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AudioAlertSubscription'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
     ApiKeyCreate:
       type: object
       properties:
@@ -3672,6 +4142,143 @@ components:
       - errors
       - message
       - status
+    AudioAlert:
+      type: object
+      description: Read serializer for :class:`AudioAlert`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        farm:
+          type: integer
+          readOnly: true
+          nullable: true
+        alert_type:
+          enum:
+          - ndvi_decline
+          - ndvi_low
+          - activity_completed
+          - admin_broadcast
+          type: string
+          description: |-
+            * `ndvi_decline` - NDVI decline
+            * `ndvi_low` - NDVI low absolute
+            * `activity_completed` - Activity completed
+            * `admin_broadcast` - Admin broadcast
+          x-spec-enum-id: d0462f480c565518
+          readOnly: true
+        trigger_source:
+          enum:
+          - ndvi_task
+          - activity_task
+          - admin_view
+          type: string
+          description: |-
+            * `ndvi_task` - NDVI task
+            * `activity_task` - Activity task
+            * `admin_view` - Admin view
+          x-spec-enum-id: 7b8bb2acc02c967f
+          readOnly: true
+        title:
+          type: string
+          readOnly: true
+        message:
+          type: string
+          readOnly: true
+        audio_url:
+          type: string
+          readOnly: true
+        duration_ms:
+          type: integer
+          readOnly: true
+        mime_type:
+          type: string
+          readOnly: true
+        source_object_id:
+          type: string
+          readOnly: true
+        is_delivered:
+          type: boolean
+          readOnly: true
+          description: True once a WebSocket push has been confirmed.
+        is_acknowledged:
+          type: boolean
+          readOnly: true
+          description: True once the user has marked the alert as read.
+        delivered_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        acknowledged_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - acknowledged_at
+      - alert_type
+      - audio_url
+      - created_at
+      - delivered_at
+      - duration_ms
+      - farm
+      - id
+      - is_acknowledged
+      - is_delivered
+      - message
+      - mime_type
+      - source_object_id
+      - title
+      - trigger_source
+    AudioAlertSubscription:
+      type: object
+      description: Read/write serializer for :class:`AudioAlertSubscription`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        farm:
+          type: integer
+        farm_name:
+          type: string
+          readOnly: true
+        alert_types:
+          type: array
+          items:
+            enum:
+            - ndvi_decline
+            - ndvi_low
+            - activity_completed
+            - admin_broadcast
+            type: string
+            description: |-
+              * `ndvi_decline` - NDVI decline
+              * `ndvi_low` - NDVI low absolute
+              * `activity_completed` - Activity completed
+              * `admin_broadcast` - Admin broadcast
+            x-spec-enum-id: d0462f480c565518
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - alert_types
+      - created_at
+      - farm
+      - farm_name
+      - id
+      - updated_at
     AuthErrorResponse:
       type: object
       properties:
@@ -5666,6 +6273,42 @@ components:
           type: string
           format: date-time
           nullable: true
+    PatchedAudioAlertSubscription:
+      type: object
+      description: Read/write serializer for :class:`AudioAlertSubscription`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        farm:
+          type: integer
+        farm_name:
+          type: string
+          readOnly: true
+        alert_types:
+          type: array
+          items:
+            enum:
+            - ndvi_decline
+            - ndvi_low
+            - activity_completed
+            - admin_broadcast
+            type: string
+            description: |-
+              * `ndvi_decline` - NDVI decline
+              * `ndvi_low` - NDVI low absolute
+              * `activity_completed` - Activity completed
+              * `admin_broadcast` - Admin broadcast
+            x-spec-enum-id: d0462f480c565518
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
     PatchedFarm:
       type: object
       properties:

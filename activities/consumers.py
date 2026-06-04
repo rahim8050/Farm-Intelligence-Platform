@@ -94,6 +94,30 @@ class ActivityConsumer(AsyncWebsocketConsumer):
             activities_websocket_failures.labels(stage="send").inc()
             logger.warning("websocket_send_failed: event=%s", event)
 
+    async def audio_alert(self, event: dict) -> None:
+        """Handle audio-alert events from ``alerts.services``.
+
+        The audio-alert payload is shaped by
+        :func:`alerts.services.emit_audio_alert_event` and is sent
+        verbatim to the client. As with ``activity_event`` this is
+        best-effort: a send failure only logs and increments the
+        failure counter; the alert row is already persisted and
+        the client can recover via ``GET /api/v1/alerts/``.
+
+        Args:
+            event: Dict with a ``payload`` key (added by the
+                ``alerts.services`` group send).
+        """
+        try:
+            payload = event.get("payload", {})
+            await self.send(
+                text_data=json.dumps({"type": "audio_alert", "event": payload})
+            )
+            activities_websocket_events.labels(status="sent").inc()
+        except Exception:
+            activities_websocket_failures.labels(stage="send").inc()
+            logger.warning("websocket_send_failed: event=%s", event)
+
 
 async def emit_activity_event(user_id: int, event: dict) -> None:
     """Emit activity event to user's WebSocket.

@@ -186,10 +186,10 @@ exclude = ["**/migrations/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "S", "ANN"]
-ignore = ["ANN401"]
+ignore = ["ANN401", "S603"]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/**/*.py" = ["S101"]
+"**/tests/**/*.py" = ["S101", "ANN001", "ANN002", "ANN003"]
 
 [tool.bandit]
 skips = ["B101", "B105", "B106", "B107", "B110", "B605", "B607", "B311"]
@@ -222,6 +222,10 @@ django_settings_module = "config.mypy_settings"
 [[tool.mypy.overrides]]
 module = ["*.migrations.*"]
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["alerts.tests.*", "*.tests.*", "tests.*"]
+disable_error_code = ["no-untyped-def", "no-redef", "func-returns-value"]
 
 [[tool.mypy.overrides]]
 module = ["environ", "feedparser"]

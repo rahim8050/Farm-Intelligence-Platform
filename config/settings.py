@@ -105,6 +105,7 @@ INSTALLED_APPS = [
     "activities",
     "radio",
     "podcasts",
+    "alerts",
     "django_celery_beat",
 ]
 
@@ -586,6 +587,7 @@ REST_FRAMEWORK = {
         "radio_favorites": "60/min",
         "radio_history": "60/min",
         "podcasts_refresh": "5/min",
+        "alerts_admin": "30/min",
     },
     "EXCEPTION_HANDLER": "config.api.exceptions.custom_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -772,6 +774,30 @@ PODCASTS_REFRESH_INTERVAL_SECONDS = env.int(
 PODCASTS_REFRESH_TIMEOUT_SECONDS = env.float(
     "PODCASTS_REFRESH_TIMEOUT_SECONDS",
     default=15.0,
+)
+
+# Farm audio alerts
+# -----------------
+# TTS_ENGINE: "piper" | "espeak" | "sine" | "noop"
+#   "noop"  -> tests / CI; never produces audio bytes.
+#   "sine"  -> always-on fallback; emits a short tone WAV.
+#   "espeak"-> shells out to the `espeak-ng` CLI (small, ubiquitous).
+#   "piper" -> neural TTS via the `piper` CLI / python bindings.
+TTS_ENGINE = env("TTS_ENGINE", default="espeak")
+TTS_VOICE = env("TTS_VOICE", default="en")
+TTS_TIMEOUT_SECONDS = env.float("TTS_TIMEOUT_SECONDS", default=10.0)
+TTS_MAX_TEXT_CHARS = env.int("TTS_MAX_TEXT_CHARS", default=500)
+ALERTS_NDVI_DECLINE_SCAN_INTERVAL_SECONDS = env.int(
+    "ALERTS_NDVI_DECLINE_SCAN_INTERVAL_SECONDS",
+    default=900,
+)
+ALERTS_NDVI_LOW_THRESHOLD = env.float(
+    "ALERTS_NDVI_LOW_THRESHOLD",
+    default=0.2,
+)
+ALERTS_WEBHOOK_GROUP_PREFIX = env(
+    "ALERTS_WEBHOOK_GROUP_PREFIX",
+    default="user_",
 )
 
 # V2 Quality Engine thresholds (Phase 2)
@@ -1000,6 +1026,14 @@ CELERY_BEAT_SCHEDULE = {
     "podcasts-refresh-feeds": {
         "task": "podcasts.tasks.refresh_all_feeds",
         "schedule": PODCASTS_REFRESH_INTERVAL_SECONDS,
+    },
+    "alerts-ndvi-decline-scan": {
+        "task": "alerts.tasks.scan_ndvi_declines",
+        "schedule": ALERTS_NDVI_DECLINE_SCAN_INTERVAL_SECONDS,
+    },
+    "alerts-ndvi-low-scan": {
+        "task": "alerts.tasks.scan_low_ndvi_observations",
+        "schedule": ALERTS_NDVI_DECLINE_SCAN_INTERVAL_SECONDS,
     },
 }
 CELERY_ENABLE_UTC = True
