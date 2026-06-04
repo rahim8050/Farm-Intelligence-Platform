@@ -2589,6 +2589,105 @@ paths:
               schema:
                 $ref: '#/components/schemas/NdviErrorResponse'
           description: ''
+  /api/v1/radio/favorites/:
+    get:
+      operationId: v1_radio_favorites_list
+      description: Returns the current user's favorite stations, newest first.
+      summary: List favorite stations
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioFavoriteListEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+    post:
+      operationId: v1_radio_favorites_create
+      description: 'Idempotent: re-favoriting the same station returns the existing
+        row. 404 if the station id is unknown or inactive.'
+      summary: Add a favorite station
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FavoriteCreate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/FavoriteCreate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/FavoriteCreate'
+        required: true
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioFavoriteCreateEnvelope'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+  /api/v1/radio/favorites/{station_id}/:
+    delete:
+      operationId: v1_radio_favorites_delete
+      description: 'Idempotent: returns 204 whether or not the row existed.'
+      summary: Remove a favorite station
+      parameters:
+      - in: path
+        name: station_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '204':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioNullEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
   /api/v1/radio/health/:
     get:
       operationId: v1_radio_health
@@ -2608,6 +2707,60 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RadioHealthEnvelope'
+          description: ''
+  /api/v1/radio/history/:
+    get:
+      operationId: v1_radio_history_list
+      description: Returns the most recent 100 listening-history rows for the current
+        user, newest first.
+      summary: List listening history
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioListeningHistoryListEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+  /api/v1/radio/history/recent/:
+    get:
+      operationId: v1_radio_history_recent
+      description: Returns the most recent ``limit`` listening-history rows for the
+        current user (default 20, max 100).
+      summary: Recent listening history
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioListeningHistoryListEnvelope'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
           description: ''
   /api/v1/radio/providers/:
     get:
@@ -4076,6 +4229,42 @@ components:
       - errors
       - message
       - status
+    Favorite:
+      type: object
+      description: |-
+        Output serializer for a favorite row.
+
+        Embeds the full :class:`StationSerializer` payload so the client
+        can render a list of favorites without a second round-trip.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        station_id:
+          type: string
+          readOnly: true
+        station:
+          allOf:
+          - $ref: '#/components/schemas/Station'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - id
+      - station
+      - station_id
+    FavoriteCreate:
+      type: object
+      description: Input serializer for ``POST /api/v1/radio/favorites/``.
+      properties:
+        station_id:
+          type: string
+          maxLength: 50
+      required:
+      - station_id
     HourlyForecast:
       type: object
       properties:
@@ -4442,6 +4631,50 @@ components:
       - errors
       - message
       - status
+    ListeningHistory:
+      type: object
+      description: |-
+        Output serializer for a single listening-history row.
+
+        Read-only: rows are created internally by ``StationStreamView`` or
+        by future client-driven start/stop events.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        station_id:
+          type: string
+          readOnly: true
+        station:
+          allOf:
+          - $ref: '#/components/schemas/Station'
+          readOnly: true
+        started_at:
+          type: string
+          format: date-time
+          readOnly: true
+        ended_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+          description: Reserved for a future client-driven stop event. Currently always
+            NULL.
+        ip_address:
+          type: string
+          readOnly: true
+          nullable: true
+        user_agent:
+          type: string
+          readOnly: true
+      required:
+      - ended_at
+      - id
+      - ip_address
+      - started_at
+      - station
+      - station_id
+      - user_agent
     Login:
       type: object
       properties:
@@ -5404,6 +5637,53 @@ components:
       - errors
       - message
       - status
+    RadioErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - errors
+      - message
+      - status
+    RadioFavoriteCreateEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Favorite'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    RadioFavoriteListEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Favorite'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
     RadioHealthData:
       type: object
       properties:
@@ -5433,6 +5713,40 @@ components:
       properties:
         data:
           $ref: '#/components/schemas/RadioHealthData'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    RadioListeningHistoryListEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ListeningHistory'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - status
+    RadioNullEnvelope:
+      type: object
+      properties:
+        data:
+          nullable: true
         status:
           type: integer
         message:

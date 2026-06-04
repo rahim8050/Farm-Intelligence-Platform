@@ -3,29 +3,48 @@
 This module provides endpoints for radio station discovery, streaming,
 and a lightweight health probe.
 
-Auth: Public access (no authentication required)
+Auth: Public access by default. Authenticated endpoints (favorites
+and listening history) require ``IsAuthenticated`` and use the global
+JWT and API-key authentication classes.
 Response: All responses use success_response envelope. Errors follow
 the standard DRF error envelope.
 """
 
 from __future__ import annotations
 
+from typing import Any, cast
+
+from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.exceptions import NotFound
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from config.api.openapi import (
+    error_envelope_serializer,
+    success_envelope_serializer,
+)
 from config.api.responses import success_response
 from radio.models import Provider, Station
 from radio.serializers import (
+    FavoriteCreateSerializer,
+    FavoriteSerializer,
+    ListeningHistorySerializer,
     ProviderSerializer,
     StationDetailSerializer,
     StationSerializer,
 )
-from radio.services import summarize_health
+from radio.services import (
+    add_favorite,
+    list_favorites_for_user,
+    list_history_for_user,
+    record_listening_session,
+    remove_favorite,
+    summarize_health,
+)
 
 StationListEnvelope = inline_serializer(
     name="StationListEnvelope",
@@ -97,6 +116,24 @@ RadioHealthEnvelope = inline_serializer(
         "data": RadioHealthData,
         "errors": serializers.JSONField(allow_null=True),
     },
+)
+
+FavoriteEnvelope = success_envelope_serializer(
+    "RadioFavoriteEnvelope", data=FavoriteSerializer()
+)
+FavoriteListEnvelope = success_envelope_serializer(
+    "RadioFavoriteListEnvelope", data=FavoriteSerializer(many=True)
+)
+FavoriteCreateEnvelope = success_envelope_serializer(
+    "RadioFavoriteCreateEnvelope", data=FavoriteSerializer()
+)
+ListeningHistoryListEnvelope = success_envelope_serializer(
+    "RadioListeningHistoryListEnvelope",
+    data=ListeningHistorySerializer(many=True),
+)
+radio_error_envelope = error_envelope_serializer("RadioErrorResponse")
+radio_null_envelope = success_envelope_serializer(
+    "RadioNullEnvelope", data=serializers.JSONField(allow_null=True)
 )
 
 
@@ -246,6 +283,12 @@ class StationStreamView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
+        user = cast(
+            AbstractBaseUser | AnonymousUser,
+            getattr(request, "user", AnonymousUser()),
+        )
+        record_listening_session(user, station, request=request)
+
         return success_response(
             {
                 "stream_url": station.stream_url,
@@ -323,3 +366,234 @@ class ProviderListView(APIView):
             ProviderSerializer(providers, many=True).data,
             message="Providers retrieved successfully",
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Favorites and listening history (auth required)
+# ---------------------------------------------------------------------------
+
+
+@extend_schema(
+    auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+)
+class FavoriteListCreateView(APIView):
+    """List or add the current user's favorite stations.
+
+    Authentication: BearerAuth (JWT) or ApiKeyAuth.
+    Permissions: IsAuthenticated.
+    Throttling: scope ``radio_favorites`` (60/min).
+    Request body (POST): ``FavoriteCreateSerializer``
+    (``{"station_id": "..."}``).
+    Response data: ``FavoriteSerializer`` (list on GET, single on POST).
+    Side effects: ``POST`` idempotently creates a favorite row.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_scope = "radio_favorites"
+
+    @extend_schema(
+        responses={
+            200: FavoriteListEnvelope,
+            401: radio_error_envelope,
+        },
+        summary="List favorite stations",
+        description=(
+            "Returns the current user's favorite stations, newest first."
+        ),
+        operation_id="v1_radio_favorites_list",
+    )
+    def get(self, request: Request) -> Response:
+        """Return the user's favorites, newest first.
+
+        Side effects: none.
+        """
+        user = cast(
+            AbstractBaseUser | AnonymousUser,
+            getattr(request, "user", AnonymousUser()),
+        )
+        favorites = list_favorites_for_user(user, limit=100)
+        data = FavoriteSerializer(favorites, many=True).data
+        return success_response(data, message="Favorites retrieved")
+
+    @extend_schema(
+        request=FavoriteCreateSerializer,
+        responses={
+            201: FavoriteCreateEnvelope,
+            400: radio_error_envelope,
+            401: radio_error_envelope,
+            404: radio_error_envelope,
+        },
+        summary="Add a favorite station",
+        description=(
+            "Idempotent: re-favoriting the same station returns the "
+            "existing row. 404 if the station id is unknown or inactive."
+        ),
+        operation_id="v1_radio_favorites_create",
+    )
+    def post(self, request: Request) -> Response:
+        """Add a station to the user's favorites (idempotent).
+
+        Side effects: creates a ``Favorite`` row when missing.
+        """
+        serializer = FavoriteCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        station = Station.objects.get(
+            id=serializer.validated_data["station_id"],
+            is_active=True,
+        )
+        user = cast(
+            AbstractBaseUser | AnonymousUser,
+            getattr(request, "user", AnonymousUser()),
+        )
+        favorite, created = add_favorite(user, station)
+        status_code = (
+            status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        )
+        return success_response(
+            FavoriteSerializer(favorite).data,
+            message=("Favorite added" if created else "Already a favorite"),
+            status_code=status_code,
+        )
+
+
+@extend_schema(
+    auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+)
+class FavoriteDeleteView(APIView):
+    """Remove a station from the current user's favorites.
+
+    Authentication: BearerAuth (JWT) or ApiKeyAuth.
+    Permissions: IsAuthenticated.
+    Throttling: scope ``radio_favorites`` (60/min).
+    Side effects: deletes the matching favorite row (idempotent — 204
+    even when no row existed).
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_scope = "radio_favorites"
+
+    @extend_schema(
+        responses={
+            204: radio_null_envelope,
+            401: radio_error_envelope,
+        },
+        summary="Remove a favorite station",
+        description=(
+            "Idempotent: returns 204 whether or not the row existed."
+        ),
+        operation_id="v1_radio_favorites_delete",
+    )
+    def delete(self, request: Request, station_id: str) -> Response:
+        """Remove the favorite matching (user, station_id).
+
+        Side effects: deletes the matching ``Favorite`` row when it
+        exists.
+        """
+        user = cast(
+            AbstractBaseUser | AnonymousUser,
+            getattr(request, "user", AnonymousUser()),
+        )
+        remove_favorite(user, station_id)
+        return success_response(None, message="Favorite removed")
+
+
+@extend_schema(
+    auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+)
+class ListeningHistoryListView(APIView):
+    """List the current user's listening history.
+
+    Authentication: BearerAuth (JWT) or ApiKeyAuth.
+    Permissions: IsAuthenticated.
+    Throttling: scope ``radio_history`` (60/min).
+    Response data: list of ``ListeningHistorySerializer``, newest first,
+    capped at 100 rows.
+    Side effects: none.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_scope = "radio_history"
+
+    @extend_schema(
+        responses={
+            200: ListeningHistoryListEnvelope,
+            401: radio_error_envelope,
+        },
+        summary="List listening history",
+        description=(
+            "Returns the most recent 100 listening-history rows for "
+            "the current user, newest first."
+        ),
+        operation_id="v1_radio_history_list",
+    )
+    def get(self, request: Request) -> Response:
+        """Return the user's listening history, newest first.
+
+        Side effects: none.
+        """
+        user = cast(
+            AbstractBaseUser | AnonymousUser,
+            getattr(request, "user", AnonymousUser()),
+        )
+        rows = list_history_for_user(user, limit=100)
+        data: list[Any] = ListeningHistorySerializer(rows, many=True).data
+        return success_response(data, message="History retrieved")
+
+
+@extend_schema(
+    auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+)
+class ListeningHistoryRecentView(APIView):
+    """Return the most recent N listening-history events.
+
+    Authentication: BearerAuth (JWT) or ApiKeyAuth.
+    Permissions: IsAuthenticated.
+    Throttling: scope ``radio_history`` (60/min).
+    Query params: ``limit`` (int, 1..100, default 20).
+    Response data: list of ``ListeningHistorySerializer``, newest first.
+    Side effects: none.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_scope = "radio_history"
+
+    @extend_schema(
+        responses={
+            200: ListeningHistoryListEnvelope,
+            400: radio_error_envelope,
+            401: radio_error_envelope,
+        },
+        summary="Recent listening history",
+        description=(
+            "Returns the most recent ``limit`` listening-history rows "
+            "for the current user (default 20, max 100)."
+        ),
+        operation_id="v1_radio_history_recent",
+    )
+    def get(self, request: Request) -> Response:
+        """Return the user's most recent history rows.
+
+        Side effects: none.
+        """
+        try:
+            limit_raw = request.query_params.get("limit", "20")
+            limit = int(limit_raw)
+        except (TypeError, ValueError):
+            return success_response(
+                data=None,
+                message="Invalid limit",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if limit < 1 or limit > 100:
+            return success_response(
+                data=None,
+                message="limit must be between 1 and 100",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        user = cast(
+            AbstractBaseUser | AnonymousUser,
+            getattr(request, "user", AnonymousUser()),
+        )
+        rows = list_history_for_user(user, limit=limit)
+        data: list[Any] = ListeningHistorySerializer(rows, many=True).data
+        return success_response(data, message="Recent history retrieved")

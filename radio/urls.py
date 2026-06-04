@@ -26,4 +26,24 @@ urlpatterns = [
         views.RadioHealthView.as_view(),
         name="radio-health",
     ),
+    path(
+        "radio/favorites/",
+        views.FavoriteListCreateView.as_view(),
+        name="radio-favorites",
+    ),
+    path(
+        "radio/favorites/<str:station_id>/",
+        views.FavoriteDeleteView.as_view(),
+        name="radio-favorites-delete",
+    ),
+    path(
+        "radio/history/",
+        views.ListeningHistoryListView.as_view(),
+        name="radio-history",
+    ),
+    path(
+        "radio/history/recent/",
+        views.ListeningHistoryRecentView.as_view(),
+        name="radio-history-recent",
+    ),
 ]

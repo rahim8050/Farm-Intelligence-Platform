@@ -1,7 +1,8 @@
 # Data Model Planning
 
-> **Status**: ✅ IMPLEMENTED (Station + Provider + StationHealthCheck models,
-> `is_available` / `last_health_check_at` fields on Station)
+> **Status**: ✅ IMPLEMENTED (Station + Provider + StationHealthCheck +
+> Favorite + ListeningHistory models, `is_available` / `last_health_check_at`
+> fields on Station)
 
 ## Station Metadata Schema
 
@@ -146,39 +147,74 @@ class StationHealthCheck(models.Model):
         indexes = [models.Index(fields=["station", "-checked_at"])]
 ```
 
-#### Listening History
+#### Listening History (✅ shipped 2026-06-04)
+
+The model sketched here is now implemented at
+`radio/models.py:ListeningHistory`. The migration is
+`radio/migrations/0004_favorite_listeninghistory.py`. The
+`ended_at` field exists but is reserved for a future client-driven
+stop event; today every row is created by `StationStreamView` with
+`ended_at = NULL`. The `duration_seconds` field is **not** part of
+the current model — it can be derived from `ended_at - started_at`
+once stop events exist.
 
 ```python
+# radio/models.py — actual implementation
 class ListeningHistory(models.Model):
-    """Track user listening sessions."""
+    """A row recording that a user fetched a station's stream URL."""
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="radio_history"
+        related_name="radio_listening_history",
     )
-    station = models.ForeignKey(Station, on_delete=models.CASCADE)
-    started_at = models.DateTimeField(auto_now_add=True)
+    station = models.ForeignKey(
+        Station, on_delete=models.CASCADE, related_name="listening_history"
+    )
+    started_at = models.DateTimeField(auto_now_add=True, db_index=True)
     ended_at = models.DateTimeField(null=True, blank=True)
-    duration_seconds = models.IntegerField(default=0)
-```
-
-#### Favorites
-
-```python
-class FavoriteStation(models.Model):
-    """User's favorite stations."""
-
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="radio_favorites"
-    )
-    station = models.ForeignKey(Station, on_delete=models.CASCADE)
-    added_at = models.DateTimeField(auto_now_add=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=200, blank=True)
 
     class Meta:
-        unique_together = ["user", "station"]
+        db_table = "radio_listening_history"
+        ordering = ["-started_at"]
+        indexes = [models.Index(fields=["user", "-started_at"])]
+```
+
+#### Favorites (✅ shipped 2026-06-04)
+
+The model sketched here is now implemented at
+`radio/models.py:Favorite`. The `added_at` field was renamed to
+`created_at` and the pair `(user, station)` is enforced unique at
+the database level via a `UniqueConstraint` named
+`radio_favorite_user_station_unique`.
+
+```python
+# radio/models.py — actual implementation
+class Favorite(models.Model):
+    """A user's favorite radio station."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="radio_favorites",
+    )
+    station = models.ForeignKey(
+        Station, on_delete=models.CASCADE, related_name="favorited_by"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "radio_favorite"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "station"],
+                name="radio_favorite_user_station_unique",
+            ),
+        ]
+        indexes = [models.Index(fields=["user", "-created_at"])]
 ```
 
 #### Station Analytics
@@ -258,6 +294,9 @@ erDiagram
 
     PROVIDER ||--o{ STATION : "has"
 
+    USER ||--o{ FAVORITE : "owns"
+    USER ||--o{ LISTENING_HISTORY : "has"
+
     STATION }|..|{ FAVORITE : "has"
     USER ||--o{ FAVORITE : "owns"
 
@@ -272,6 +311,26 @@ erDiagram
         int id PK
         string username
     }
+
+    FAVORITE {
+        int id PK
+        int user FK
+        string station FK
+        datetime created_at
+    }
+
+    LISTENING_HISTORY {
+        int id PK
+        int user FK
+        string station FK
+        datetime started_at
+        datetime ended_at "nullable; future"
+        ip ip_address "nullable"
+        string user_agent
+    }
+
+    STATION ||--o{ FAVORITE : "favorited by"
+    STATION ||--o{ LISTENING_HISTORY : "recorded by"
 ```
 
 ## Migration Strategy
@@ -282,4 +341,6 @@ erDiagram
 4. **`0003_station_health_check` (Phase 2, 2026-06-03)**: Add `is_available`,
    `last_health_check_at` to `Station`; create `StationHealthCheck` with
    composite `(station, -checked_at)` index
-5. **Future migrations**: Add new tables as needed (no migration for unused features)
+5. **`0004_favorite_listeninghistory` (Phase 3, 2026-06-04)**: Create
+   `Favorite` (with `unique(user, station)`) and `ListeningHistory`
+6. **Future migrations**: Add new tables as needed (no migration for unused features)

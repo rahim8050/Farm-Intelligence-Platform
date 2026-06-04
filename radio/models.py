@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.conf import settings
 from django.db import models
 
 
@@ -121,3 +122,88 @@ class StationHealthCheck(models.Model):
             f"{'up' if self.is_reachable else 'down'} "
             f"@ {self.checked_at.isoformat()}"
         )
+
+
+class Favorite(models.Model):
+    """A user's favorite radio station.
+
+    One row per (user, station). The pair is unique, so a user can
+    favorite a given station at most once. The model is intentionally
+    lean: see ``radio.services`` for the business rules that surround
+    it (idempotent add/remove, listing, etc.).
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="radio_favorites",
+    )
+    station = models.ForeignKey(
+        Station,
+        on_delete=models.CASCADE,
+        related_name="favorited_by",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "radio_favorite"
+        verbose_name = "Favorite"
+        verbose_name_plural = "Favorites"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "station"],
+                name="radio_favorite_user_station_unique",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.user_id} -> {self.station_id}"
+
+
+class ListeningHistory(models.Model):
+    """A row recording that a user fetched a station's stream URL.
+
+    Each successful ``GET /api/v1/radio/stations/<id>/stream/`` from an
+    authenticated client creates one row. Rows are kept for trending
+    and a "recently played" surface; ``ended_at`` is reserved for a
+    future client-driven stop event.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="radio_listening_history",
+    )
+    station = models.ForeignKey(
+        Station,
+        on_delete=models.CASCADE,
+        related_name="listening_history",
+    )
+    started_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    ended_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Reserved for a future client-driven stop event. "
+            "Currently always NULL."
+        ),
+    )
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        db_table = "radio_listening_history"
+        verbose_name = "Listening history"
+        verbose_name_plural = "Listening history"
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["user", "-started_at"]),
+        ]
+
+    def __str__(self) -> str:
+        ts = self.started_at.isoformat()
+        return f"{self.user_id} -> {self.station_id} @ {ts}"

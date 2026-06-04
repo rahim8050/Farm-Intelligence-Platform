@@ -16,12 +16,20 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 import httpx
+from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.db import close_old_connections
+from django.http import HttpRequest
 from django.utils import timezone
 
-from radio.models import Station, StationHealthCheck
+from radio.models import (
+    Favorite,
+    ListeningHistory,
+    Station,
+    StationHealthCheck,
+)
 
 logger = logging.getLogger("radio")
 
@@ -255,3 +263,135 @@ def summarize_health() -> dict[str, object]:
         "stations_unavailable": unreachable,
         "stations_unchecked": unchecked,
     }
+
+
+# ---------------------------------------------------------------------------
+# Favorites & listening history (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def get_favorite(
+    user: AbstractBaseUser | AnonymousUser | Any,
+    station_id: str,
+) -> Favorite | None:
+    """Return the user's favorite for ``station_id`` if it exists."""
+    return Favorite.objects.filter(user=user, station_id=station_id).first()
+
+
+def add_favorite(
+    user: AbstractBaseUser | AnonymousUser | Any,
+    station: Station,
+) -> tuple[Favorite, bool]:
+    """Idempotently add ``station`` to ``user``'s favorites.
+
+    Returns:
+        ``(favorite, created)`` where ``created`` is ``True`` only when
+        a new row was inserted. Calling ``add_favorite`` twice with the
+        same (user, station) is safe and returns the original row.
+    """
+    favorite, created = Favorite.objects.get_or_create(
+        user=user, station=station
+    )
+    if created:
+        logger.info(
+            "radio_favorite_added user_id=%s station_id=%s",
+            getattr(user, "id", None),
+            station.id,
+        )
+    return favorite, created
+
+
+def remove_favorite(
+    user: AbstractBaseUser | AnonymousUser | Any,
+    station_id: str,
+) -> bool:
+    """Idempotently remove the favorite matching (user, station_id).
+
+    Returns:
+        ``True`` when a row was deleted; ``False`` when no row existed.
+    """
+    deleted, _ = Favorite.objects.filter(
+        user=user, station_id=station_id
+    ).delete()
+    if deleted:
+        logger.info(
+            "radio_favorite_removed user_id=%s station_id=%s",
+            getattr(user, "id", None),
+            station_id,
+        )
+    return bool(deleted)
+
+
+def list_favorites_for_user(
+    user: AbstractBaseUser | AnonymousUser | Any,
+    *,
+    limit: int | None = None,
+) -> list[Favorite]:
+    """Return the user's favorites, newest first.
+
+    The optional ``limit`` caps the result set; the default of ``None``
+    returns the full list.
+    """
+    qs = Favorite.objects.filter(user=user).select_related(
+        "station", "station__provider"
+    )
+    if limit is not None:
+        qs = qs[:limit]
+    return list(qs)
+
+
+def record_listening_session(
+    user: AbstractBaseUser | AnonymousUser | Any,
+    station: Station,
+    request: HttpRequest | None = None,
+) -> ListeningHistory | None:
+    """Record a listening-history row for an authenticated user.
+
+    Returns:
+        The created :class:`ListeningHistory` row, or ``None`` when the
+        caller is anonymous (history is per-user; we do not record
+        anonymous traffic).
+
+    The row is best-effort: a failure to insert is logged and swallowed
+    so it can never block a stream URL from being served.
+    """
+    user_id = getattr(user, "id", None)
+    if user_id is None:
+        return None
+    ip_address: str | None = None
+    user_agent: str = ""
+    if request is not None:
+        forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
+        if forwarded:
+            ip_address = forwarded.split(",")[0].strip() or None
+        if ip_address is None:
+            ip_address = request.META.get("REMOTE_ADDR") or None
+        user_agent = (request.META.get("HTTP_USER_AGENT") or "")[:200]
+    try:
+        return ListeningHistory.objects.create(
+            user=user,
+            station=station,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+    except Exception:
+        logger.exception(
+            "radio_listening_history_record_failed user_id=%s station_id=%s",
+            user_id,
+            station.id,
+        )
+        return None
+
+
+def list_history_for_user(
+    user: AbstractBaseUser | AnonymousUser | Any,
+    *,
+    limit: int | None = None,
+) -> list[ListeningHistory]:
+    """Return the user's listening history, newest first."""
+    qs = ListeningHistory.objects.filter(user=user).select_related(
+        "station", "station__provider"
+    )
+    if limit is not None:
+        qs = qs[:limit]
+    return list(qs)

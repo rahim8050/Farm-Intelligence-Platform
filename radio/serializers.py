@@ -2,7 +2,7 @@ from typing import Any
 
 from rest_framework import serializers
 
-from radio.models import Provider, Station
+from radio.models import Favorite, ListeningHistory, Provider, Station
 
 
 def _upgrade_to_https(value: str) -> str:
@@ -92,3 +92,54 @@ class StationDetailSerializer(StationSerializer):
             if data.get(field):
                 data[field] = _upgrade_to_https(data[field])
         return data
+
+
+class FavoriteCreateSerializer(serializers.Serializer):
+    """Input serializer for ``POST /api/v1/radio/favorites/``."""
+
+    station_id = serializers.CharField(max_length=50)
+
+    def validate_station_id(self, value: str) -> str:
+        if not Station.objects.filter(id=value, is_active=True).exists():
+            raise serializers.ValidationError("Station not found or inactive.")
+        return value
+
+
+class FavoriteSerializer(serializers.ModelSerializer):
+    """Output serializer for a favorite row.
+
+    Embeds the full :class:`StationSerializer` payload so the client
+    can render a list of favorites without a second round-trip.
+    """
+
+    station = StationSerializer(read_only=True)
+    station_id = serializers.CharField(source="station.id", read_only=True)
+
+    class Meta:
+        model = Favorite
+        fields = ["id", "station_id", "station", "created_at"]
+        read_only_fields = fields
+
+
+class ListeningHistorySerializer(serializers.ModelSerializer):
+    """Output serializer for a single listening-history row.
+
+    Read-only: rows are created internally by ``StationStreamView`` or
+    by future client-driven start/stop events.
+    """
+
+    station = StationSerializer(read_only=True)
+    station_id = serializers.CharField(source="station.id", read_only=True)
+
+    class Meta:
+        model = ListeningHistory
+        fields = [
+            "id",
+            "station_id",
+            "station",
+            "started_at",
+            "ended_at",
+            "ip_address",
+            "user_agent",
+        ]
+        read_only_fields = fields

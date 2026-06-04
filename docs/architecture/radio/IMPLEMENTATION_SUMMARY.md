@@ -3,7 +3,8 @@
 **Date:** May 11, 2026 (architecture)
 **Date:** June 03, 2026 (implementation verified)
 **Date:** June 03, 2026 (Phase 2: station health checks shipped)
-**Status:** ✅ **COMPLETE** — architecture, MVP, and Phase 2 are all shipped.
+**Date:** June 04, 2026 (Phase 3: favorites + listening history shipped)
+**Status:** ✅ **COMPLETE** — architecture, MVP, Phase 2, and Phase 3 are all shipped.
 
 The original 2026-05-11 snapshot was captured before any code was written and
 ended with the line *"Status: Architecture complete, implementation not
@@ -184,7 +185,78 @@ These are documented in [`08_future_expansion.md`](./08_future_expansion.md)
 as future work; no current code path references them.
 
 Note: the P2 row "Station health checks" is **not** in this list — it shipped
-on 2026-06-03 and is documented in § Phase 2 above.
+on 2026-06-03 and is documented in § Phase 2 above. Same for the two P3 rows
+"favorites" and "listening history", which shipped 2026-06-04 (see § Phase 3
+below).
+
+---
+
+## Phase 3 — Favorites & Listening History (2026-06-04)
+
+Phase 3 ships per-user favorites and a per-user listening-history log.
+Both are auth'd (`IsAuthenticated` + global JWT/APIKey authentication
+classes) and scoped to the calling user; no user can see or modify
+another user's rows. Idempotency is the contract for both the favorite
+add and the favorite delete: re-favoriting returns the existing row,
+deleting a missing favorite returns success.
+
+### Endpoints
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/v1/radio/favorites/` | IsAuthenticated | List current user's favorite stations, newest first |
+| `POST` | `/api/v1/radio/favorites/` | IsAuthenticated | Add a station to favorites (idempotent) — `{"station_id": "..."}` |
+| `DELETE` | `/api/v1/radio/favorites/<station_id>/` | IsAuthenticated | Remove a station from favorites (idempotent) |
+| `GET` | `/api/v1/radio/history/` | IsAuthenticated | List current user's listening history, newest first (capped 100) |
+| `GET` | `/api/v1/radio/history/recent/?limit=20` | IsAuthenticated | Most recent N history rows (default 20, max 100) |
+| (auto) | `GET /stations/<id>/stream/` | n/a | `StationStreamView` records a `ListeningHistory` row when the caller is authenticated |
+
+Throttle scopes: `radio_favorites` (60/min), `radio_history` (60/min). Both
+scopes are added to `REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]` in
+`config/settings.py`.
+
+### New and changed files
+
+| File | Purpose |
+|---|---|
+| `radio/models.py:125-205` | `Favorite` (`unique(user, station)`, index `(user, -created_at)`); `ListeningHistory` (index `(user, -started_at)`) |
+| `radio/migrations/0004_favorite_listeninghistory.py` | Adds both models, the unique constraint, and the indexes |
+| `radio/serializers.py:97-159` | `FavoriteCreateSerializer`, `FavoriteSerializer`, `ListeningHistorySerializer` |
+| `radio/services.py:261-395` | `get_favorite`, `add_favorite`, `remove_favorite`, `list_favorites_for_user`, `record_listening_session`, `list_history_for_user` |
+| `radio/views.py:332-563` | `FavoriteListCreateView`, `FavoriteDeleteView`, `ListeningHistoryListView`, `ListeningHistoryRecentView`; `StationStreamView` now calls `record_listening_session` for auth'd callers |
+| `radio/urls.py:30-49` | Four new URL paths: `radio-favorites`, `radio-favorites-delete`, `radio-history`, `radio-history-recent` |
+| `radio/admin.py:46-72` | `FavoriteAdmin` and `ListeningHistoryAdmin` |
+| `radio/tests/test_favorites.py` | 13 service + endpoint tests |
+| `radio/tests/test_history.py` | 13 service + endpoint + stream-hook tests |
+| `config/settings.py:585-586` | Throttle scopes `radio_favorites`, `radio_history` |
+| `schema.yml` | Regenerated; 5 new operation IDs (`v1_radio_favorites_*`, `v1_radio_history_*`) |
+
+### Idempotency contract
+
+| Endpoint | First call | Repeat call |
+|---|---|---|
+| `POST /favorites/` (same station) | `201` "Favorite added" | `200` "Already a favorite" (same row) |
+| `DELETE /favorites/<id>/` (row absent) | `200` "Favorite removed" | `200` "Favorite removed" (no-op) |
+| `GET /history/recent/?limit=` (bad value) | `400` | `400` |
+
+### Privacy
+
+- The user's id is taken from `request.user`; clients cannot spoof
+  ownership of a favorite or history row.
+- `ListeningHistory.ip_address` and `ListeningHistory.user_agent` are
+  recorded best-effort for analytics; they are nullable and capped
+  (`user_agent` at 200 chars) to bound storage.
+- A failed insert in `record_listening_session` is logged and
+  swallowed so it can never block a stream URL from being served.
+
+### Verification
+
+- `python manage.py makemigrations --check --dry-run` → No changes detected.
+- `ruff check .` — all checks passed.
+- `ruff format .` — clean.
+- `mypy --config-file=pyproject.toml radio/` — no issues found in 31 source files.
+- `bandit -c pyproject.toml -r radio/` — no issues.
+- `pytest radio/` — 79 passed (26 new, 53 existing).
 
 ---
 
@@ -223,3 +295,4 @@ all reflected in the code:
 | 1.0 | May 11, 2026 | Initial architecture documentation; implementation not started. |
 | 2.0 | June 03, 2026 | Implementation verified; views, serializers, providers, seed data, and tests are all in place. |
 | 2.1 | June 03, 2026 | Phase 2 (station health checks) shipped: model, services, task, metrics, alerts, `/radio/health/` endpoint, stream 503 gating, full doc alignment, migration index-name fix. |
+| 3.0 | June 04, 2026 | Phase 3 (favorites + listening history) shipped: `Favorite` and `ListeningHistory` models, auth'd endpoints, idempotent add/remove, `StationStreamView` auto-records history for auth'd clients, throttle scopes, doc alignment. |

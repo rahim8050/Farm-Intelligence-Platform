@@ -1,6 +1,12 @@
 from django.contrib import admin
 
-from radio.models import Provider, Station, StationHealthCheck
+from radio.models import (
+    Favorite,
+    ListeningHistory,
+    Provider,
+    Station,
+    StationHealthCheck,
+)
 
 
 @admin.register(Provider)
@@ -43,4 +49,34 @@ class StationHealthCheckAdmin(admin.ModelAdmin):
         "response_time_ms",
         "status_code",
         "error_message",
+    ]
+
+
+@admin.register(Favorite)
+class FavoriteAdmin(admin.ModelAdmin):
+    list_display = ["id", "user", "station", "created_at"]
+    list_filter = ["station"]
+    search_fields = ["user__username", "station__id", "station__name"]
+    readonly_fields = ["created_at"]
+
+
+@admin.register(ListeningHistory)
+class ListeningHistoryAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "user",
+        "station",
+        "started_at",
+        "ended_at",
+        "ip_address",
+    ]
+    list_filter = ["station"]
+    search_fields = ["user__username", "station__id", "station__name"]
+    readonly_fields = [
+        "user",
+        "station",
+        "started_at",
+        "ended_at",
+        "ip_address",
+        "user_agent",
     ]
