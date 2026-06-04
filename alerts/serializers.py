@@ -15,7 +15,7 @@ class AudioAlertSubscriptionSerializer(serializers.ModelSerializer):
     """Read/write serializer for :class:`AudioAlertSubscription`."""
 
     alert_types = serializers.ListField(
-        child=serializers.ChoiceField(choices=AudioAlertType.choices),
+        child=serializers.CharField(),
         allow_empty=True,
     )
     farm_name = serializers.CharField(source="farm.name", read_only=True)

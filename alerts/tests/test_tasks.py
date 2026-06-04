@@ -30,12 +30,6 @@ def _make_farm(owner: Any) -> Farm:
     )
 
 
-def _make_farm(owner: Any) -> Farm:
-    return Farm.objects.create(
-        owner=owner, name="F", centroid_lat=0.0, centroid_lon=0.0
-    )
-
-
 def test_scan_ndvi_declines_fires_for_decline_state() -> None:
     owner = _make_user()
     farm = _make_farm(owner)
