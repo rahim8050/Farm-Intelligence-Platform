@@ -27,7 +27,7 @@ pytestmark = pytest.mark.django_db
 
 def _stub_tts() -> Any:
     return patch(
-        "alerts.services.synthesize",
+        "alerts.tts.synthesize",
         return_value=TTSResult(b"RIFF...stub", "audio/wav", 1500),
     )
 

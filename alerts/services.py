@@ -2,10 +2,15 @@
 
 This module is the home for all business logic. It contains:
 
-- :func:`dispatch_alert` - the single entry point that creates an
-  :class:`AudioAlert` row, generates the audio file (via
-  :mod:`alerts.tts`), and pushes a WebSocket event to the user's
-  Channels group.
+- :func:`dispatch_alert` - convenience entry point that calls
+  :func:`dispatch_alert_fast` and enqueues
+  :func:`alerts.tasks.render_alert_audio`. Use this from synchronous
+  triggers (admin views, REST endpoints).
+- :func:`dispatch_alert_fast` - the fast path: writes the
+  :class:`AudioAlert` row, builds the initial WebSocket payload
+  (without ``audio_url``), and pushes the event. The audio file is
+  generated asynchronously by a Celery task and a second push
+  delivers the URL once the file is ready.
 - :func:`acknowledge_alert` - mark one alert as read.
 - :func:`list_alerts_for_user` - paginated list of the user's alerts.
 - :func:`has_subscription` - quick check used by the periodic scan
@@ -33,7 +38,6 @@ from alerts.models import (
     AudioAlertTriggerSource,
     AudioAlertType,
 )
-from alerts.tts import synthesize
 
 from . import metrics
 
@@ -131,7 +135,27 @@ def _save_audio_bytes(alert: AudioAlert, audio_bytes: bytes) -> None:
     alert.audio_file.save(name, ContentFile(audio_bytes), save=False)
 
 
-def dispatch_alert(
+def build_push_payload(alert: AudioAlert) -> dict[str, Any]:
+    """Build the WebSocket event payload for ``alert``.
+
+    ``audio_url`` is empty until :func:`alerts.tasks.render_alert_audio`
+    has finished (a second push delivers the URL).
+    """
+    return {
+        "alert_id": str(alert.id),
+        "alert_type": alert.alert_type,
+        "title": alert.title,
+        "message": alert.message,
+        "farm_id": alert.farm_id,
+        "audio_url": _absolute_audio_url(alert),
+        "duration_ms": alert.duration_ms,
+        "mime_type": alert.mime_type,
+        "created_at": alert.created_at.isoformat(),
+        "schema_version": "1.0",
+    }
+
+
+def dispatch_alert_fast(
     *,
     user_id: int,
     farm_id: int | None,
@@ -141,20 +165,24 @@ def dispatch_alert(
     message: str,
     source_object_id: str = "",
 ) -> AlertDispatchResult:
-    """Create, synthesise, persist, and push a single audio alert.
+    """Fast path: write the row + push the WebSocket event.
 
-    The DB write and the WebSocket push are best-effort: a failure in
-    the push path never blocks the row from being saved, and vice
-    versa. The caller (a Celery task) is responsible for any retries.
+    The TTS render and the audio file upload happen asynchronously
+    in :func:`alerts.tasks.render_alert_audio`; a second push will
+    update the user once the file is ready. The DB write is
+    authoritative so a render failure never leaves the user
+    without an alert row, and the WebSocket push remains
+    best-effort (a transient Redis/Channels outage does not block
+    the row from being saved).
 
     Instrumentation (see :mod:`alerts.metrics`):
 
     - ``alerts_dispatch_total{alert_type,result}`` increments once
       per call (``result=success|error``).
     - ``alerts_dispatch_duration_seconds{alert_type}`` observes the
-      end-to-end latency (DB + TTS + push).
+      end-to-end latency (DB + push; no TTS).
     - ``alerts_dispatch_failures_total{alert_type,reason}`` records
-      synthesiser and push failures.
+      push failures.
     """
     if alert_type not in AudioAlertType.values:
         raise ValueError(f"unknown alert_type: {alert_type!r}")
@@ -171,40 +199,9 @@ def dispatch_alert(
             message=message,
             source_object_id=source_object_id[:64],
         )
-        try:
-            result = synthesize(message)
-        except Exception as exc:  # noqa: BLE001
-            metrics.dispatch_failures(
-                alert_type=alert_type, reason=exc.__class__.__name__
-            )
-            logger.warning(
-                "TTS failed for alert %s: %s", alert.id, exc.__class__.__name__
-            )
-            result = None
-        if result is not None and result.audio_bytes:
-            _save_audio_bytes(alert, result.audio_bytes)
-            alert.duration_ms = result.duration_ms
-            alert.mime_type = result.mime_type
-            alert.save(
-                update_fields=["audio_file", "duration_ms", "mime_type"]
-            )
         delivered = False
         try:
-            sent = emit_audio_alert_event(
-                user_id,
-                {
-                    "alert_id": str(alert.id),
-                    "alert_type": alert.alert_type,
-                    "title": alert.title,
-                    "message": alert.message,
-                    "farm_id": alert.farm_id,
-                    "audio_url": _absolute_audio_url(alert),
-                    "duration_ms": alert.duration_ms,
-                    "mime_type": alert.mime_type,
-                    "created_at": alert.created_at.isoformat(),
-                    "schema_version": "1.0",
-                },
-            )
+            sent = emit_audio_alert_event(user_id, build_push_payload(alert))
             if sent:
                 alert.is_delivered = True
                 alert.delivered_at = timezone.now()
@@ -223,6 +220,54 @@ def dispatch_alert(
         alert_type=alert_type, result="success" if delivered else "error"
     )
     return AlertDispatchResult(alert_id=alert.id, delivered=delivered)
+
+
+def dispatch_alert(
+    *,
+    user_id: int,
+    farm_id: int | None,
+    alert_type: str,
+    trigger_source: str,
+    title: str,
+    message: str,
+    source_object_id: str = "",
+) -> AlertDispatchResult:
+    """Create, persist, and push a single audio alert.
+
+    The fast path (:func:`dispatch_alert_fast`) writes the row and
+    pushes the initial WebSocket event; the TTS render happens
+    asynchronously in :func:`alerts.tasks.render_alert_audio`.
+
+    Use this from synchronous triggers (admin views, REST
+    endpoints). The Celery tasks and the admin broadcast path
+    call :func:`dispatch_alert_fast` directly to avoid an
+    unnecessary Redis hop.
+    """
+    result = dispatch_alert_fast(
+        user_id=user_id,
+        farm_id=farm_id,
+        alert_type=alert_type,
+        trigger_source=trigger_source,
+        title=title,
+        message=message,
+        source_object_id=source_object_id,
+    )
+    # Defer the (potentially slow) TTS render to a Celery worker.
+    try:
+        from alerts.tasks import render_alert_audio
+
+        render_alert_audio.delay(str(result.alert_id))
+    except Exception as exc:  # noqa: BLE001 - broker outage is not fatal
+        metrics.dispatch_failures(
+            alert_type=alert_type,
+            reason=f"enqueue:{exc.__class__.__name__}",
+        )
+        logger.warning(
+            "Failed to enqueue render for alert %s: %s",
+            result.alert_id,
+            exc.__class__.__name__,
+        )
+    return result
 
 
 def acknowledge_alert(*, user_id: int, alert_id: UUID) -> bool:

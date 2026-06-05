@@ -2,6 +2,9 @@
 
 These tests run with the in-memory channel layer and a stubbed TTS
 backend so the WebSocket and audio paths are exercised end-to-end.
+Celery runs in eager mode (``CELERY_TASK_ALWAYS_EAGER`` is True in
+``IS_TESTING``), so :func:`alerts.services.dispatch_alert` actually
+runs :func:`alerts.tasks.render_alert_audio` synchronously.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from alerts.models import (
 from alerts.services import (
     acknowledge_alert,
     dispatch_alert,
+    dispatch_alert_fast,
     group_name_for_user,
     has_subscription,
     list_alerts_for_user,
@@ -30,14 +34,18 @@ from alerts.services import (
 pytestmark = pytest.mark.django_db
 
 
-def _stub_tts() -> Any:
-    """Replace the real TTS call with a deterministic stub."""
-    from alerts.tts import TTSResult
+def _stub_render_task() -> Any:
+    """Patch :func:`alerts.tasks.render_alert_audio` to a noop stub.
 
-    return patch(
-        "alerts.services.synthesize",
-        return_value=TTSResult(b"RIFF...stub", "audio/wav", 1234),
-    )
+    The real task runs in eager mode, which would call the real TTS
+    pipeline. Tests that only care about the dispatch path can swap
+    it out for a stub that records the call.
+    """
+    from unittest.mock import MagicMock
+
+    from alerts import tasks
+
+    return patch.object(tasks.render_alert_audio, "delay", MagicMock())
 
 
 def _stub_channel_layer() -> Any:
@@ -54,13 +62,13 @@ def test_group_name_for_user_uses_settings_prefix() -> None:
         assert group_name_for_user(42) == "user_42"
 
 
-def test_dispatch_alert_creates_row_and_synthesises_audio(
+def test_dispatch_alert_fast_creates_row_and_pushes(
     make_user: Callable[..., Any], make_farm: Callable[..., Any]
 ) -> None:
     user = make_user()
     farm = make_farm(user)
-    with _stub_tts(), _stub_channel_layer():
-        result = dispatch_alert(
+    with _stub_render_task(), _stub_channel_layer():
+        result = dispatch_alert_fast(
             user_id=user.id,
             farm_id=farm.id,
             alert_type=AudioAlertType.NDVI_LOW,
@@ -73,9 +81,34 @@ def test_dispatch_alert_creates_row_and_synthesises_audio(
     assert alert.user_id == user.id
     assert alert.farm_id == farm.id
     assert alert.title == "Low NDVI"
-    assert alert.duration_ms == 1234
-    assert alert.mime_type == "audio/wav"
-    assert alert.is_delivered is True
+    # No TTS run yet (the render task is stubbed), so the audio file
+    # is empty until the celery task completes.
+    assert not alert.audio_file
+
+
+def test_dispatch_alert_enqueues_render(
+    make_user: Callable[..., Any], make_farm: Callable[..., Any]
+) -> None:
+    user = make_user()
+    farm = make_farm(user)
+    from unittest.mock import MagicMock
+
+    from alerts import tasks
+
+    delay_mock = MagicMock()
+    with (
+        patch.object(tasks.render_alert_audio, "delay", delay_mock),
+        _stub_channel_layer(),
+    ):
+        result = dispatch_alert(
+            user_id=user.id,
+            farm_id=farm.id,
+            alert_type=AudioAlertType.NDVI_LOW,
+            trigger_source="ndvi_task",
+            title="Low NDVI",
+            message="Mean is 0.18",
+        )
+    delay_mock.assert_called_once_with(str(result.alert_id))
 
 
 def test_dispatch_alert_rejects_unknown_alert_type() -> None:
@@ -107,7 +140,7 @@ def test_acknowledge_alert_is_idempotent_and_scoped(
 ) -> None:
     user = make_user()
     other = make_user()
-    with _stub_tts(), _stub_channel_layer():
+    with _stub_render_task(), _stub_channel_layer():
         result = dispatch_alert(
             user_id=user.id,
             farm_id=None,
@@ -129,7 +162,7 @@ def test_list_alerts_for_user_filters_unread(
     make_user: Callable[..., Any],
 ) -> None:
     user = make_user()
-    with _stub_tts(), _stub_channel_layer():
+    with _stub_render_task(), _stub_channel_layer():
         a = dispatch_alert(
             user_id=user.id,
             farm_id=None,
@@ -195,28 +228,3 @@ def test_subscribed_users_for_farm_returns_matching_subs(
         )
     )
     assert {r.user_id for r in rows} == {owner.id}
-
-
-def test_dispatch_alert_swallows_tts_failure(
-    make_user: Callable[..., Any],
-) -> None:
-    user = make_user()
-    with (
-        patch(
-            "alerts.services.synthesize",
-            side_effect=RuntimeError("tts down"),
-        ),
-        _stub_channel_layer(),
-    ):
-        result = dispatch_alert(
-            user_id=user.id,
-            farm_id=None,
-            alert_type=AudioAlertType.ADMIN_BROADCAST,
-            trigger_source="admin_view",
-            title="t",
-            message="m",
-        )
-    assert result.delivered is True
-    alert = AudioAlert.objects.get(id=result.alert_id)
-    assert alert.audio_file == ""
-    assert alert.duration_ms == 0

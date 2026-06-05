@@ -1,6 +1,6 @@
 """Celery tasks for the `alerts` app.
 
-Two periodic scans:
+Three tasks:
 
 - :func:`scan_ndvi_declines` runs every
   ``ALERTS_NDVI_DECLINE_SCAN_INTERVAL_SECONDS`` and fires an
@@ -8,12 +8,16 @@ Two periodic scans:
   ``DECLINE`` and that has not been alerted in the last 24h.
 - :func:`scan_low_ndvi_observations` does the same for
   ``NDVI_LOW`` alerts (mean < ``ALERTS_NDVI_LOW_THRESHOLD``).
+- :func:`render_alert_audio` is the asynchronous half of
+  :func:`alerts.services.dispatch_alert`; it runs the TTS
+  backend, saves the audio file, and pushes a second WebSocket
+  event with the populated ``audio_url``.
 
-The de-duplication key is the latest :class:`AudioAlert.created_at`
-for the ``(user, farm, alert_type)`` triple; a second alert is not
-sent within the 24h window. This is intentionally simple (a
-timestamp check, not a separate table) because the alert stream is
-low-volume.
+The de-duplication key for the scans is the latest
+:class:`AudioAlert.created_at` for the ``(user, farm, alert_type)``
+triple; a second alert is not sent within the 24h window. This is
+intentionally simple (a timestamp check, not a separate table)
+because the alert stream is low-volume.
 """
 
 from __future__ import annotations
@@ -21,9 +25,11 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 from typing import Any
+from uuid import UUID
 
 from celery import shared_task
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.db.models import Q
 from django.utils import timezone
 
@@ -170,3 +176,76 @@ def close_old_connections_safe() -> None:
     from django.db import close_old_connections
 
     close_old_connections()
+
+
+@shared_task(
+    name="alerts.tasks.render_alert_audio",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+    ignore_result=True,
+)
+def render_alert_audio(alert_id: str) -> dict[str, Any] | None:
+    """Render the audio file for ``alert_id`` and re-push the WS event.
+
+    Split out of :func:`alerts.services.dispatch_alert` (see
+    ``prompts/p4-staff-engineer-review.md`` #6) so the HTTP / trigger
+    path stays sub-second and a slow TTS backend never blocks the
+    user-facing row insert. The task is idempotent: if the alert
+    already has an audio file it short-circuits to a no-op (Celery
+    at-least-once delivery means the same alert id can be enqueued
+    twice).
+    """
+    from alerts import metrics, services
+    from alerts.tts import synthesize
+
+    close_old_connections_safe()
+    try:
+        alert = AudioAlert.objects.select_related("user").get(
+            id=UUID(alert_id)
+        )
+    except AudioAlert.DoesNotExist:
+        logger.warning("render_alert_audio: alert %s not found", alert_id)
+        return None
+    if alert.audio_file:
+        # Already rendered (idempotent re-delivery).
+        return {"alert_id": alert_id, "status": "already_rendered"}
+    engine = (getattr(settings, "TTS_ENGINE", "espeak") or "espeak").lower()
+    started = timezone.now()
+    try:
+        result = synthesize(alert.message)
+    except Exception as exc:  # noqa: BLE001
+        metrics.render_failures(engine=engine, reason=exc.__class__.__name__)
+        logger.warning(
+            "render_alert_audio: TTS failed for %s: %s",
+            alert_id,
+            exc.__class__.__name__,
+        )
+        raise
+    if result.audio_bytes:
+        alert.audio_file.save(
+            f"{alert.id}.wav", ContentFile(result.audio_bytes), save=False
+        )
+    alert.duration_ms = result.duration_ms
+    alert.mime_type = result.mime_type
+    alert.save(update_fields=["audio_file", "duration_ms", "mime_type"])
+    # Second push: deliver the populated audio_url.
+    payload = services.build_push_payload(alert)
+    services.emit_audio_alert_event(alert.user_id, payload)
+    logger.info(
+        "render_alert_audio: alert=%s engine=%s bytes=%d duration_ms=%d "
+        "elapsed_ms=%d",
+        alert.id,
+        engine,
+        len(result.audio_bytes),
+        result.duration_ms,
+        int((timezone.now() - started).total_seconds() * 1000),
+    )
+    return {
+        "alert_id": alert_id,
+        "status": "rendered",
+        "engine": engine,
+        "bytes": len(result.audio_bytes),
+    }

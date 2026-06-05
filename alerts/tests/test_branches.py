@@ -107,14 +107,20 @@ def test_audio_url_is_empty_when_no_file() -> None:
 
 
 def test_audio_url_is_relative_when_no_request(make_user, make_farm) -> None:
-    """get_audio_url returns the raw ``.url`` when no request context."""
+    """get_audio_url returns the raw ``.url`` after the render task runs."""
+    from unittest.mock import MagicMock
+
+    from alerts import tasks
+
     user = make_user()
     farm = make_farm(user)
+    tts_result = MagicMock()
+    tts_result.audio_bytes = b"RIFF...stub"
+    tts_result.mime_type = "audio/wav"
+    tts_result.duration_ms = 1234
     with (
-        patch(
-            "alerts.services.synthesize",
-            return_value=TTSResult(b"RIFF...stub", "audio/wav", 1234),
-        ),
+        patch("alerts.tts.synthesize", return_value=tts_result),
+        patch.object(tasks.render_alert_audio, "delay", MagicMock()),
         _stub_channel_layer(),
     ):
         result = dispatch_alert(
@@ -125,6 +131,9 @@ def test_audio_url_is_relative_when_no_request(make_user, make_farm) -> None:
             title="t",
             message="m",
         )
+        # Trigger the render task body directly (bypass the stubbed
+        # ``.delay`` which would have run it in eager mode anyway).
+        tasks.render_alert_audio.run(str(result.alert_id))
     alert = AudioAlert.objects.get(id=result.alert_id)
     out = AudioAlertSerializer(alert).data
     assert out["audio_url"]
@@ -173,16 +182,21 @@ def test_save_audio_bytes_is_a_noop_for_empty() -> None:
 def test_dispatch_alert_handles_push_failure() -> None:
     """When the channel layer raises, the row is still saved but
     ``is_delivered`` stays False (sent=False branch)."""
+    from unittest.mock import MagicMock
+
+    from alerts import tasks
+
     user = _make_user()
     with (
         patch(
-            "alerts.services.synthesize",
+            "alerts.tts.synthesize",
             return_value=TTSResult(b"RIFF", "audio/wav", 100),
         ),
         patch(
             "alerts.services.emit_audio_alert_event",
             side_effect=RuntimeError("ws down"),
         ),
+        patch.object(tasks.render_alert_audio, "delay", MagicMock()),
     ):
         result = dispatch_alert(
             user_id=user.id,
