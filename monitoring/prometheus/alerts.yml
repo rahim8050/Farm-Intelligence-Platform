@@ -386,3 +386,94 @@ groups:
         annotations:
           summary: "Redis evicting keys"
           description: "Redis is evicting keys due to maxmemory limit."
+
+  - name: alerts
+    rules:
+      - alert: AlertsDispatchFailureRateHigh
+        expr: |
+          (
+            sum(rate(alerts_dispatch_failures_total[5m]))
+            /
+            clamp_min(sum(rate(alerts_dispatch_total[5m])), 1)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Audio alert dispatch failure rate high"
+          description: "Audio alert dispatch failures > 5% for 10m. See reason={{ $labels.reason }}."
+
+      - alert: AlertsDispatchP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(alerts_dispatch_duration_seconds_bucket[5m]))
+          ) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Audio alert dispatch p95 latency high"
+          description: "p95 dispatch_alert latency > 5s for 10m."
+
+      - alert: AlertsWebSocketPushFailureRateHigh
+        expr: |
+          (
+            sum(rate(alerts_push_failures_total[5m]))
+            /
+            clamp_min(sum(rate(alerts_push_attempts_total[5m])), 1)
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Audio alert WebSocket push failure rate high"
+          description: "WS push failures > 10% for 5m. Check Redis / Channels health."
+
+      - alert: AlertsTTSCircuitOpen
+        expr: alerts_tts_circuit_state == 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TTS circuit breaker open ({{ $labels.engine }})"
+          description: "Engine {{ $labels.engine }} circuit breaker is open; alerts fall back to sine."
+
+      - alert: AlertsRenderFailureRateHigh
+        expr: |
+          (
+            sum by (engine) (rate(alerts_render_failures_total[5m]))
+            /
+            clamp_min(sum by (engine) (rate(alerts_render_duration_seconds_count[5m])), 1)
+          ) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TTS render failure rate high ({{ $labels.engine }})"
+          description: "TTS render failures > 20% for engine={{ $labels.engine }} over 10m."
+
+  - name: podcasts
+    rules:
+      - alert: PodcastsRefreshFailureRateHigh
+        expr: |
+          (
+            sum(rate(podcasts_refresh_total{result="error"}[15m]))
+            /
+            clamp_min(sum(rate(podcasts_refresh_total[15m])), 1)
+          ) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Podcasts refresh failure rate high"
+          description: "Podcasts refresh failures > 20% for 15m."
+
+      - alert: PodcastsRefreshStale
+        expr: podcasts_refresh_stale > 5
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Podcasts refresh stale"
+          description: "{{ $value }} active podcasts have not been refreshed within 2x the interval for 30m."
