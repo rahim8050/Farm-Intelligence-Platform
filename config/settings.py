@@ -112,6 +112,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "config.api.request_id.RequestIdMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -545,6 +546,29 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
 STATIC_URL = "static/"
+
+# --- Media (user-uploaded files; e.g. alerts audio) ---
+# `MEDIA_ROOT` defaults to `<project_root>/var/media` in dev/test, and
+# to the value of `DJANGO_MEDIA_ROOT` in staging/production. In
+# production the env var is required (see `REQUIRE_SECRETS`).
+# `DEFAULT_FILE_STORAGE` may be overridden via env to point at an
+# S3-compatible backend (e.g. `storages.backends.s3boto3.S3Boto3Storage`)
+# so audio files live in a bucket with lifecycle rules instead of the
+# application volume.
+MEDIA_URL = env("DJANGO_MEDIA_URL", default="/media/")
+MEDIA_ROOT = env(
+    "DJANGO_MEDIA_ROOT",
+    default=str(BASE_DIR / "var" / "media"),
+)
+if IS_TESTING:
+    MEDIA_ROOT = str(BASE_DIR / "var" / "media-test")
+    Path(MEDIA_ROOT).mkdir(parents=True, exist_ok=True)
+else:
+    Path(MEDIA_ROOT).mkdir(parents=True, exist_ok=True)
+DEFAULT_FILE_STORAGE = env(
+    "DJANGO_DEFAULT_FILE_STORAGE",
+    default="django.core.files.storage.FileSystemStorage",
+)
 
 FRONTEND_RESET_URL = env("FRONTEND_RESET_URL", default="")
 

@@ -11,6 +11,8 @@ venv/
 # Django / SQLite
 db.sqlite3
 media/
+var/
+audio_alerts/
 staticfiles/
 # IDE
 .vscode/
