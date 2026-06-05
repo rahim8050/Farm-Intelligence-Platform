@@ -35,6 +35,8 @@ from alerts.models import (
 )
 from alerts.tts import synthesize
 
+from . import metrics
+
 logger = logging.getLogger("alerts.services")
 
 
@@ -90,15 +92,35 @@ def emit_audio_alert_event(user_id: int, payload: dict[str, Any]) -> int:
     """Push ``payload`` to the user's Channels group.
 
     Returns 1 on a successful send, 0 if no channel layer is configured
-    (e.g. during tests with ``LocMemChannelLayer`` disabled).
+    (e.g. during tests with ``LocMemChannelLayer`` disabled) or if the
+    push raised.
+
+    Push outcomes are recorded as
+    ``alerts_push_attempts_total{result=success|no_layer|error}`` and
+    ``alerts_push_failures_total{reason=<ExceptionClassName>}`` so the
+    SLO alert in ``monitoring/prometheus/alerts.yml``
+    (``AlertsWebSocketPushFailureRateHigh``) can fire. Failures never
+    bubble out; the caller treats the push as best-effort.
     """
     layer = get_channel_layer()
     if layer is None:
+        metrics.push_attempts(result="no_layer")
         return 0
     group = group_name_for_user(user_id)
-    async_to_sync(layer.group_send)(  # type: ignore[arg-type]
-        group, {"type": "audio.alert", "payload": payload}
-    )
+    try:
+        async_to_sync(layer.group_send)(  # type: ignore[arg-type]
+            group, {"type": "audio.alert", "payload": payload}
+        )
+    except Exception as exc:  # noqa: BLE001
+        metrics.push_attempts(result="error")
+        metrics.push_failures(reason=exc.__class__.__name__)
+        logger.warning(
+            "WebSocket push failed for user %s: %s",
+            user_id,
+            exc.__class__.__name__,
+        )
+        return 0
+    metrics.push_attempts(result="success")
     return 1
 
 
@@ -124,61 +146,82 @@ def dispatch_alert(
     The DB write and the WebSocket push are best-effort: a failure in
     the push path never blocks the row from being saved, and vice
     versa. The caller (a Celery task) is responsible for any retries.
+
+    Instrumentation (see :mod:`alerts.metrics`):
+
+    - ``alerts_dispatch_total{alert_type,result}`` increments once
+      per call (``result=success|error``).
+    - ``alerts_dispatch_duration_seconds{alert_type}`` observes the
+      end-to-end latency (DB + TTS + push).
+    - ``alerts_dispatch_failures_total{alert_type,reason}`` records
+      synthesiser and push failures.
     """
     if alert_type not in AudioAlertType.values:
         raise ValueError(f"unknown alert_type: {alert_type!r}")
     if trigger_source not in AudioAlertTriggerSource.values:
         raise ValueError(f"unknown trigger_source: {trigger_source!r}")
-    close_old_connections()
-    alert = AudioAlert.objects.create(
-        user_id=user_id,
-        farm_id=farm_id,
-        alert_type=alert_type,
-        trigger_source=trigger_source,
-        title=title[:200],
-        message=message,
-        source_object_id=source_object_id[:64],
+    with metrics.dispatch_timer(alert_type=alert_type):
+        close_old_connections()
+        alert = AudioAlert.objects.create(
+            user_id=user_id,
+            farm_id=farm_id,
+            alert_type=alert_type,
+            trigger_source=trigger_source,
+            title=title[:200],
+            message=message,
+            source_object_id=source_object_id[:64],
+        )
+        try:
+            result = synthesize(message)
+        except Exception as exc:  # noqa: BLE001
+            metrics.dispatch_failures(
+                alert_type=alert_type, reason=exc.__class__.__name__
+            )
+            logger.warning(
+                "TTS failed for alert %s: %s", alert.id, exc.__class__.__name__
+            )
+            result = None
+        if result is not None and result.audio_bytes:
+            _save_audio_bytes(alert, result.audio_bytes)
+            alert.duration_ms = result.duration_ms
+            alert.mime_type = result.mime_type
+            alert.save(
+                update_fields=["audio_file", "duration_ms", "mime_type"]
+            )
+        delivered = False
+        try:
+            sent = emit_audio_alert_event(
+                user_id,
+                {
+                    "alert_id": str(alert.id),
+                    "alert_type": alert.alert_type,
+                    "title": alert.title,
+                    "message": alert.message,
+                    "farm_id": alert.farm_id,
+                    "audio_url": _absolute_audio_url(alert),
+                    "duration_ms": alert.duration_ms,
+                    "mime_type": alert.mime_type,
+                    "created_at": alert.created_at.isoformat(),
+                    "schema_version": "1.0",
+                },
+            )
+            if sent:
+                alert.is_delivered = True
+                alert.delivered_at = timezone.now()
+                alert.save(update_fields=["is_delivered", "delivered_at"])
+                delivered = True
+        except Exception as exc:  # noqa: BLE001
+            metrics.dispatch_failures(
+                alert_type=alert_type, reason=exc.__class__.__name__
+            )
+            logger.warning(
+                "WebSocket push failed for alert %s: %s",
+                alert.id,
+                exc.__class__.__name__,
+            )
+    metrics.dispatch_total(
+        alert_type=alert_type, result="success" if delivered else "error"
     )
-    try:
-        result = synthesize(message)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "TTS failed for alert %s: %s", alert.id, exc.__class__.__name__
-        )
-        result = None
-    if result is not None and result.audio_bytes:
-        _save_audio_bytes(alert, result.audio_bytes)
-        alert.duration_ms = result.duration_ms
-        alert.mime_type = result.mime_type
-        alert.save(update_fields=["audio_file", "duration_ms", "mime_type"])
-    delivered = False
-    try:
-        sent = emit_audio_alert_event(
-            user_id,
-            {
-                "alert_id": str(alert.id),
-                "alert_type": alert.alert_type,
-                "title": alert.title,
-                "message": alert.message,
-                "farm_id": alert.farm_id,
-                "audio_url": _absolute_audio_url(alert),
-                "duration_ms": alert.duration_ms,
-                "mime_type": alert.mime_type,
-                "created_at": alert.created_at.isoformat(),
-                "schema_version": "1.0",
-            },
-        )
-        if sent:
-            alert.is_delivered = True
-            alert.delivered_at = timezone.now()
-            alert.save(update_fields=["is_delivered", "delivered_at"])
-            delivered = True
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "WebSocket push failed for alert %s: %s",
-            alert.id,
-            exc.__class__.__name__,
-        )
     return AlertDispatchResult(alert_id=alert.id, delivered=delivered)
 
 

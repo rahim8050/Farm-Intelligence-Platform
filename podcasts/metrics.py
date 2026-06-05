@@ -18,6 +18,7 @@ Exposed series:
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 try:  # pragma: no cover
@@ -60,3 +61,30 @@ podcasts_refresh_stale = _gauge(
     "configured interval.",
     [],
 )
+
+
+# --- Helpers ------------------------------------------------------------
+
+
+def refresh_total(*, result: str) -> None:
+    """Increment :data:`podcasts_refresh_total`."""
+    if podcasts_refresh_total is None:  # pragma: no cover
+        return
+    podcasts_refresh_total.labels(result=result).inc()
+
+
+@contextlib.contextmanager
+def refresh_timer(*, result: str) -> Any:
+    """Context manager that times the per-feed refresh path."""
+    if podcasts_refresh_duration_seconds is None:  # pragma: no cover
+        yield
+        return
+    with podcasts_refresh_duration_seconds.labels(result=result).time():
+        yield
+
+
+def set_refresh_stale(value: int) -> None:
+    """Set the :data:`podcasts_refresh_stale` gauge."""
+    if podcasts_refresh_stale is None:  # pragma: no cover
+        return
+    podcasts_refresh_stale.set(value)

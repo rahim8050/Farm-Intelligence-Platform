@@ -29,6 +29,7 @@ All metrics are no-ops if ``prometheus_client`` is not installed.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 try:  # pragma: no cover - exercised in production
@@ -103,3 +104,71 @@ alerts_push_failures_total = _counter(
     "WebSocket push failures, labeled by reason.",
     ["reason"],
 )
+
+
+# --- Helpers ------------------------------------------------------------
+#
+# Plain functions (not context managers) so call sites stay readable
+# and so the no-op fallback when ``prometheus_client`` is absent does
+# not require implementing ``__enter__``/``__exit__``.
+
+
+def dispatch_total(*, alert_type: str, result: str) -> None:
+    """Increment :data:`alerts_dispatch_total`."""
+    if alerts_dispatch_total is None:  # pragma: no cover
+        return
+    alerts_dispatch_total.labels(alert_type=alert_type, result=result).inc()
+
+
+def dispatch_failures(*, alert_type: str, reason: str) -> None:
+    """Increment :data:`alerts_dispatch_failures_total`."""
+    if alerts_dispatch_failures_total is None:  # pragma: no cover
+        return
+    alerts_dispatch_failures_total.labels(
+        alert_type=alert_type, reason=reason
+    ).inc()
+
+
+@contextlib.contextmanager
+def dispatch_timer(*, alert_type: str) -> Any:
+    """Context manager that times the dispatch path."""
+    if alerts_dispatch_duration_seconds is None:  # pragma: no cover
+        yield
+        return
+    with alerts_dispatch_duration_seconds.labels(alert_type=alert_type).time():
+        yield
+
+
+def render_duration(*, engine: str, seconds: float) -> None:
+    """Observe a single TTS render duration (seconds)."""
+    if alerts_render_duration_seconds is None:  # pragma: no cover
+        return
+    alerts_render_duration_seconds.labels(engine=engine).observe(seconds)
+
+
+def render_failures(*, engine: str, reason: str) -> None:
+    """Increment :data:`alerts_render_failures_total`."""
+    if alerts_render_failures_total is None:  # pragma: no cover
+        return
+    alerts_render_failures_total.labels(engine=engine, reason=reason).inc()
+
+
+def tts_circuit_state(*, engine: str, open_: bool) -> None:
+    """Set the TTS circuit-breaker gauge (0=closed, 1=open)."""
+    if alerts_tts_circuit_state is None:  # pragma: no cover
+        return
+    alerts_tts_circuit_state.labels(engine=engine).set(1 if open_ else 0)
+
+
+def push_attempts(*, result: str) -> None:
+    """Increment :data:`alerts_push_attempts_total`."""
+    if alerts_push_attempts_total is None:  # pragma: no cover
+        return
+    alerts_push_attempts_total.labels(result=result).inc()
+
+
+def push_failures(*, reason: str) -> None:
+    """Increment :data:`alerts_push_failures_total`."""
+    if alerts_push_failures_total is None:  # pragma: no cover
+        return
+    alerts_push_failures_total.labels(reason=reason).inc()
