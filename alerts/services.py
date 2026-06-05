@@ -29,7 +29,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.files.base import ContentFile
-from django.db import close_old_connections
+from django.db import close_old_connections, connection
 from django.utils import timezone
 
 from alerts.models import (
@@ -58,22 +58,40 @@ def group_name_for_user(user_id: int) -> str:
     return f"{prefix}{user_id}"
 
 
+def _json_contains_supports_array() -> bool:
+    """True when the active DB can do ``JSONField __contains=[...]``.
+
+    Per ``prompts/p4-staff-engineer-review.md`` #9, Postgres has
+    first-class JSON containment; SQLite and MySQL do not (MySQL
+    stores JSON as text, which the Django ORM refuses to search
+    via ``__contains`` on a list operand). The check is cached on
+    the connection so we do not re-evaluate the vendor lookup on
+    every call.
+    """
+    return connection.vendor == "postgresql"
+
+
 def has_subscription(*, user_id: int, farm_id: int, alert_type: str) -> bool:
     """True if the user has a subscription for this farm/type.
 
-    The ``alert_types`` JSON field is filtered in Python because the
-    test backend (SQLite) does not support ``__contains`` on JSON
-    fields, and because the per-farm subscription set is small
-    (typically one row per user-farm pair).
+    On Postgres the filter is pushed into SQL via
+    ``alert_types__contains=[alert_type]``; on SQLite / MySQL
+    the same result is computed in Python because the ORM
+    refuses the array operand there. The per-farm subscription
+    set is small (typically one row per user-farm pair) so the
+    Python fallback is cheap.
     """
-    sub = (
-        AudioAlertSubscription.objects.filter(user_id=user_id, farm_id=farm_id)
-        .values_list("alert_types", flat=True)
-        .first()
+    qs = AudioAlertSubscription.objects.filter(
+        user_id=user_id, farm_id=farm_id
     )
-    if not sub:
-        return False
-    return alert_type in sub
+    if _json_contains_supports_array():
+        qs = qs.filter(alert_types__contains=[alert_type])
+    else:
+        sub = qs.values_list("alert_types", flat=True).first()
+        if not sub:
+            return False
+        return alert_type in sub
+    return qs.exists()
 
 
 def subscribed_users_for_farm(
@@ -81,15 +99,21 @@ def subscribed_users_for_farm(
 ) -> list[AudioAlertSubscription]:
     """Users subscribed to ``alert_type`` for ``farm_id``.
 
-    Returns a list (not a QuerySet) because the ``alert_types`` JSON
-    field is filtered in Python (see :func:`has_subscription`).
+    On Postgres the filter is pushed into SQL via
+    ``alert_types__contains=[alert_type]``; on SQLite / MySQL
+    the rows are loaded once and filtered in Python. The
+    callers always need the full ``AudioAlertSubscription``
+    instances (with the related ``user``) so loading is
+    unavoidable on the Python fallback path; on Postgres the
+    SQL filter avoids materialising the rows the caller would
+    then discard.
     """
-    rows = list(
-        AudioAlertSubscription.objects.filter(farm_id=farm_id).select_related(
-            "user"
-        )
+    qs = AudioAlertSubscription.objects.filter(farm_id=farm_id).select_related(
+        "user"
     )
-    return [s for s in rows if alert_type in (s.alert_types or [])]
+    if _json_contains_supports_array():
+        return list(qs.filter(alert_types__contains=[alert_type]))
+    return [s for s in qs if alert_type in (s.alert_types or [])]
 
 
 def emit_audio_alert_event(user_id: int, payload: dict[str, Any]) -> int:
