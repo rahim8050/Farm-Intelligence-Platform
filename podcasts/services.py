@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -305,11 +305,17 @@ def ingest_podcast(
     podcast.last_refreshed_at = django_timezone.now()
     podcast.last_refresh_status = "ok"
     podcast.last_refresh_error = ""
+    # Reset backoff state on success (no-op if it was already 0/None).
+    if podcast.consecutive_failures or podcast.next_retry_at:
+        podcast.consecutive_failures = 0
+        podcast.next_retry_at = None
     podcast.save(
         update_fields=[
             "last_refreshed_at",
             "last_refresh_status",
             "last_refresh_error",
+            "consecutive_failures",
+            "next_retry_at",
             "updated_at",
         ]
     )
@@ -334,16 +340,25 @@ def _mark_failure(podcast: Podcast, error: str) -> IngestionReport:
     podcast.last_refreshed_at = django_timezone.now()
     podcast.last_refresh_status = "error"
     podcast.last_refresh_error = error
+    podcast.consecutive_failures = (podcast.consecutive_failures or 0) + 1
+    podcast.next_retry_at = _backoff_next_attempt(podcast.consecutive_failures)
     podcast.save(
         update_fields=[
             "last_refreshed_at",
             "last_refresh_status",
             "last_refresh_error",
+            "consecutive_failures",
+            "next_retry_at",
             "updated_at",
         ]
     )
     logger.warning(
-        "podcasts_ingest_failed podcast_id=%s error=%s", podcast.id, error
+        "podcasts_ingest_failed podcast_id=%s error=%s "
+        "consecutive_failures=%d next_retry_at=%s",
+        podcast.id,
+        error,
+        podcast.consecutive_failures,
+        podcast.next_retry_at.isoformat() if podcast.next_retry_at else "",
     )
     return IngestionReport(
         podcast_id=podcast.id,
@@ -351,6 +366,45 @@ def _mark_failure(podcast: Podcast, error: str) -> IngestionReport:
         episodes_created=0,
         episodes_updated=0,
         error=error,
+    )
+
+
+# Per-feed backoff schedule (consecutive_failures -> seconds to wait).
+# 1m, 5m, 1h, 24h; anything past that stays at 24h.
+_BACKOFF_SECONDS: tuple[int, ...] = (60, 300, 3600, 86_400)
+
+
+def _backoff_next_attempt(consecutive_failures: int) -> datetime:
+    """Return the next allowed refresh time for a feed that just failed.
+
+    The schedule is intentionally aggressive on the first few
+    failures (1m, 5m) so a transient upstream blip self-heals
+    quickly, then ramps to 1h / 24h so a permanently-broken feed
+    stops being hammered.
+    """
+    idx = max(0, min(consecutive_failures - 1, len(_BACKOFF_SECONDS) - 1))
+    delay_s = _BACKOFF_SECONDS[idx]
+    return django_timezone.now() + timedelta(seconds=delay_s)
+
+
+def clear_backoff(podcast: Podcast) -> None:
+    """Reset backoff state on a successful refresh.
+
+    Idempotent: safe to call multiple times. Called from
+    :func:`ingest_podcast` after a successful run, and exposed so
+    the per-feed Celery task can apply the same reset on the
+    re-fetch path.
+    """
+    if podcast.consecutive_failures == 0 and podcast.next_retry_at is None:
+        return
+    podcast.consecutive_failures = 0
+    podcast.next_retry_at = None
+    podcast.save(
+        update_fields=[
+            "consecutive_failures",
+            "next_retry_at",
+            "updated_at",
+        ]
     )
 
 

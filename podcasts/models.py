@@ -20,6 +20,12 @@ class Podcast(models.Model):
     ``id`` is a short, URL-safe identifier (e.g. ``"bbc_global_news"``)
     used in API paths. ``feed_url`` is the upstream feed that
     ``podcasts.services.ingest_podcast`` re-fetches on a schedule.
+
+    Per-feed backoff state (see ``prompts/p4-staff-engineer-review.md``
+    #3): when a refresh fails, ``consecutive_failures`` is bumped and
+    ``next_retry_at`` is set to ``now + backoff(consecutive_failures)``
+    so a misbehaving upstream cannot stall the rest of the
+    catalogue.
     """
 
     id = models.CharField(max_length=50, primary_key=True)
@@ -40,6 +46,23 @@ class Podcast(models.Model):
         ),
     )
     last_refresh_error = models.TextField(blank=True)
+    next_retry_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Earliest time the next refresh is allowed. Set to the "
+            "future when a feed errors out (exponential backoff: "
+            "1m, 5m, 1h, 24h); cleared on success."
+        ),
+    )
+    consecutive_failures = models.PositiveSmallIntegerField(
+        default=0,
+        help_text=(
+            "Number of consecutive failed refreshes. Drives the "
+            "exponential backoff schedule (1m, 5m, 1h, 24h); reset "
+            "to 0 on the first success."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -48,6 +71,13 @@ class Podcast(models.Model):
         verbose_name = "Podcast"
         verbose_name_plural = "Podcasts"
         ordering = ["title"]
+        indexes = [
+            models.Index(
+                condition=models.Q(is_active=True),
+                fields=["next_retry_at"],
+                name="podcasts_po_active_retry_idx",
+            ),
+        ]
 
     def __str__(self) -> str:
         return self.title

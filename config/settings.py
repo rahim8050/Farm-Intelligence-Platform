@@ -1048,7 +1048,7 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": RADIO_HEALTH_CHECK_INTERVAL_SECONDS,
     },
     "podcasts-refresh-feeds": {
-        "task": "podcasts.tasks.refresh_all_feeds",
+        "task": "podcasts.tasks.dispatch_refresh_batch",
         "schedule": PODCASTS_REFRESH_INTERVAL_SECONDS,
     },
     "alerts-ndvi-decline-scan": {

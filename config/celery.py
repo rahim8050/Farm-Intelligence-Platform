@@ -136,6 +136,7 @@ app.conf.update(
         "ndvi_ingestion": {},
         "ndvi_recompute": {},
         "ndvi_analysis": {},
+        "podcasts_ingestion": {},
     },
     task_routes={
         "ndvi.tasks.run_ndvi_job": {"queue": "ndvi_ingestion"},
@@ -144,6 +145,13 @@ app.conf.update(
         "ndvi.tasks.enqueue_weekly_gap_fill": {"queue": "ndvi_recompute"},
         "ndvi.tasks.enqueue_daily_farm_state_coverage": {
             "queue": "ndvi_analysis"
+        },
+        "podcasts.tasks.dispatch_refresh_batch": {
+            "queue": "podcasts_ingestion"
+        },
+        "podcasts.tasks.refresh_one_podcast": {"queue": "podcasts_ingestion"},
+        "podcasts.tasks.summarise_refresh_run": {
+            "queue": "podcasts_ingestion"
         },
     },
 )
