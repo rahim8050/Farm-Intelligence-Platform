@@ -31,7 +31,7 @@ import logging
 import shutil
 import struct
 import tempfile
-import threading
+import time
 import wave
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -39,6 +39,9 @@ from pathlib import Path
 
 from django.conf import settings
 from django.utils import timezone
+
+from . import metrics
+from .tts_breaker import TTSCircuitOpenError, get_breaker, get_pool
 
 logger = logging.getLogger("alerts.tts")
 
@@ -182,7 +185,58 @@ _BACKENDS: dict[str, Callable[..., TTSResult]] = {
 }
 
 
-_LOCK = threading.Lock()
+def _tts_max_workers() -> int:
+    """Per-engine executor size. Default 4, env-overridable via
+    ``TTS_MAX_WORKERS`` for ops who need to bound the worker pool."""
+    raw = getattr(settings, "TTS_MAX_WORKERS", 4) or 4
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 4
+    return max(1, value)
+
+
+def _synth_via_executor(
+    engine: str,
+    backend: Callable[..., TTSResult],
+    body: str,
+    *,
+    voice: str,
+    timeout_s: float,
+) -> TTSResult:
+    """Run a single TTS call through the per-engine breaker + pool.
+
+    Returns the backend result, or :func:`_sine_fallback` if the
+    breaker is open or the call raised. The breaker is updated on
+    every call: success closes, failure opens (after
+    ``failure_threshold`` consecutive failures within the window).
+    """
+    breaker = get_breaker(engine)
+    if breaker.is_open:
+        return _sine_fallback(body)
+    pool = get_pool(engine, max_workers=_tts_max_workers())
+    started = time.monotonic()
+    future = pool.executor.submit(
+        backend, body, voice=voice, timeout_s=timeout_s
+    )
+    try:
+        result = future.result(timeout=timeout_s + 1.0)
+    except TTSCircuitOpenError:
+        return _sine_fallback(body)
+    except Exception as exc:  # noqa: BLE001
+        metrics.render_failures(engine=engine, reason=exc.__class__.__name__)
+        breaker._record_failure()  # noqa: SLF001 - internal but stable
+        logger.warning(
+            "TTS backend %s raised %s; falling back to sine",
+            engine,
+            exc.__class__.__name__,
+        )
+        return _sine_fallback(body)
+    finally:
+        elapsed = time.monotonic() - started
+        metrics.render_duration(engine=engine, seconds=elapsed)
+    breaker._record_success()  # noqa: SLF001
+    return result
 
 
 def synthesize(text: str) -> TTSResult:
@@ -190,8 +244,16 @@ def synthesize(text: str) -> TTSResult:
 
     Reads ``settings.TTS_ENGINE`` (and ``settings.TTS_VOICE``,
     ``settings.TTS_TIMEOUT_SECONDS``). Always returns a result; on
-    backend failure it falls back to the sine generator and logs the
-    cause.
+    backend failure (or circuit-open) it falls back to the sine
+    generator and logs the cause.
+
+    The call is dispatched to a per-engine :class:`ThreadPoolExecutor`
+    whose size is bounded by ``settings.TTS_MAX_WORKERS`` (default
+    4). When the per-engine breaker is open (5 failures / 60s) the
+    call short-circuits to sine for ``TTS_CIRCUIT_OPEN_FOR_S`` seconds
+    before allowing a half-open probe. See
+    :mod:`alerts.tts_breaker` and the SLO alert
+    ``AlertsTTSCircuitOpen`` in ``monitoring/prometheus/alerts.yml``.
     """
     engine = (getattr(settings, "TTS_ENGINE", "espeak") or "espeak").lower()
     voice = getattr(settings, "TTS_VOICE", "en") or "en"
@@ -199,16 +261,9 @@ def synthesize(text: str) -> TTSResult:
     body = _truncate(text)
     backend = _BACKENDS.get(engine, _espeak)
     started = timezone.now()
-    with _LOCK:
-        try:
-            result = backend(body, voice=voice, timeout_s=timeout_s)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "TTS backend %s raised %s; falling back to sine",
-                engine,
-                exc.__class__.__name__,
-            )
-            result = _sine_fallback(body)
+    result = _synth_via_executor(
+        engine, backend, body, voice=voice, timeout_s=timeout_s
+    )
     logger.info(
         "tts.synthesized engine=%s chars=%d bytes=%d "
         "duration_ms=%d elapsed_ms=%d",
