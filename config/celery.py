@@ -153,6 +153,7 @@ app.conf.update(
         "podcasts.tasks.summarise_refresh_run": {
             "queue": "podcasts_ingestion"
         },
+        "alerts.tasks.dispatch_one_alert": {"queue": "default"},
     },
 )
 

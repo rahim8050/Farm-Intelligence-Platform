@@ -4,6 +4,13 @@ Each public function in this module is the entry point used by
 another app (or by a periodic Celery task) to fire an audio alert.
 All of them funnel through :func:`alerts.services.dispatch_alert` so
 the subscription / synth / push contract stays in one place.
+
+Per ``prompts/p4-staff-engineer-review.md`` #1 the admin broadcast
+fans out one Celery task per recipient (a ``celery.group``) so a
+single slow dispatch (TTS render, channel-layer push) does not
+block the others. The view returns once the group is enqueued;
+per-recipient delivery is fire-and-forget from the caller's
+perspective.
 """
 
 from __future__ import annotations
@@ -11,6 +18,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 
+from celery import group
 from django.db import close_old_connections
 
 from alerts.models import AudioAlertTriggerSource, AudioAlertType
@@ -108,26 +116,66 @@ def on_admin_broadcast(
     message: str,
     farm_id: int | None = None,
 ) -> int:
-    """Fire a manual admin broadcast to a list of users."""
-    n = 0
-    for user_id in recipients:
-        try:
-            dispatch_alert(
-                user_id=user_id,
-                farm_id=farm_id,
-                alert_type=AudioAlertType.ADMIN_BROADCAST,
-                trigger_source=AudioAlertTriggerSource.ADMIN_VIEW,
-                title=title[:200],
-                message=message,
-            )
-            n += 1
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "admin broadcast dispatch failed for user %s: %s",
-                user_id,
-                exc.__class__.__name__,
-            )
-    return n
+    """Fire a manual admin broadcast to a list of users.
+
+    Per ``prompts/p4-staff-engineer-review.md`` #1 this is fanned
+    out via a Celery ``group``: one ``dispatch_one_alert`` task
+    per recipient, dispatched in parallel on the ``alerts``
+    queue. The function returns the number of recipients
+    enqueued; per-recipient delivery is fire-and-forget from the
+    caller's perspective and is retried by the task itself on
+    transient failures.
+
+    When the Celery broker is unreachable the function falls
+    back to a synchronous in-process fan-out so the broadcast
+    still goes out (better to dispatch inline than to silently
+    drop the alert).
+    """
+    from alerts.tasks import dispatch_one_alert
+
+    user_ids = list({int(uid) for uid in recipients})
+    if not user_ids:
+        return 0
+    title = title[:200]
+    header = [
+        dispatch_one_alert.s(
+            user_id=uid,
+            farm_id=farm_id,
+            alert_type=AudioAlertType.ADMIN_BROADCAST,
+            trigger_source=AudioAlertTriggerSource.ADMIN_VIEW,
+            title=title,
+            message=message,
+        )
+        for uid in user_ids
+    ]
+    try:
+        group(header).apply_async()
+    except Exception as exc:  # noqa: BLE001 - broker outage is not fatal
+        logger.warning(
+            "admin_broadcast: broker unreachable, falling back to "
+            "inline fan-out: %s",
+            exc.__class__.__name__,
+        )
+        n = 0
+        for uid in user_ids:
+            try:
+                dispatch_alert(
+                    user_id=uid,
+                    farm_id=farm_id,
+                    alert_type=AudioAlertType.ADMIN_BROADCAST,
+                    trigger_source=AudioAlertTriggerSource.ADMIN_VIEW,
+                    title=title,
+                    message=message,
+                )
+                n += 1
+            except Exception as inner:  # noqa: BLE001
+                logger.warning(
+                    "admin broadcast dispatch failed for user %s: %s",
+                    uid,
+                    inner.__class__.__name__,
+                )
+        return n
+    return len(user_ids)
 
 
 def _fan_out(

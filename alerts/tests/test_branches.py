@@ -364,12 +364,24 @@ def test_on_activity_completed_swallows_dispatch_error(
 
 
 def test_on_admin_broadcast_swallows_dispatch_error() -> None:
+    """When the Celery broker is unreachable, ``on_admin_broadcast``
+    falls back to inline fan-out; the synchronous errors are
+    swallowed and ``n == 0`` is reported.
+    """
     user = _make_user()
-    with patch(
-        "alerts.triggers.dispatch_alert",
-        side_effect=RuntimeError("dispatch down"),
+    from alerts.tasks import dispatch_one_alert
+
+    broker_down = RuntimeError("broker down")
+    with patch.object(
+        dispatch_one_alert, "apply_async", side_effect=broker_down
     ):
-        n = on_admin_broadcast(recipients=[user.id], title="t", message="m")
+        with patch(
+            "alerts.triggers.dispatch_alert",
+            side_effect=RuntimeError("dispatch down"),
+        ):
+            n = on_admin_broadcast(
+                recipients=[user.id], title="t", message="m"
+            )
     assert n == 0
 
 

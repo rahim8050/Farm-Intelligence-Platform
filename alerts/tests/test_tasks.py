@@ -1,4 +1,4 @@
-"""Tests for the alerts Celery tasks (NDVI scans)."""
+"""Tests for the alerts Celery tasks (NDVI scans + dispatch)."""
 
 from __future__ import annotations
 
@@ -9,8 +9,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.contrib.auth import get_user_model
 
-from alerts.models import AudioAlert, AudioAlertType
-from alerts.tasks import scan_low_ndvi_observations, scan_ndvi_declines
+from alerts.models import (
+    AudioAlert,
+    AudioAlertTriggerSource,
+    AudioAlertType,
+)
+from alerts.tasks import (
+    dispatch_one_alert,
+    scan_low_ndvi_observations,
+    scan_ndvi_declines,
+)
 from farms.models import Farm
 
 pytestmark = pytest.mark.django_db
@@ -105,3 +113,68 @@ def test_scan_low_ndvi_skips_when_above_threshold() -> None:
             res = scan_low_ndvi_observations()
     assert res["dispatched"] == 0
     mocked.assert_not_called()
+
+
+# --- dispatch_one_alert --------------------------------------------------
+# Per prompts/p4-staff-engineer-review.md #1 the admin broadcast fans
+# out one Celery task per recipient so a slow TTS render does not
+# block the others.
+
+
+def test_dispatch_one_alert_delivers_to_user() -> None:
+    user = _make_user()
+    res = dispatch_one_alert.run(
+        user_id=user.id,
+        farm_id=None,
+        alert_type=AudioAlertType.ADMIN_BROADCAST,
+        trigger_source=AudioAlertTriggerSource.ADMIN_VIEW,
+        title="hi",
+        message="hello",
+    )
+    assert res["user_id"] == user.id
+    assert res["alert_id"]
+    assert AudioAlert.objects.filter(user=user).count() == 1
+
+
+def test_dispatch_one_alert_invalid_alert_type_does_not_retry() -> None:
+    """``ValueError`` from ``dispatch_alert`` is a programmer error
+    (unknown enum) and must NOT be retried; it surfaces immediately.
+    """
+    user = _make_user()
+    with pytest.raises(ValueError):
+        dispatch_one_alert.run(
+            user_id=user.id,
+            farm_id=None,
+            alert_type="bogus_type",
+            trigger_source=AudioAlertTriggerSource.ADMIN_VIEW,
+            title="hi",
+            message="hello",
+        )
+    # No row was created because the input is invalid.
+    assert AudioAlert.objects.filter(user=user).count() == 0
+
+
+def test_dispatch_one_alert_invalid_trigger_source_does_not_retry() -> None:
+    """Same as above for ``trigger_source``."""
+    user = _make_user()
+    with pytest.raises(ValueError):
+        dispatch_one_alert.run(
+            user_id=user.id,
+            farm_id=None,
+            alert_type=AudioAlertType.ADMIN_BROADCAST,
+            trigger_source="bogus_source",
+            title="hi",
+            message="hello",
+        )
+    assert AudioAlert.objects.filter(user=user).count() == 0
+
+
+def test_dispatch_one_alert_is_configured_with_retry() -> None:
+    """The task has autoretry_for=(OperationalError, ConnectionError,
+    TimeoutError) with backoff + jitter so transient infrastructure
+    failures self-heal, and dont_autoretry_for=(ValueError,) so
+    programmer errors surface immediately.
+    """
+    assert dispatch_one_alert.max_retries == 2
+    assert dispatch_one_alert.acks_late is True
+    assert ValueError in dispatch_one_alert.dont_autoretry_for

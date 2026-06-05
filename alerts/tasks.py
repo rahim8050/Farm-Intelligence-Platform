@@ -1,6 +1,6 @@
 """Celery tasks for the `alerts` app.
 
-Three tasks:
+Four tasks:
 
 - :func:`scan_ndvi_declines` runs every
   ``ALERTS_NDVI_DECLINE_SCAN_INTERVAL_SECONDS`` and fires an
@@ -12,6 +12,10 @@ Three tasks:
   :func:`alerts.services.dispatch_alert`; it runs the TTS
   backend, saves the audio file, and pushes a second WebSocket
   event with the populated ``audio_url``.
+- :func:`dispatch_one_alert` is the per-recipient task used by
+  :func:`alerts.triggers.on_admin_broadcast` to fan out admin
+  broadcasts via a ``celery.group`` (one task per recipient)
+  so a single slow TTS render does not block the others.
 
 The de-duplication key for the scans is the latest
 :class:`AudioAlert.created_at` for the ``(user, farm, alert_type)``
@@ -30,6 +34,7 @@ from uuid import UUID
 from celery import shared_task
 from django.conf import settings
 from django.core.files.base import ContentFile
+from django.db import DatabaseError, OperationalError
 from django.db.models import Q
 from django.utils import timezone
 
@@ -248,4 +253,60 @@ def render_alert_audio(alert_id: str) -> dict[str, Any] | None:
         "status": "rendered",
         "engine": engine,
         "bytes": len(result.audio_bytes),
+    }
+
+
+@shared_task(
+    name="alerts.tasks.dispatch_one_alert",
+    autoretry_for=(
+        OperationalError,
+        DatabaseError,
+        ConnectionError,
+        TimeoutError,
+    ),
+    dont_autoretry_for=(ValueError,),
+    retry_backoff=True,
+    retry_backoff_max=30,
+    retry_jitter=True,
+    max_retries=2,
+    ignore_result=True,
+)
+def dispatch_one_alert(
+    *,
+    user_id: int,
+    farm_id: int | None,
+    alert_type: str,
+    trigger_source: str,
+    title: str,
+    message: str,
+    source_object_id: str = "",
+) -> dict[str, Any]:
+    """Dispatch a single audio alert for one user.
+
+    Used by :func:`alerts.triggers.on_admin_broadcast` (and
+    available to any other trigger that wants to fan out a
+    large list of recipients) to push one Celery task per user
+    via ``celery.group``. Each task self-heals on transient
+    infrastructure failures (``OperationalError``,
+    ``ConnectionError``, ``TimeoutError``) via ``autoretry_for``;
+    ``ValueError`` (unknown ``alert_type`` / ``trigger_source``)
+    is explicitly excluded via ``dont_autoretry_for`` because
+    it indicates a programming error.
+    """
+    from alerts.services import dispatch_alert
+
+    close_old_connections_safe()
+    result = dispatch_alert(
+        user_id=user_id,
+        farm_id=farm_id,
+        alert_type=alert_type,
+        trigger_source=trigger_source,
+        title=title,
+        message=message,
+        source_object_id=source_object_id,
+    )
+    return {
+        "user_id": user_id,
+        "alert_id": str(result.alert_id),
+        "delivered": result.delivered,
     }
