@@ -1,12 +1,35 @@
 """Radio Celery tasks.
 
 This module provides the periodic health-check task described in
-``docs/architecture/radio/09_operational.md``. The task iterates all
-active stations, probes each one, persists the result, and updates the
-Prometheus metrics exported by ``radio.metrics``.
+``docs/architecture/radio/09_operational.md`` plus two retention
+purge tasks added per
+``prompts/p4-staff-engineer-review.md`` #2.
+
+Tasks:
+
+- :func:`check_all_stations_health` iterates all active
+  stations, probes each one, persists the result, and updates
+  the Prometheus metrics exported by ``radio.metrics``.
+
+- :func:`purge_old_history` deletes ``ListeningHistory`` rows
+  older than ``RADIO_HISTORY_RETENTION_DAYS`` (default 90) so
+  the trending table does not grow without bound.
+
+- :func:`purge_old_health_checks` keeps only the
+  ``RADIO_HEALTH_CHECK_KEEP_PER_STATION`` newest rows per
+  station; older rows are deleted. This preserves the
+  ``last_reachable_at`` audit trail while keeping the table
+  small.
 
 Worker: Celery worker.
-Schedule: ``CELERY_BEAT_SCHEDULE['radio-health-check']`` (every 5 min).
+Schedule:
+
+- ``CELERY_BEAT_SCHEDULE['radio-health-check']`` every 5 min.
+- ``CELERY_BEAT_SCHEDULE['radio-purge-old-history']`` daily at
+  05:15 UTC.
+- ``CELERY_BEAT_SCHEDULE['radio-purge-old-health-checks']``
+  daily at 05:45 UTC.
+
 Auth: Celery task isolation; no request context.
 """
 
@@ -14,10 +37,12 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import timedelta
 from typing import Any
 
 from celery import shared_task
 from django.conf import settings
+from django.db import DatabaseError, OperationalError
 from django.utils import timezone
 
 from radio.metrics import (
@@ -27,7 +52,7 @@ from radio.metrics import (
     radio_station_health_successes_total,
     radio_stations_total,
 )
-from radio.models import Station
+from radio.models import ListeningHistory, Station, StationHealthCheck
 from radio.services import probe_all_active_stations
 
 logger = logging.getLogger("radio")
@@ -112,3 +137,90 @@ def check_all_stations_health(self: Any) -> dict[str, Any]:
         "unreachable": unreachable,
         "duration_seconds": round(duration, 3),
     }
+
+
+# --- Retention purge tasks -----------------------------------------------
+# Per prompts/p4-staff-engineer-review.md #2 the listening-history
+# and health-check tables grow unbounded. The purge tasks are
+# scheduled daily by Celery Beat and obey environment-driven
+# retention windows.
+
+
+@shared_task(
+    name="radio.tasks.purge_old_history",
+    autoretry_for=(OperationalError, DatabaseError),
+    retry_backoff=True,
+    max_retries=2,
+    time_limit=600,
+)
+def purge_old_history() -> dict[str, int]:
+    """Delete ``ListeningHistory`` rows older than
+    ``RADIO_HISTORY_RETENTION_DAYS`` (default 90).
+
+    Returns ``{"deleted": <int>, "retention_days": <int>}``.
+    A ``retention_days`` of 0 (or negative) is the opt-out
+    switch and short-circuits with ``deleted=0``.
+    """
+    retention_days = int(getattr(settings, "RADIO_HISTORY_RETENTION_DAYS", 90))
+    if retention_days <= 0:
+        return {"deleted": 0, "retention_days": retention_days}
+    cutoff = timezone.now() - timedelta(days=retention_days)
+    deleted, _ = ListeningHistory.objects.filter(
+        started_at__lt=cutoff
+    ).delete()
+    logger.info(
+        "purge_old_history: deleted=%d cutoff=%s retention_days=%d",
+        deleted,
+        cutoff.isoformat(),
+        retention_days,
+    )
+    return {"deleted": deleted, "retention_days": retention_days}
+
+
+@shared_task(
+    name="radio.tasks.purge_old_health_checks",
+    autoretry_for=(OperationalError, DatabaseError),
+    retry_backoff=True,
+    max_retries=2,
+    time_limit=600,
+)
+def purge_old_health_checks() -> dict[str, int]:
+    """Keep only the ``RADIO_HEALTH_CHECK_KEEP_PER_STATION``
+    newest rows per station; older rows are deleted.
+
+    This preserves the "is the station currently reachable?"
+    audit trail (driven by the most recent row) without
+    letting the table accumulate one row per probe per
+    station per day forever.
+
+    Returns ``{"deleted": <int>, "keep_per_station": <int>}``.
+    A ``keep_per_station`` of 0 (or negative) is the opt-out
+    switch and short-circuits with ``deleted=0``.
+    """
+    keep = int(getattr(settings, "RADIO_HEALTH_CHECK_KEEP_PER_STATION", 20))
+    if keep <= 0:
+        return {"deleted": 0, "keep_per_station": keep}
+    deleted = 0
+    # For each station, find the Nth-newest ``checked_at`` and
+    # delete every row older than that. The subquery is
+    # necessary because Django does not expose a portable
+    # ``ROW_NUMBER() OVER (PARTITION BY ...)`` helper.
+    for station in Station.objects.all().only("id"):
+        cutoff_row = (
+            StationHealthCheck.objects.filter(station_id=station.id)
+            .order_by("-checked_at")
+            .values_list("checked_at", flat=True)[keep - 1 : keep]
+        )
+        if not cutoff_row:
+            continue
+        cutoff_ts = cutoff_row[0]
+        n, _ = StationHealthCheck.objects.filter(
+            station_id=station.id, checked_at__lt=cutoff_ts
+        ).delete()
+        deleted += n
+    logger.info(
+        "purge_old_health_checks: deleted=%d keep_per_station=%d",
+        deleted,
+        keep,
+    )
+    return {"deleted": deleted, "keep_per_station": keep}

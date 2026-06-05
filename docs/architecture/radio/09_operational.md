@@ -1,6 +1,6 @@
 # Operational Considerations
 
-> **Status**: ✅ IMPLEMENTED (Periodic station health checks, Prometheus metrics, envelope errors)
+> **Status**: ✅ IMPLEMENTED (Periodic station health checks, Prometheus metrics, envelope errors, retention purge tasks)
 > **Phase 2 delivered**: 2026-06-03 — see `IMPLEMENTATION_SUMMARY.md` § Phase 2.
 > **Still out of scope**: structured `extra=` logging, Grafana dashboard JSON, station-list
 > caching layer, fallback-station redirect, `radio_api_request_latency` /
@@ -302,6 +302,50 @@ Three alerts live in `monitoring/prometheus/alerts.yml` under group `radio`:
 2. Check station seed data loaded
 3. Verify `is_active` flags
 4. Run management command to reload
+
+## Retention Policy
+
+> Added per `prompts/p4-staff-engineer-review.md` #2 (Phase 4 production hardening).
+
+Three tables grow unbounded and are pruned by daily Celery Beat
+tasks. Operators can tighten the windows for compliance (for
+example, GDPR) by setting environment variables; the values
+default to a balance that keeps the trending and audit data
+useful without accumulating years of stale rows.
+
+### Settings
+
+| Setting | Env var | Default | Effect |
+|---------|---------|---------|--------|
+| `ALERTS_RETENTION_DAYS` | `ALERTS_RETENTION_DAYS` | 90 | Delete `AudioAlert` rows older than N days. `0` = keep forever. |
+| `RADIO_HISTORY_RETENTION_DAYS` | `RADIO_HISTORY_RETENTION_DAYS` | 90 | Delete `ListeningHistory` rows older than N days. `0` = keep forever. |
+| `RADIO_HEALTH_CHECK_KEEP_PER_STATION` | `RADIO_HEALTH_CHECK_KEEP_PER_STATION` | 20 | Keep the N newest `StationHealthCheck` rows per station. `0` = keep all. |
+
+### Tasks
+
+| Task | Schedule | Effect |
+|------|----------|--------|
+| `alerts.tasks.purge_old_alerts` | Daily 05:00 UTC | Deletes `AudioAlert` rows whose `created_at` is older than the retention window. Removes the underlying file from `MEDIA_ROOT/audio_alerts/` before the row is dropped, so the storage tree does not leak orphans. Returns `{"deleted": int, "retention_days": int}`. |
+| `alerts.tasks.purge_orphan_audio_files` | Daily 05:30 UTC | Walks `MEDIA_ROOT/audio_alerts/` and removes any file with no live `AudioAlert` row pointing at it. Safety net for rows that were deleted by hand or by an external cleanup script. Returns `{"removed": int}`. |
+| `radio.tasks.purge_old_history` | Daily 05:15 UTC | Deletes `ListeningHistory` rows whose `started_at` is older than the retention window. Returns `{"deleted": int, "retention_days": int}`. |
+| `radio.tasks.purge_old_health_checks` | Daily 05:45 UTC | Keeps the N newest `StationHealthCheck` rows per station; older rows are deleted. The most recent row drives `Station.is_available`, so the audit trail is preserved. Returns `{"deleted": int, "keep_per_station": int}`. |
+
+### Backpressure
+
+Each task is decorated with `autoretry_for=(OperationalError,
+DatabaseError)` and a `time_limit` of 10 minutes, so a slow
+disk or a long-running migration cannot cause the worker to
+hang. A failed run is logged at WARNING with the deleted /
+removed count and the operator can re-run it from the Django
+shell with `<task>.run()`.
+
+### Verification
+
+After deployment, the operator can confirm the tasks are
+running by inspecting the worker's logs (`grep purge_old_alerts
+celery.log`) and by checking the table row counts
+(`./manage.py shell -c "from alerts.models import AudioAlert;
+print(AudioAlert.objects.count())"`).
 
 ## Dependencies
 

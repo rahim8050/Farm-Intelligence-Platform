@@ -1,6 +1,6 @@
 """Celery tasks for the `alerts` app.
 
-Four tasks:
+Six tasks:
 
 - :func:`scan_ndvi_declines` runs every
   ``ALERTS_NDVI_DECLINE_SCAN_INTERVAL_SECONDS`` and fires an
@@ -16,6 +16,13 @@ Four tasks:
   :func:`alerts.triggers.on_admin_broadcast` to fan out admin
   broadcasts via a ``celery.group`` (one task per recipient)
   so a single slow TTS render does not block the others.
+- :func:`purge_old_alerts` deletes :class:`AudioAlert` rows
+  older than ``ALERTS_RETENTION_DAYS`` (default 90) and
+  removes the underlying audio files from storage.
+- :func:`purge_orphan_audio_files` is a safety net that walks
+  the ``audio_alerts/`` directory and removes any file with
+  no live row pointing at it. Useful when a row was deleted
+  by hand or by an external cleanup script.
 
 The de-duplication key for the scans is the latest
 :class:`AudioAlert.created_at` for the ``(user, farm, alert_type)``
@@ -310,3 +317,150 @@ def dispatch_one_alert(
         "alert_id": str(result.alert_id),
         "delivered": result.delivered,
     }
+
+
+# --- Retention purge tasks -----------------------------------------------
+# Per prompts/p4-staff-engineer-review.md #2 the audio-alerts,
+# listening-history, and health-check tables grow unbounded. The
+# purge tasks are scheduled daily by Celery Beat and obey
+# environment-driven retention windows so an operator can
+# tighten them for compliance without code changes.
+
+
+@shared_task(
+    name="alerts.tasks.purge_old_alerts",
+    autoretry_for=(OperationalError, DatabaseError),
+    retry_backoff=True,
+    max_retries=2,
+    time_limit=600,
+)
+def purge_old_alerts() -> dict[str, int]:
+    """Delete :class:`AudioAlert` rows older than
+    ``ALERTS_RETENTION_DAYS`` (default 90).
+
+    The associated ``audio_file`` is removed by Django's
+    ``FileField.delete()`` before the row is destroyed, so the
+    ``MEDIA_ROOT/audio_alerts/`` tree does not leak orphaned
+    files even when the storage backend does not enforce
+    cascading delete.
+
+    Returns ``{"deleted": <int>, "retention_days": <int>}``.
+    """
+    retention_days = int(getattr(settings, "ALERTS_RETENTION_DAYS", 90))
+    if retention_days <= 0:
+        # 0 (or negative) means "keep forever" - opt-out switch.
+        return {"deleted": 0, "retention_days": retention_days}
+    close_old_connections_safe()
+    cutoff = timezone.now() - timedelta(days=retention_days)
+    qs = AudioAlert.objects.filter(created_at__lt=cutoff).only(
+        "id", "audio_file"
+    )
+    deleted = 0
+    # Delete in chunks to avoid loading every row's file at once.
+    for alert in qs.iterator(chunk_size=200):
+        if alert.audio_file:
+            # ``delete`` only removes the file from storage;
+            # the row delete is handled by the bulk call below.
+            try:
+                alert.audio_file.delete(save=False)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "purge_old_alerts: file delete failed for %s: %s",
+                    alert.id,
+                    exc.__class__.__name__,
+                )
+        deleted += 1
+    # Now drop the rows in one statement.
+    AudioAlert.objects.filter(created_at__lt=cutoff).delete()
+    logger.info(
+        "purge_old_alerts: deleted=%d cutoff=%s retention_days=%d",
+        deleted,
+        cutoff.isoformat(),
+        retention_days,
+    )
+    return {"deleted": deleted, "retention_days": retention_days}
+
+
+@shared_task(
+    name="alerts.tasks.purge_orphan_audio_files",
+    max_retries=0,
+    time_limit=600,
+)
+def purge_orphan_audio_files() -> dict[str, int]:
+    """Remove audio files on disk that have no live ``AudioAlert``.
+
+    Safety net for the case where a row was deleted by hand
+    (or by an external cleanup script) but the underlying
+    file in ``MEDIA_ROOT/audio_alerts/`` was not removed.
+    The walk is bounded by the directory the ``FileField``
+    is configured to write to, so it cannot accidentally
+    touch unrelated files.
+
+    Returns ``{"removed": <int>}``.
+    """
+    from django.core.files.storage import default_storage
+
+    base = "audio_alerts/"
+    removed = 0
+    try:
+        dirs, files = default_storage.listdir(base)
+    except FileNotFoundError:
+        return {"removed": 0}
+    for name in files:
+        path = f"{base}{name}"
+        # If any row still references this path, keep the file.
+        exists = AudioAlert.objects.filter(audio_file=path).exists()
+        if exists:
+            continue
+        try:
+            default_storage.delete(path)
+            removed += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "purge_orphan_audio_files: delete failed for %s: %s",
+                path,
+                exc.__class__.__name__,
+            )
+    # Recurse into year/month subdirs.
+    for sub in dirs:
+        sub_path = f"{base}{sub}/"
+        try:
+            sub_dirs, sub_files = default_storage.listdir(sub_path)
+        except FileNotFoundError:
+            continue
+        for name in sub_files:
+            path = f"{sub_path}{name}"
+            exists = AudioAlert.objects.filter(audio_file=path).exists()
+            if exists:
+                continue
+            try:
+                default_storage.delete(path)
+                removed += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "purge_orphan_audio_files: delete failed for %s: %s",
+                    path,
+                    exc.__class__.__name__,
+                )
+        for inner in sub_dirs:
+            inner_path = f"{sub_path}{inner}/"
+            try:
+                _, deep_files = default_storage.listdir(inner_path)
+            except FileNotFoundError:
+                continue
+            for name in deep_files:
+                path = f"{inner_path}{name}"
+                exists = AudioAlert.objects.filter(audio_file=path).exists()
+                if exists:
+                    continue
+                try:
+                    default_storage.delete(path)
+                    removed += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "purge_orphan_audio_files: delete failed for %s: %s",
+                        path,
+                        exc.__class__.__name__,
+                    )
+    logger.info("purge_orphan_audio_files: removed=%d", removed)
+    return {"removed": removed}

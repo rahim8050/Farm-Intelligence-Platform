@@ -80,6 +80,19 @@ ACTIVITY_SCHEDULER_LOCK_SECONDS = env.int(
 )
 ACTIVITY_RETENTION_DAYS = env.int("ACTIVITY_RETENTION_DAYS", default=30)
 
+# Retention policy. The purge tasks live in
+# ``alerts.tasks`` and ``radio.tasks`` and are scheduled
+# daily by Celery Beat; the values can be overridden by
+# environment variables (e.g. for a more aggressive
+# privacy posture in the EU).
+ALERTS_RETENTION_DAYS = env.int("ALERTS_RETENTION_DAYS", default=90)
+RADIO_HISTORY_RETENTION_DAYS = env.int(
+    "RADIO_HISTORY_RETENTION_DAYS", default=90
+)
+RADIO_HEALTH_CHECK_KEEP_PER_STATION = env.int(
+    "RADIO_HEALTH_CHECK_KEEP_PER_STATION", default=20
+)
+
 
 # Application definition
 
@@ -1058,6 +1071,22 @@ CELERY_BEAT_SCHEDULE = {
     "alerts-ndvi-low-scan": {
         "task": "alerts.tasks.scan_low_ndvi_observations",
         "schedule": ALERTS_NDVI_DECLINE_SCAN_INTERVAL_SECONDS,
+    },
+    "alerts-purge-old-alerts": {
+        "task": "alerts.tasks.purge_old_alerts",
+        "schedule": crontab(hour=5, minute=0),
+    },
+    "alerts-purge-orphan-audio-files": {
+        "task": "alerts.tasks.purge_orphan_audio_files",
+        "schedule": crontab(hour=5, minute=30),
+    },
+    "radio-purge-old-history": {
+        "task": "radio.tasks.purge_old_history",
+        "schedule": crontab(hour=5, minute=15),
+    },
+    "radio-purge-old-health-checks": {
+        "task": "radio.tasks.purge_old_health_checks",
+        "schedule": crontab(hour=5, minute=45),
     },
 }
 CELERY_ENABLE_UTC = True
