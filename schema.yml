@@ -3859,10 +3859,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     AlertAdminSendEnvelope:
       type: object
@@ -3875,10 +3879,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     AlertDetailEnvelope:
       type: object
@@ -3891,10 +3899,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     AlertErrorEnvelope:
       type: object
@@ -3905,9 +3917,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     AlertListEnvelope:
       type: object
@@ -3920,10 +3936,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     AlertListEnvelopeData:
       type: object
@@ -3954,10 +3974,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     AlertSubscriptionListEnvelope:
       type: object
@@ -3970,10 +3994,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     AlertSubscriptionListEnvelopeData:
       type: object
@@ -4045,10 +4073,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     ApiKeyList:
       type: object
@@ -4114,10 +4146,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     ApiKeyRevokeSuccessResponse:
       type: object
@@ -4130,10 +4166,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     ApiKeyRotateData:
       type: object
@@ -4193,10 +4233,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     ApiKeysErrorResponse:
       type: object
@@ -4207,9 +4251,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     AudioAlert:
       type: object
@@ -4346,9 +4394,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     AuthSuccessResponse:
       type: object
@@ -4361,10 +4413,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     AuthTokens:
       type: object
@@ -4395,9 +4451,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     CircuitBreakerResetData:
       type: object
@@ -4421,9 +4481,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     CircuitBreakerResetRequest:
       type: object
@@ -4622,10 +4686,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     FarmActivityErrorResponse:
       type: object
@@ -4636,9 +4704,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     FarmActivityListSuccess:
       type: object
@@ -4653,10 +4725,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     FarmActivitySuccess:
       type: object
@@ -4669,10 +4745,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     FarmObservation:
       type: object
@@ -4728,10 +4808,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     FarmObservationErrorResponse:
       type: object
@@ -4742,9 +4826,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     FarmObservationListSuccess:
       type: object
@@ -4759,10 +4847,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     FarmObservationSuccess:
       type: object
@@ -4775,10 +4867,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     FarmObservationWrite:
       type: object
@@ -4843,10 +4939,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     FarmSync:
       type: object
@@ -4946,9 +5046,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     FarmSyncSuccessResponse:
       type: object
@@ -4961,10 +5065,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     FarmWeatherCurrentSuccess:
       type: object
@@ -4977,10 +5085,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     FarmWeatherDailyData:
       type: object
@@ -5002,10 +5114,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     FarmWeatherErrorResponse:
       type: object
@@ -5016,9 +5132,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     FarmWeatherHourlyData:
       type: object
@@ -5040,10 +5160,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     Favorite:
       type: object
@@ -5121,9 +5245,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     IntegrationClient:
       type: object
@@ -5220,10 +5348,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     IntegrationClientErrorResponse:
       type: object
@@ -5234,9 +5366,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     IntegrationClientListSuccessResponse:
       type: object
@@ -5251,10 +5387,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     IntegrationClientRetrieveSuccessResponse:
       type: object
@@ -5267,10 +5407,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     IntegrationClientRotateSecretData:
       type: object
@@ -5299,10 +5443,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     IntegrationClientUpdateSuccessResponse:
       type: object
@@ -5315,10 +5463,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     IntegrationHealthData:
       type: object
@@ -5342,10 +5494,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     IntegrationPingData:
       type: object
@@ -5383,10 +5539,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     IntegrationTokenData:
       type: object
@@ -5412,10 +5572,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     IntegrationWhoamiData:
       type: object
@@ -5442,10 +5606,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     ListeningHistory:
       type: object
@@ -5536,10 +5704,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     NdviDerivedObservation:
       type: object
@@ -5572,9 +5744,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     NdviIngest:
       type: object
@@ -5623,10 +5799,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     NdviIngestInfoData:
       type: object
@@ -5646,10 +5826,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     NdviJob:
       type: object
@@ -5753,10 +5937,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     NdviLatestData:
       type: object
@@ -5797,10 +5985,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     NdviObservation:
       type: object
@@ -5840,9 +6032,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     NdviRasterQueueData:
       type: object
@@ -5862,10 +6058,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     NdviRefreshData:
       type: object
@@ -5885,10 +6085,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     NdviTimeseriesData:
       type: object
@@ -5941,10 +6145,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     NextcloudPingData:
       type: object
@@ -5965,9 +6173,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     NextcloudPingSuccessResponse:
       type: object
@@ -5980,10 +6192,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     NextcloudStatusCapabilities:
       type: object
@@ -6020,10 +6236,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     NullEnvelope:
       type: object
@@ -6068,10 +6288,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     PasswordResetConfirm:
       type: object
@@ -6098,10 +6322,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     PasswordResetErrorResponse:
       type: object
@@ -6138,10 +6366,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     PatchedActivity:
       type: object
@@ -6498,10 +6730,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     PodcastEpisode:
       type: object
@@ -6566,10 +6802,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     PodcastEpisodeStream:
       type: object
@@ -6607,10 +6847,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     PodcastListEnvelope:
       type: object
@@ -6625,10 +6869,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     PodcastRefreshReport:
       type: object
@@ -6660,10 +6908,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     PodcastsErrorResponse:
       type: object
@@ -6674,9 +6926,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     Provider:
       type: object
@@ -6729,9 +6985,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     RadioFavoriteCreateEnvelope:
       type: object
@@ -6744,10 +7004,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     RadioFavoriteListEnvelope:
       type: object
@@ -6760,10 +7024,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     RadioFavoriteListEnvelopeData:
       type: object
@@ -6834,10 +7102,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     RadioListeningHistoryListEnvelopeData:
       type: object
@@ -6868,10 +7140,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     RasterPngRequest:
       type: object
@@ -7106,10 +7382,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     UpstreamHealthData:
       type: object
@@ -7143,9 +7423,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     WeatherCurrentSuccess:
       type: object
@@ -7158,10 +7442,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     WeatherDailyData:
       type: object
@@ -7183,10 +7471,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     WeatherErrorResponse:
       type: object
@@ -7197,9 +7489,13 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - errors
       - message
+      - request_id
       - status
     WeatherWeeklyData:
       type: object
@@ -7221,10 +7517,14 @@ components:
           type: string
         errors:
           nullable: true
+        request_id:
+          type: string
+          nullable: true
       required:
       - data
       - errors
       - message
+      - request_id
       - status
     WeeklyReport:
       type: object

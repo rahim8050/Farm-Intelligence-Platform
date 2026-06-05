@@ -29,6 +29,7 @@ def success_envelope_serializer(
             "message": serializers.CharField(),
             "data": data,
             "errors": serializers.JSONField(allow_null=True),
+            "request_id": serializers.CharField(allow_null=True),
         },
     )
 
@@ -42,6 +43,7 @@ def error_envelope_serializer(name: str) -> Serializer:
             "status": serializers.IntegerField(),
             "message": serializers.CharField(),
             "errors": serializers.JSONField(allow_null=True),
+            "request_id": serializers.CharField(allow_null=True),
         },
     )
 

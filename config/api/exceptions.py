@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from config.api.request_id import current_request_id
+
 if TYPE_CHECKING:
     from rest_framework.response import Response
 
@@ -36,7 +38,12 @@ def custom_exception_handler(
 
     if response is None:
         return Response(
-            {"status": 1, "message": "Internal server error", "errors": None},
+            {
+                "status": 1,
+                "message": "Internal server error",
+                "errors": None,
+                "request_id": current_request_id() or None,
+            },
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
@@ -57,6 +64,7 @@ def custom_exception_handler(
             "message": "Too Many Requests",
             "data": None,
             "errors": errors,
+            "request_id": current_request_id() or None,
         }
         return response
 
@@ -67,5 +75,10 @@ def custom_exception_handler(
         if isinstance(maybe, str):
             message = maybe
 
-    response.data = {"status": 1, "message": message, "errors": detail}
+    response.data = {
+        "status": 1,
+        "message": message,
+        "errors": detail,
+        "request_id": current_request_id() or None,
+    }
     return response

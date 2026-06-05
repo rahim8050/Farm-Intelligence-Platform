@@ -3,6 +3,8 @@ from __future__ import annotations
 from rest_framework import status
 from rest_framework.response import Response
 
+from config.api.request_id import current_request_id
+
 type JSONScalar = str | int | float | bool | None
 type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
 
@@ -18,6 +20,7 @@ def success_response(
         "message": message,
         "data": data,
         "errors": None,
+        "request_id": current_request_id() or None,
     }
     return Response(payload, status=status_code)
 
@@ -33,5 +36,6 @@ def error_response(
         "message": message,
         "data": None,
         "errors": errors,
+        "request_id": current_request_id() or None,
     }
     return Response(payload, status=status_code)

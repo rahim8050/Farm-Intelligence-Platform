@@ -6,6 +6,17 @@ from pathlib import Path
 from typing import Any
 
 import environ
+from celery.signals import (  # type: ignore[import-untyped]
+    before_task_publish,
+    task_postrun,
+    task_prerun,
+)
+
+from config.api.request_id import (
+    bind_request_id,
+    new_request_id,
+    reset_request_id,
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env()
@@ -32,6 +43,70 @@ from celery.signals import worker_ready  # type: ignore[import-untyped]  # noqa:
 from prometheus_client import CollectorRegistry, start_http_server  # noqa: E402
 from prometheus_client.multiprocess import MultiProcessCollector  # noqa: E402
 # isort: on
+
+# Bridge API request_id onto Celery tasks so logs/metrics emitted from
+# background tasks can be correlated with the originating HTTP request.
+# Producers stamp the active request_id onto the task headers; workers
+# bind it into a contextvar for the duration of the task and restore
+# the previous value on postrun.
+REQUEST_ID_HEADER = "request_id"
+_active_request_id_tokens: dict[str, object] = {}
+
+
+@before_task_publish.connect
+def _propagate_request_id(
+    sender: str | None = None,
+    headers: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> None:
+    if headers is None:
+        return
+    rid = os.environ.get("NDVI_ACTIVE_REQUEST_ID", "").strip()
+    if not rid:
+        from config.api.request_id import current_request_id
+
+        rid = current_request_id()
+    if not rid:
+        return
+    headers[REQUEST_ID_HEADER] = rid
+    properties = kwargs.get("properties") or {}
+    correlation_id = properties.get("correlation_id")
+    if correlation_id is None:
+        properties["correlation_id"] = rid
+        kwargs["properties"] = properties
+
+
+@task_prerun.connect
+def _bind_request_id(
+    task_id: str | None = None,
+    task: Any | None = None,
+    args: tuple[Any, ...] | None = None,
+    kwargs: dict[str, Any] | None = None,
+    **signal_kwargs: Any,
+) -> None:
+    if task_id is None:
+        return
+    rid = ""
+    if task is not None:
+        request = getattr(task, "request", None)
+        if request is not None:
+            rid = request.get(REQUEST_ID_HEADER, "") or ""
+    if not rid:
+        rid = new_request_id()
+    _active_request_id_tokens[task_id] = bind_request_id(rid)
+
+
+@task_postrun.connect
+def _restore_request_id(
+    task_id: str | None = None,
+    **signal_kwargs: Any,
+) -> None:
+    if task_id is None:
+        return
+    token = _active_request_id_tokens.pop(task_id, None)
+    if token is not None:
+        reset_request_id(token)  # type: ignore[arg-type]
+
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
