@@ -81,7 +81,8 @@ def test_subscription_list_create_view_create_and_list(
     resp3 = auth_client.get("/api/v1/alerts/subscriptions/")
     assert resp3.status_code == 200
     assert resp3.data["status"] == 0
-    assert len(resp3.data["data"]) == 1
+    assert resp3.data["data"]["count"] == 1
+    assert len(resp3.data["data"]["results"]) == 1
 
 
 def test_subscription_create_rejects_bad_alert_type(
@@ -161,9 +162,10 @@ def test_alert_list_view_returns_callers_alerts(
     resp = auth_client.get("/api/v1/alerts/")
     assert resp.status_code == 200
     assert resp.data["status"] == 0
-    assert len(resp.data["data"]) == 2
+    assert len(resp.data["data"]["results"]) == 2
+    assert resp.data["data"]["count"] == 2
     unread = auth_client.get("/api/v1/alerts/?unread=true")
-    assert len(unread.data["data"]) == 2
+    assert len(unread.data["data"]["results"]) == 2
 
 
 def test_alert_detail_view_get_and_acknowledge(

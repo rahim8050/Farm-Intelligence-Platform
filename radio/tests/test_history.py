@@ -135,7 +135,8 @@ class ListeningHistoryEndpointsTestCase(APITestCase):
         response = self.client.get(reverse("radio-history"))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["status"], 0)
-        self.assertEqual(len(response.data["data"]), 2)
+        self.assertEqual(len(response.data["data"]["results"]), 2)
+        self.assertEqual(response.data["data"]["count"], 2)
 
     def test_list_does_not_leak_other_users(self) -> None:
         bob = User.objects.create_user(
@@ -144,7 +145,7 @@ class ListeningHistoryEndpointsTestCase(APITestCase):
         record_listening_session(bob, self.station_a)
         self.client.force_authenticate(user=self.user)
         response = self.client.get(reverse("radio-history"))
-        ids = [row["station_id"] for row in response.data["data"]]
+        ids = [row["station_id"] for row in response.data["data"]["results"]]
         self.assertEqual(len(ids), 2)
         self.assertNotIn(bob.username, ids)
 
@@ -153,7 +154,7 @@ class ListeningHistoryEndpointsTestCase(APITestCase):
         response = self.client.get(reverse("radio-history-recent"))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["status"], 0)
-        self.assertEqual(len(response.data["data"]), 2)
+        self.assertEqual(len(response.data["data"]["results"]), 2)
 
     def test_recent_endpoint_with_explicit_limit(self) -> None:
         self.client.force_authenticate(user=self.user)
@@ -161,7 +162,7 @@ class ListeningHistoryEndpointsTestCase(APITestCase):
             reverse("radio-history-recent"), {"limit": "1"}
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data["data"]), 1)
+        self.assertEqual(len(response.data["data"]["results"]), 1)
 
     def test_recent_endpoint_rejects_invalid_limit(self) -> None:
         self.client.force_authenticate(user=self.user)

@@ -28,14 +28,16 @@ from alerts.serializers import (
     AudioAlertSerializer,
     AudioAlertSubscriptionSerializer,
 )
-from alerts.services import (
-    acknowledge_alert,
-    list_alerts_for_user,
-)
+from alerts.services import acknowledge_alert
 from alerts.triggers import on_admin_broadcast
 from config.api.openapi import (
     error_envelope_serializer,
     success_envelope_serializer,
+)
+from config.api.pagination import (
+    paginated_envelope_serializer,
+    paginated_response,
+    pagination_parameters,
 )
 from config.api.responses import success_response
 
@@ -72,13 +74,13 @@ SubscriptionEnvelope = success_envelope_serializer(
     "AlertSubscriptionEnvelope",
     data=AudioAlertSubscriptionSerializer(),
 )
-SubscriptionListEnvelope = success_envelope_serializer(
+SubscriptionListEnvelope = paginated_envelope_serializer(
     "AlertSubscriptionListEnvelope",
-    data=AudioAlertSubscriptionSerializer(many=True),
+    item=AudioAlertSubscriptionSerializer(),
 )
-AlertListEnvelope = success_envelope_serializer(
+AlertListEnvelope = paginated_envelope_serializer(
     "AlertListEnvelope",
-    data=AudioAlertSerializer(many=True),
+    item=AudioAlertSerializer(),
 )
 AlertDetailEnvelope = success_envelope_serializer(
     "AlertDetailEnvelope",
@@ -112,17 +114,25 @@ class SubscriptionListCreateView(APIView):
             200: SubscriptionListEnvelope,
             401: AlertErrorEnvelope,
         },
+        parameters=pagination_parameters(),
         summary="List audio alert subscriptions",
+        description=(
+            "Returns the caller's audio alert subscriptions, newest "
+            "first. Paginated; supports `page` and `page_size` query "
+            "params (default 20, max 100)."
+        ),
         operation_id="v1_alerts_subscriptions_list",
     )
     def get(self, request: Request) -> Response:
-        rows = list(
-            AudioAlertSubscription.objects.filter(
-                user=_authed_user(request)
-            ).order_by("-updated_at")
+        qs = AudioAlertSubscription.objects.filter(
+            user=_authed_user(request)
+        ).order_by("-updated_at")
+        return paginated_response(
+            qs,
+            AudioAlertSubscriptionSerializer,
+            request,
+            message="Subscriptions retrieved",
         )
-        data = AudioAlertSubscriptionSerializer(rows, many=True).data
-        return success_response(data)
 
     @extend_schema(
         request=AudioAlertSubscriptionSerializer,
@@ -223,7 +233,14 @@ class AlertListView(APIView):
             200: AlertListEnvelope,
             401: AlertErrorEnvelope,
         },
+        parameters=pagination_parameters(),
         summary="List audio alerts",
+        description=(
+            "Returns the caller's audio alerts, newest first. "
+            "Paginated; supports `page` and `page_size` query params "
+            "(default 20, max 100). Optional `unread=true` filter to "
+            "limit to unacknowledged rows."
+        ),
         operation_id="v1_alerts_list",
     )
     def get(self, request: Request) -> Response:
@@ -232,19 +249,16 @@ class AlertListView(APIView):
             "true",
             "yes",
         }
-        try:
-            limit = int(request.query_params.get("limit", "100"))
-        except ValueError:
-            limit = 100
-        rows = list_alerts_for_user(
-            user_id=_user_id(request),
-            only_unacknowledged=only_unack,
-            limit=limit,
+        qs = AudioAlert.objects.filter(user_id=_user_id(request))
+        if only_unack:
+            qs = qs.filter(is_acknowledged=False)
+        qs = qs.order_by("-created_at")
+        return paginated_response(
+            qs,
+            AudioAlertSerializer,
+            request,
+            message="Alerts retrieved",
         )
-        data = AudioAlertSerializer(
-            rows, many=True, context={"request": request}
-        ).data
-        return success_response(data)
 
 
 @extend_schema(

@@ -100,7 +100,8 @@ class FavoriteListCreateEndpointTestCase(APITestCase):
         response = self.client.get(reverse("radio-favorites"))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["status"], 0)
-        self.assertEqual(response.data["data"], [])
+        self.assertEqual(response.data["data"]["count"], 0)
+        self.assertEqual(response.data["data"]["results"], [])
 
     def test_post_creates_favorite_and_returns_envelope(self) -> None:
         self.client.force_authenticate(user=self.user)
@@ -162,8 +163,9 @@ class FavoriteListCreateEndpointTestCase(APITestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.get(reverse("radio-favorites"))
         self.assertEqual(response.status_code, 200)
-        ids = [f["station_id"] for f in response.data["data"]]
+        ids = [f["station_id"] for f in response.data["data"]["results"]]
         self.assertEqual(ids, ["bbc_1xtra"])
+        self.assertEqual(response.data["data"]["count"], 1)
 
 
 class FavoriteDeleteEndpointTestCase(APITestCase):

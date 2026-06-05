@@ -203,15 +203,21 @@ paths:
   /api/v1/alerts/:
     get:
       operationId: v1_alerts_list
-      description: |-
-        List the caller's audio alerts (newest first).
-
-        Auth: IsAuthenticated
-        Query params:
-            - ``unread=true`` to filter to unacknowledged rows.
-            - ``limit`` (1..500, default 100).
-        Response data: a list of :class:`AudioAlertSerializer`.
+      description: Returns the caller's audio alerts, newest first. Paginated; supports
+        `page` and `page_size` query params (default 20, max 100). Optional `unread=true`
+        filter to limit to unacknowledged rows.
       summary: List audio alerts
+      parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+        description: 1-based page number. Defaults to 1.
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+        description: Number of items per page. Defaults to 20, max 100.
       tags:
       - v1
       security:
@@ -367,14 +373,20 @@ paths:
   /api/v1/alerts/subscriptions/:
     get:
       operationId: v1_alerts_subscriptions_list
-      description: |-
-        List or create the caller's audio-alert subscriptions.
-
-        Auth: IsAuthenticated
-        Throttle: inherits the global user throttle (no app-specific scope).
-        Response data: a list of :class:`AudioAlertSubscriptionSerializer`
-        (for ``GET``) or a single instance (for ``POST``).
+      description: Returns the caller's audio alert subscriptions, newest first. Paginated;
+        supports `page` and `page_size` query params (default 20, max 100).
       summary: List audio alert subscriptions
+      parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+        description: 1-based page number. Defaults to 1.
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+        description: Number of items per page. Defaults to 20, max 100.
       tags:
       - v1
       security:
@@ -3078,8 +3090,20 @@ paths:
   /api/v1/radio/favorites/:
     get:
       operationId: v1_radio_favorites_list
-      description: Returns the current user's favorite stations, newest first.
+      description: Returns the current user's favorite stations, newest first. Paginated;
+        supports `page` and `page_size` query params (default 20, max 100).
       summary: List favorite stations
+      parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+        description: 1-based page number. Defaults to 1.
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+        description: Number of items per page. Defaults to 20, max 100.
       tags:
       - v1
       security:
@@ -3197,9 +3221,20 @@ paths:
   /api/v1/radio/history/:
     get:
       operationId: v1_radio_history_list
-      description: Returns the most recent 100 listening-history rows for the current
-        user, newest first.
+      description: Returns the current user's listening history, newest first. Paginated;
+        supports `page` and `page_size` query params (default 20, max 100).
       summary: List listening history
+      parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+        description: 1-based page number. Defaults to 1.
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+        description: Number of items per page. Defaults to 20, max 100.
       tags:
       - v1
       security:
@@ -3221,8 +3256,10 @@ paths:
   /api/v1/radio/history/recent/:
     get:
       operationId: v1_radio_history_recent
-      description: Returns the most recent ``limit`` listening-history rows for the
-        current user (default 20, max 100).
+      description: Returns the most recent listening-history rows for the current
+        user. Query param ``limit`` (1..100, default 20) caps the number of rows returned.
+        Response ``data`` is a DRF page dict with ``count``, ``next``, ``previous``,
+        and ``results`` (at most ``limit`` items).
       summary: Recent listening history
       tags:
       - v1
@@ -3876,9 +3913,7 @@ components:
       type: object
       properties:
         data:
-          type: array
-          items:
-            $ref: '#/components/schemas/AudioAlert'
+          $ref: '#/components/schemas/AlertListEnvelopeData'
         status:
           type: integer
         message:
@@ -3890,6 +3925,24 @@ components:
       - errors
       - message
       - status
+    AlertListEnvelopeData:
+      type: object
+      properties:
+        results:
+          $ref: '#/components/schemas/AudioAlert'
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+      required:
+      - count
+      - next
+      - previous
+      - results
     AlertSubscriptionEnvelope:
       type: object
       properties:
@@ -3910,9 +3963,7 @@ components:
       type: object
       properties:
         data:
-          type: array
-          items:
-            $ref: '#/components/schemas/AudioAlertSubscription'
+          $ref: '#/components/schemas/AlertSubscriptionListEnvelopeData'
         status:
           type: integer
         message:
@@ -3924,6 +3975,24 @@ components:
       - errors
       - message
       - status
+    AlertSubscriptionListEnvelopeData:
+      type: object
+      properties:
+        results:
+          $ref: '#/components/schemas/AudioAlertSubscription'
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+      required:
+      - count
+      - next
+      - previous
+      - results
     ApiKeyCreate:
       type: object
       properties:
@@ -4252,18 +4321,7 @@ components:
         alert_types:
           type: array
           items:
-            enum:
-            - ndvi_decline
-            - ndvi_low
-            - activity_completed
-            - admin_broadcast
             type: string
-            description: |-
-              * `ndvi_decline` - NDVI decline
-              * `ndvi_low` - NDVI low absolute
-              * `activity_completed` - Activity completed
-              * `admin_broadcast` - Admin broadcast
-            x-spec-enum-id: d0462f480c565518
         created_at:
           type: string
           format: date-time
@@ -6289,18 +6347,7 @@ components:
         alert_types:
           type: array
           items:
-            enum:
-            - ndvi_decline
-            - ndvi_low
-            - activity_completed
-            - admin_broadcast
             type: string
-            description: |-
-              * `ndvi_decline` - NDVI decline
-              * `ndvi_low` - NDVI low absolute
-              * `activity_completed` - Activity completed
-              * `admin_broadcast` - Admin broadcast
-            x-spec-enum-id: d0462f480c565518
         created_at:
           type: string
           format: date-time
@@ -6706,9 +6753,7 @@ components:
       type: object
       properties:
         data:
-          type: array
-          items:
-            $ref: '#/components/schemas/Favorite'
+          $ref: '#/components/schemas/RadioFavoriteListEnvelopeData'
         status:
           type: integer
         message:
@@ -6720,6 +6765,24 @@ components:
       - errors
       - message
       - status
+    RadioFavoriteListEnvelopeData:
+      type: object
+      properties:
+        results:
+          $ref: '#/components/schemas/Favorite'
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+      required:
+      - count
+      - next
+      - previous
+      - results
     RadioHealthData:
       type: object
       properties:
@@ -6764,9 +6827,7 @@ components:
       type: object
       properties:
         data:
-          type: array
-          items:
-            $ref: '#/components/schemas/ListeningHistory'
+          $ref: '#/components/schemas/RadioListeningHistoryListEnvelopeData'
         status:
           type: integer
         message:
@@ -6778,6 +6839,24 @@ components:
       - errors
       - message
       - status
+    RadioListeningHistoryListEnvelopeData:
+      type: object
+      properties:
+        results:
+          $ref: '#/components/schemas/ListeningHistory'
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+      required:
+      - count
+      - next
+      - previous
+      - results
     RadioNullEnvelope:
       type: object
       properties:

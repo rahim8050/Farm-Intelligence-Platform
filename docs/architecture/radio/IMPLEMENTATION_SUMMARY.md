@@ -532,6 +532,107 @@ all reflected in the code:
 
 ---
 
+## Data Lifecycle Standards (p3followup)
+
+The radio (and `alerts` + `podcasts`) collection endpoints follow
+the standards in [`prompts/p3followup.md`](../../../prompts/p3followup.md)
+("API and Data Lifecycle Standards"). Concretely:
+
+### Pagination
+
+All user-owned collection endpoints use the shared
+[`config.api.pagination`](../../../config/api/pagination.py) helper
+(`EnvelopedPageNumberPagination`):
+
+- `GET /api/v1/radio/favorites/`
+- `GET /api/v1/radio/history/`
+- `GET /api/v1/radio/history/recent/` — cap-only endpoint (no page
+  navigation; `limit` query param 1..100)
+- `GET /api/v1/alerts/subscriptions/`
+- `GET /api/v1/alerts/`
+
+Each supports `page` (1-based) and `page_size` (default 20, max
+100). The response `data` is a DRF page dict with `count`, `next`,
+`previous`, and `results`; the OpenAPI schema documents both query
+parameters via `pagination_parameters()`.
+
+Public catalog endpoints (`/radio/stations/`, `/radio/providers/`,
+`/podcasts/`) are not paginated today because their active-row
+count is bounded by admin curation, not user growth.
+
+### Idempotency
+
+| Endpoint | Contract |
+|----------|----------|
+| `POST /radio/favorites/` | `get_or_create` — re-favoriting returns the existing row, 200 instead of 201. |
+| `DELETE /radio/favorites/<station_id>/` | Always 200; the row is deleted if it existed, otherwise the call is a no-op. |
+| `POST /alerts/subscriptions/` | `update_or_create` keyed on `(user, farm)` — re-POSTing merges `alert_types` into the existing row. |
+| `DELETE /alerts/subscriptions/<uuid>/` | Returns 404 when the row does not belong to the caller (or does not exist). State is the same after the second call, so the operation is idempotent. |
+| `POST /alerts/<uuid>/` (acknowledge) | Filter on `is_acknowledged=False`; the row update count is `0` on a second call, and the endpoint still returns 200. |
+
+`POST /alerts/admin/send/` is a fire-and-forget broadcast and is
+intentionally **not** idempotent at the row level. The
+`AudioAlert` model is a time-series event log; 24h de-duplication
+on `(user, farm, alert_type)` lives in `alerts.tasks` and is
+documented in [`alerts/README.md`](../../../alerts/README.md).
+
+### Event recording reliability
+
+- `radio.services.record_listening_session` wraps the DB insert in
+  a `try/except`, logs and returns `None` on failure. The
+  `StationStreamView` calls it for auth'd users and never lets a
+  recording failure block a stream URL response.
+- `alerts.services.dispatch_alert` persists the row first, then
+  tries to synthesise the audio and push the WebSocket event. TTS
+  failures and channel-layer failures are both caught and logged;
+  the persisted row is authoritative and clients can poll
+  `GET /api/v1/alerts/?unread=true` to catch up.
+- `alerts.triggers.on_activity_completed` (and the three other
+  trigger entry points) wrap their inner `dispatch_alert` call in
+  a per-recipient `try/except` so one bad subscription never
+  blocks the rest of the fan-out.
+
+### User data isolation
+
+Each app has a dedicated privacy test file that exercises the
+cross-user boundary:
+
+- `radio/tests/test_privacy.py` — favorites, listening history
+  (8 tests).
+- `alerts/tests/test_privacy.py` — subscriptions, alerts,
+  acknowledge, admin broadcast (10 tests).
+
+Anonymous access is exercised explicitly: every auth-required
+endpoint has a "401 for anonymous" assertion.
+
+### Scalability review (per feature)
+
+| Feature | Indexes | Retention | Async | Notes |
+|---------|---------|-----------|-------|-------|
+| `Favorite` | `(user, -created_at)`, `UniqueConstraint(user, station)` | Indefinite; user-driven delete only. | Sync on read; write goes through the same DB. | `get_or_create` is a single round-trip. |
+| `ListeningHistory` | `(user, -started_at)`; `started_at` also indexed alone. | Reserved (no purge today). `ended_at` is nullable per the standards. | Best-effort insert in `StationStreamView`; never blocks the response. | Future: client-driven start/stop events will populate `ended_at`. |
+| `AudioAlertSubscription` | Unique on `(user, farm)`; `updated_at` ordering on the list view. | User-driven delete only. | Sync. | Per-farm allow-list; `alert_types` is a JSON list filtered in Python to stay SQLite-compatible in tests. |
+| `AudioAlert` | Ordered by `created_at DESC`; `is_acknowledged` used as a list filter. | Indefinite; ack is soft. | TTS + WS push are best-effort; the DB row is the source of truth. | 24h de-duplication window on `(user, farm, alert_type)`. |
+| `PodcastEpisode` | `(podcast, -published_at)`, `UniqueConstraint(podcast, guid)`. | Indefinite (RSS is append-mostly). | Refresh task is a Celery beat (`podcasts.tasks.refresh_all_feeds`). | Public read; refresh is auth'd. |
+
+### Open-source readiness
+
+The Open Source Readiness Checklist in
+[`prompts/p3followup.md`](../../../prompts/p3followup.md) is now
+satisfied for radio/alerts/podcasts:
+
+- Models documented (model docstrings + `05_data_model.md`).
+- Services documented (module/class/function docstrings).
+- Views documented (module/class/method docstrings + envelope
+  descriptions on every endpoint).
+- OpenAPI regenerated (`schema.yml`).
+- README updated (root and per-app).
+- `ruff check .` / `ruff format .` / `mypy .` / `bandit -r .` /
+  `python manage.py makemigrations --check` all clean.
+- Tests added and passing.
+
+---
+
 ## Document History
 
 | Version | Date | Notes |
@@ -542,3 +643,4 @@ all reflected in the code:
 | 3.0 | June 04, 2026 | Phase 3 (favorites + listening history) shipped: `Favorite` and `ListeningHistory` models, auth'd endpoints, idempotent add/remove, `StationStreamView` auto-records history for auth'd clients, throttle scopes, doc alignment. |
 | 4.0 | June 04, 2026 | Phase 4 (podcasts) shipped: new top-level `podcasts/` app, `Podcast` + `PodcastEpisode` models, 5 endpoints (incl. auth'd refresh), `httpx` + `feedparser` RSS ingestion, hourly Celery task, sample data management command. |
 | 4.1 | June 04, 2026 | Phase 4 (farm audio alerts) shipped: new top-level `alerts/` app, pluggable TTS (piper/espeak/sine/noop), `AudioAlertSubscription` + `AudioAlert` models, 5 alert types, 8 endpoints, WebSocket push via extended `ActivityConsumer`, REST polling fallback, NDVI-decline + low-NDVI-absolute periodic scans, admin manual broadcast. |
+| 4.2 | June 05, 2026 | P3-followup hardening: applied `prompts/p3followup.md` API and Data Lifecycle Standards. New `config/api/pagination.py` (page/page_size, max 100, envelope-aware). All user-owned collection endpoints (favorites, history, alerts, subscriptions) now paginated. Cross-user privacy tests added (`radio/tests/test_privacy.py`, `alerts/tests/test_privacy.py`). Idempotency and event-recording contracts documented; scalability review table added. |

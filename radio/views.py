@@ -12,7 +12,7 @@ the standard DRF error envelope.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import cast
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from drf_spectacular.utils import extend_schema, inline_serializer
@@ -27,8 +27,13 @@ from config.api.openapi import (
     error_envelope_serializer,
     success_envelope_serializer,
 )
+from config.api.pagination import (
+    paginated_envelope_serializer,
+    paginated_response,
+    pagination_parameters,
+)
 from config.api.responses import success_response
-from radio.models import Provider, Station
+from radio.models import Favorite, ListeningHistory, Provider, Station
 from radio.serializers import (
     FavoriteCreateSerializer,
     FavoriteSerializer,
@@ -39,8 +44,6 @@ from radio.serializers import (
 )
 from radio.services import (
     add_favorite,
-    list_favorites_for_user,
-    list_history_for_user,
     record_listening_session,
     remove_favorite,
     summarize_health,
@@ -121,15 +124,15 @@ RadioHealthEnvelope = inline_serializer(
 FavoriteEnvelope = success_envelope_serializer(
     "RadioFavoriteEnvelope", data=FavoriteSerializer()
 )
-FavoriteListEnvelope = success_envelope_serializer(
-    "RadioFavoriteListEnvelope", data=FavoriteSerializer(many=True)
+FavoriteListEnvelope = paginated_envelope_serializer(
+    "RadioFavoriteListEnvelope", item=FavoriteSerializer()
 )
 FavoriteCreateEnvelope = success_envelope_serializer(
     "RadioFavoriteCreateEnvelope", data=FavoriteSerializer()
 )
-ListeningHistoryListEnvelope = success_envelope_serializer(
+ListeningHistoryListEnvelope = paginated_envelope_serializer(
     "RadioListeningHistoryListEnvelope",
-    data=ListeningHistorySerializer(many=True),
+    item=ListeningHistorySerializer(),
 )
 radio_error_envelope = error_envelope_serializer("RadioErrorResponse")
 radio_null_envelope = success_envelope_serializer(
@@ -396,14 +399,21 @@ class FavoriteListCreateView(APIView):
             200: FavoriteListEnvelope,
             401: radio_error_envelope,
         },
+        parameters=pagination_parameters(),
         summary="List favorite stations",
         description=(
-            "Returns the current user's favorite stations, newest first."
+            "Returns the current user's favorite stations, newest first. "
+            "Paginated; supports `page` and `page_size` query params "
+            "(default 20, max 100)."
         ),
         operation_id="v1_radio_favorites_list",
     )
     def get(self, request: Request) -> Response:
         """Return the user's favorites, newest first.
+
+        Pagination: ``page`` (1-based) and ``page_size`` (1..100,
+        default 20). The response ``data`` is a DRF page dict with
+        ``count``, ``next``, ``previous``, and ``results``.
 
         Side effects: none.
         """
@@ -411,9 +421,15 @@ class FavoriteListCreateView(APIView):
             AbstractBaseUser | AnonymousUser,
             getattr(request, "user", AnonymousUser()),
         )
-        favorites = list_favorites_for_user(user, limit=100)
-        data = FavoriteSerializer(favorites, many=True).data
-        return success_response(data, message="Favorites retrieved")
+        qs = Favorite.objects.filter(user=user).select_related(
+            "station", "station__provider"
+        )
+        return paginated_response(
+            qs,
+            FavoriteSerializer,
+            request,
+            message="Favorites retrieved",
+        )
 
     @extend_schema(
         request=FavoriteCreateSerializer,
@@ -519,15 +535,21 @@ class ListeningHistoryListView(APIView):
             200: ListeningHistoryListEnvelope,
             401: radio_error_envelope,
         },
+        parameters=pagination_parameters(),
         summary="List listening history",
         description=(
-            "Returns the most recent 100 listening-history rows for "
-            "the current user, newest first."
+            "Returns the current user's listening history, newest "
+            "first. Paginated; supports `page` and `page_size` query "
+            "params (default 20, max 100)."
         ),
         operation_id="v1_radio_history_list",
     )
     def get(self, request: Request) -> Response:
         """Return the user's listening history, newest first.
+
+        Pagination: ``page`` (1-based) and ``page_size`` (1..100,
+        default 20). The response ``data`` is a DRF page dict with
+        ``count``, ``next``, ``previous``, and ``results``.
 
         Side effects: none.
         """
@@ -535,9 +557,15 @@ class ListeningHistoryListView(APIView):
             AbstractBaseUser | AnonymousUser,
             getattr(request, "user", AnonymousUser()),
         )
-        rows = list_history_for_user(user, limit=100)
-        data: list[Any] = ListeningHistorySerializer(rows, many=True).data
-        return success_response(data, message="History retrieved")
+        qs = ListeningHistory.objects.filter(user=user).select_related(
+            "station", "station__provider"
+        )
+        return paginated_response(
+            qs,
+            ListeningHistorySerializer,
+            request,
+            message="History retrieved",
+        )
 
 
 @extend_schema(
@@ -565,13 +593,21 @@ class ListeningHistoryRecentView(APIView):
         },
         summary="Recent listening history",
         description=(
-            "Returns the most recent ``limit`` listening-history rows "
-            "for the current user (default 20, max 100)."
+            "Returns the most recent listening-history rows for the "
+            "current user. Query param ``limit`` (1..100, default 20) "
+            "caps the number of rows returned. Response ``data`` is a "
+            "DRF page dict with ``count``, ``next``, ``previous``, "
+            "and ``results`` (at most ``limit`` items)."
         ),
         operation_id="v1_radio_history_recent",
     )
     def get(self, request: Request) -> Response:
         """Return the user's most recent history rows.
+
+        ``limit`` is a hard cap (1..100) on the size of ``results``;
+        pagination is intentionally not exposed on this endpoint so
+        a client can fetch "the N most recent" without computing
+        pages.
 
         Side effects: none.
         """
@@ -594,6 +630,16 @@ class ListeningHistoryRecentView(APIView):
             AbstractBaseUser | AnonymousUser,
             getattr(request, "user", AnonymousUser()),
         )
-        rows = list_history_for_user(user, limit=limit)
-        data: list[Any] = ListeningHistorySerializer(rows, many=True).data
-        return success_response(data, message="Recent history retrieved")
+        qs = (
+            ListeningHistory.objects.filter(user=user)
+            .select_related("station", "station__provider")
+            .order_by("-started_at")[:limit]
+        )
+        return paginated_response(
+            qs,
+            ListeningHistorySerializer,
+            request,
+            message="Recent history retrieved",
+            page_size=limit,
+            max_page_size=limit,
+        )
