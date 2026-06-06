@@ -28,7 +28,6 @@ from uuid import UUID
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
-from django.core.files.base import ContentFile
 from django.db import close_old_connections, connection
 from django.utils import timezone
 
@@ -150,13 +149,6 @@ def emit_audio_alert_event(user_id: int, payload: dict[str, Any]) -> int:
         return 0
     metrics.push_attempts(result="success")
     return 1
-
-
-def _save_audio_bytes(alert: AudioAlert, audio_bytes: bytes) -> None:
-    if not audio_bytes:
-        return
-    name = f"{alert.id}.wav"
-    alert.audio_file.save(name, ContentFile(audio_bytes), save=False)
 
 
 def build_push_payload(alert: AudioAlert) -> dict[str, Any]:

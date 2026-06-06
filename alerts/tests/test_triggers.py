@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from alerts.models import AudioAlertType
+from alerts.models import AudioAlert, AudioAlertType
 from alerts.triggers import (
     on_activity_completed,
     on_admin_broadcast,
@@ -121,16 +121,22 @@ def test_on_ndvi_low_returns_count(make_user, make_farm) -> None:
 
 
 def test_on_admin_broadcast_dispatches_to_each_recipient(make_user) -> None:
+    """The broadcast fans out one Celery task per recipient via a
+    ``celery.group``; the inline ``dispatch_alert`` call is no
+    longer reached on the happy path.
+    """
     a = make_user()
     b = make_user()
-    with patch("alerts.triggers.dispatch_alert") as mocked:
+    with patch("alerts.triggers.group") as mocked_group:
+        mocked_group.return_value.apply_async.return_value = None
         n = on_admin_broadcast(recipients=[a.id, b.id], title="t", message="m")
     assert n == 2
-    assert {c.kwargs["user_id"] for c in mocked.call_args_list} == {a.id, b.id}
-    assert all(
-        c.kwargs["alert_type"] == AudioAlertType.ADMIN_BROADCAST
-        for c in mocked.call_args_list
-    )
+    # The group was constructed once with both recipients.
+    assert mocked_group.call_count == 1
+    header = mocked_group.call_args.args[0]
+    assert len(header) == 2
+    # apply_async was called exactly once on the group.
+    assert mocked_group.return_value.apply_async.call_count == 1
 
 
 def test_on_admin_broadcast_fans_out_via_celery_group(make_user) -> None:
@@ -139,22 +145,64 @@ def test_on_admin_broadcast_fans_out_via_celery_group(make_user) -> None:
     Celery ``group`` so a single slow TTS render does not block
     the others.
     """
-    from alerts.tasks import dispatch_one_alert
-
     a = make_user()
     b = make_user()
     c = make_user()
-    with patch.object(dispatch_one_alert, "apply_async") as mocked_apply:
-        with patch.object(
-            dispatch_one_alert, "s", wraps=dispatch_one_alert.s
-        ) as mocked_sig:
-            n = on_admin_broadcast(
-                recipients=[a.id, b.id, c.id], title="t", message="m"
-            )
+    with patch("alerts.triggers.group") as mocked_group:
+        mocked_group.return_value.apply_async.return_value = None
+        n = on_admin_broadcast(
+            recipients=[a.id, b.id, c.id], title="t", message="m"
+        )
     assert n == 3
-    # One signature built per recipient
-    assert mocked_sig.call_count == 3
-    user_ids = {c.kwargs["user_id"] for c in mocked_sig.call_args_list}
-    assert user_ids == {a.id, b.id, c.id}
-    # Exactly one group.apply_async() was issued
-    assert mocked_apply.call_count == 1
+    # The group was constructed once with all three recipients.
+    assert mocked_group.call_count == 1
+    header = mocked_group.call_args.args[0]
+    assert len(header) == 3
+    # apply_async was called exactly once on the group.
+    assert mocked_group.return_value.apply_async.call_count == 1
+    # And no real alert rows were created in the DB (the task body
+    # never executed; the group was stubbed).
+    assert AudioAlert.objects.count() == 0
+
+
+def test_on_admin_broadcast_falls_back_when_broker_down(make_user) -> None:
+    """When the Celery broker is unreachable the function falls
+    back to a synchronous in-process fan-out via
+    :func:`alerts.services.dispatch_alert`. Each successful
+    inline dispatch is counted; per-recipient failures are
+    swallowed.
+    """
+    a = make_user()
+    b = make_user()
+    with patch(
+        "alerts.triggers.group",
+        side_effect=RuntimeError("broker down"),
+    ):
+        with patch("alerts.triggers.dispatch_alert") as mocked:
+            n = on_admin_broadcast(
+                recipients=[a.id, b.id], title="t", message="m"
+            )
+    assert n == 2
+    assert mocked.call_count == 2
+
+
+def test_on_admin_broadcast_fallback_partial_failure(make_user) -> None:
+    """If the inline fallback fails for one user, the other
+    users are still dispatched and the failure is logged but
+    not propagated.
+    """
+    a = make_user()
+    b = make_user()
+    with patch(
+        "alerts.triggers.group",
+        side_effect=RuntimeError("broker down"),
+    ):
+        with patch(
+            "alerts.triggers.dispatch_alert",
+            side_effect=[None, RuntimeError("dispatch down")],
+        ):
+            n = on_admin_broadcast(
+                recipients=[a.id, b.id], title="t", message="m"
+            )
+    # Only one of the two inline dispatches succeeded.
+    assert n == 1

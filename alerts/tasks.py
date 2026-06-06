@@ -396,71 +396,45 @@ def purge_orphan_audio_files() -> dict[str, int]:
     is configured to write to, so it cannot accidentally
     touch unrelated files.
 
+    The ``FileField`` ``upload_to`` is
+    ``"audio_alerts/%Y/%m/%d/"``, so the on-disk layout is
+    three directories deep (year/month/day) followed by the
+    file. The walk delegates to a depth-bounded helper
+    that descends every level and removes any file with no
+    live row pointing at it.
+
     Returns ``{"removed": <int>}``.
     """
     from django.core.files.storage import default_storage
 
-    base = "audio_alerts/"
-    removed = 0
-    try:
-        dirs, files = default_storage.listdir(base)
-    except FileNotFoundError:
-        return {"removed": 0}
-    for name in files:
-        path = f"{base}{name}"
-        # If any row still references this path, keep the file.
-        exists = AudioAlert.objects.filter(audio_file=path).exists()
-        if exists:
-            continue
+    def _remove_orphans(directory: str) -> int:
+        """Walk ``directory`` and every subdirectory, deleting
+        any file that has no live ``AudioAlert`` row.
+
+        Returns the number of files removed.
+        """
         try:
-            default_storage.delete(path)
-            removed += 1
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "purge_orphan_audio_files: delete failed for %s: %s",
-                path,
-                exc.__class__.__name__,
-            )
-    # Recurse into year/month subdirs.
-    for sub in dirs:
-        sub_path = f"{base}{sub}/"
-        try:
-            sub_dirs, sub_files = default_storage.listdir(sub_path)
+            sub_dirs, files = default_storage.listdir(directory)
         except FileNotFoundError:
-            continue
-        for name in sub_files:
-            path = f"{sub_path}{name}"
-            exists = AudioAlert.objects.filter(audio_file=path).exists()
-            if exists:
+            return 0
+        removed_local = 0
+        for name in files:
+            path = f"{directory}{name}"
+            if AudioAlert.objects.filter(audio_file=path).exists():
                 continue
             try:
                 default_storage.delete(path)
-                removed += 1
+                removed_local += 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "purge_orphan_audio_files: delete failed for %s: %s",
                     path,
                     exc.__class__.__name__,
                 )
-        for inner in sub_dirs:
-            inner_path = f"{sub_path}{inner}/"
-            try:
-                _, deep_files = default_storage.listdir(inner_path)
-            except FileNotFoundError:
-                continue
-            for name in deep_files:
-                path = f"{inner_path}{name}"
-                exists = AudioAlert.objects.filter(audio_file=path).exists()
-                if exists:
-                    continue
-                try:
-                    default_storage.delete(path)
-                    removed += 1
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "purge_orphan_audio_files: delete failed for %s: %s",
-                        path,
-                        exc.__class__.__name__,
-                    )
+        for sub in sub_dirs:
+            removed_local += _remove_orphans(f"{directory}{sub}/")
+        return removed_local
+
+    removed = _remove_orphans("audio_alerts/")
     logger.info("purge_orphan_audio_files: removed=%d", removed)
     return {"removed": removed}

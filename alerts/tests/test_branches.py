@@ -28,7 +28,6 @@ from alerts.serializers import (
 )
 from alerts.services import (
     _absolute_audio_url,
-    _save_audio_bytes,
     dispatch_alert,
     emit_audio_alert_event,
     has_subscription,
@@ -165,7 +164,13 @@ def test_emit_audio_alert_event_returns_zero_when_no_layer() -> None:
     assert n == 0
 
 
-def test_save_audio_bytes_is_a_noop_for_empty() -> None:
+def test_absolute_audio_url_handles_value_error() -> None:
+    """``alert.audio_file.url`` can raise ``ValueError`` if the
+    file field is set but the storage backend can't resolve a
+    URL (e.g. the field is unassigned after a copy from a
+    detached instance). The helper must return ``""`` rather
+    than propagating.
+    """
     user = _make_user()
     alert = AudioAlert.objects.create(
         user=user,
@@ -174,9 +179,12 @@ def test_save_audio_bytes_is_a_noop_for_empty() -> None:
         title="t",
         message="m",
     )
-    _save_audio_bytes(alert, b"")
-    alert.refresh_from_db()
-    assert not alert.audio_file
+    fake_file = type("F", (), {})()
+    type(fake_file).url = property(  # type: ignore[misc]
+        lambda self: (_ for _ in ()).throw(ValueError("no url"))
+    )
+    alert.audio_file = fake_file  # type: ignore[assignment]
+    assert _absolute_audio_url(alert) == ""
 
 
 def test_dispatch_alert_handles_push_failure() -> None:
@@ -369,11 +377,10 @@ def test_on_admin_broadcast_swallows_dispatch_error() -> None:
     swallowed and ``n == 0`` is reported.
     """
     user = _make_user()
-    from alerts.tasks import dispatch_one_alert
-
     broker_down = RuntimeError("broker down")
-    with patch.object(
-        dispatch_one_alert, "apply_async", side_effect=broker_down
+    with patch(
+        "alerts.triggers.group",
+        side_effect=broker_down,
     ):
         with patch(
             "alerts.triggers.dispatch_alert",

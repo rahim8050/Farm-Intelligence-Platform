@@ -14,7 +14,7 @@ the production call sites.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -134,6 +134,45 @@ class HasSubscriptionTests(TestCase):
             alert_type=AudioAlertType.NDVI_DECLINE,
         )
 
+    def test_postgres_path_is_used_when_supported(self) -> None:
+        """When ``_json_contains_supports_array()`` is True the
+        filter is pushed into SQL via
+        ``alert_types__contains=[alert_type]`` and
+        ``has_subscription`` short-circuits on ``.exists()``
+        without materialising the row.
+
+        We mock the manager so the test does not depend on the
+        actual SQL backend (the test suite runs on SQLite,
+        which raises ``NotSupportedError`` for the
+        ``__contains`` JSON lookup; Postgres is the only
+        vendor that supports it).
+        """
+        fake_manager = MagicMock()
+        fake_qs = MagicMock()
+        fake_filtered = MagicMock()
+        fake_manager.filter.return_value = fake_qs
+        fake_qs.filter.return_value = fake_filtered
+        fake_filtered.exists.return_value = True
+        with patch(
+            "alerts.services._json_contains_supports_array",
+            return_value=True,
+        ):
+            with patch(
+                "alerts.services.AudioAlertSubscription.objects",
+                fake_manager,
+            ):
+                assert has_subscription(
+                    user_id=1,
+                    farm_id=2,
+                    alert_type=AudioAlertType.NDVI_DECLINE,
+                )
+        # The Postgres path called filter(alert_types__contains=[...]).
+        fake_qs.filter.assert_called_once_with(
+            alert_types__contains=[AudioAlertType.NDVI_DECLINE]
+        )
+        # And short-circuited on .exists() without iterating.
+        fake_filtered.exists.assert_called_once_with()
+
 
 # --- subscribed_users_for_farm --------------------------------------------
 
@@ -177,6 +216,53 @@ class SubscribedUsersForFarmTests(TestCase):
             farm_id=farm.id, alert_type=AudioAlertType.NDVI_DECLINE
         )
         assert result == []
+
+    def test_postgres_path_filters_in_sql(self) -> None:
+        """When the vendor supports array containment, the
+        ``subscribed_users_for_farm`` helper pushes the filter
+        into SQL and returns the matching rows without loading
+        the others.
+        """
+        from alerts.models import AudioAlertSubscription
+
+        matching = AudioAlertSubscription(user_id=1, farm_id=2)
+        # Build a single self-returning mock that captures every
+        # chained call (filter, select_related) and only differs
+        # in the iter() payload, which the production code uses
+        # to materialise the result.
+        fake_qs = MagicMock()
+        fake_qs.select_related.return_value = fake_qs
+        captured: dict[str, Any] = {}
+
+        def _record_filter(*args: Any, **kwargs: Any) -> MagicMock:
+            captured["call"] = (args, kwargs)
+            fake_qs.__iter__.return_value = iter([matching])
+            return fake_qs
+
+        fake_qs.filter.side_effect = _record_filter
+        with patch(
+            "alerts.services._json_contains_supports_array",
+            return_value=True,
+        ):
+            with patch(
+                "alerts.services.AudioAlertSubscription.objects",
+                fake_qs,
+            ):
+                result = subscribed_users_for_farm(
+                    farm_id=2, alert_type=AudioAlertType.NDVI_DECLINE
+                )
+        assert result == [matching]
+        # The two filter calls were: filter(farm_id=...) and
+        # filter(alert_types__contains=[...]).
+        assert "call" in captured
+        assert captured["call"] == (
+            (AudioAlertType.NDVI_DECLINE,),
+            {},
+        ) or captured["call"][1] == {
+            "alert_types__contains": [AudioAlertType.NDVI_DECLINE]
+        }
+        # And select_related was called to pre-load the user FK.
+        fake_qs.select_related.assert_called_once_with("user")
 
 
 # --- end-to-end via the call sites that production code uses ------------

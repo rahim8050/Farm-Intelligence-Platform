@@ -99,6 +99,36 @@ class PurgeOldAlertsTests(TestCase):
 
 
 class PurgeOrphanAudioFilesTests(TestCase):
+    def setUp(self) -> None:
+        """Wipe ``MEDIA_ROOT/audio_alerts/`` so each test
+        starts from a clean directory tree. The test backend
+        resets the DB between tests but it does not touch the
+        file system, so files saved by an earlier test would
+        otherwise bleed into the next one.
+        """
+        from django.core.files.storage import default_storage
+
+        try:
+            dirs, files = default_storage.listdir("audio_alerts/")
+        except FileNotFoundError:
+            return
+        for f in files:
+            default_storage.delete(f"audio_alerts/{f}")
+        for sub in dirs:
+            self._wipe_recursive(f"audio_alerts/{sub}/")
+
+    def _wipe_recursive(self, directory: str) -> None:
+        from django.core.files.storage import default_storage
+
+        try:
+            sub_dirs, files = default_storage.listdir(directory)
+        except FileNotFoundError:
+            return
+        for f in files:
+            default_storage.delete(f"{directory}{f}")
+        for sub in sub_dirs:
+            self._wipe_recursive(f"{directory}{sub}/")
+
     def test_removes_files_without_live_row(self) -> None:
         # Create an alert with an audio file, then delete the row
         # without touching the file (simulating a manual cleanup).
@@ -130,6 +160,42 @@ class PurgeOrphanAudioFilesTests(TestCase):
         result = purge_orphan_audio_files.run()
         assert result["removed"] == 0
         assert default_storage.exists(path)
+
+    def test_walks_year_month_day_subdirs(self) -> None:
+        """The orphan-file walk must descend into the
+        ``audio_alerts/YYYY/MM/DD/`` tree that ``FileField``
+        produces (see ``upload_to`` on
+        ``AudioAlert.audio_file``) and remove any file with
+        no live row pointing at it.
+        """
+        from django.core.files.storage import default_storage
+
+        path = "audio_alerts/2026/06/05/orphan.wav"
+        default_storage.save(path, ContentFile(b"RIFF"))
+        assert default_storage.exists(path)
+        with patch(
+            "alerts.tasks.AudioAlert.objects.filter",
+            return_value=type("Q", (), {"exists": lambda self: False})(),
+        ):
+            result = purge_orphan_audio_files.run()
+        assert result["removed"] == 1
+        assert not default_storage.exists(path)
+
+    def test_returns_zero_when_storage_dir_missing(self) -> None:
+        """If ``MEDIA_ROOT/audio_alerts/`` does not exist yet
+        (fresh install), the purge task short-circuits with
+        ``removed=0`` instead of raising.
+        """
+        from unittest.mock import MagicMock
+
+        fake_storage = MagicMock()
+        fake_storage.listdir.side_effect = FileNotFoundError("no dir")
+        # The task imports default_storage lazily from
+        # ``django.core.files.storage``, so we have to patch
+        # the source module rather than ``alerts.tasks``.
+        with patch("django.core.files.storage.default_storage", fake_storage):
+            result = purge_orphan_audio_files.run()
+        assert result == {"removed": 0}
 
 
 # --- radio.tasks.purge_old_history ----------------------------------------
