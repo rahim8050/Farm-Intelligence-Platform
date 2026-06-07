@@ -207,3 +207,60 @@ class ListeningHistory(models.Model):
     def __str__(self) -> str:
         ts = self.started_at.isoformat()
         return f"{self.user_id} -> {self.station_id} @ {ts}"
+
+
+class EmergencyPriority(models.TextChoices):
+    """Severity levels for an :class:`EmergencyBroadcast`."""
+
+    LOW = "low", "Low"
+    MEDIUM = "medium", "Medium"
+    HIGH = "high", "High"
+    CRITICAL = "critical", "Critical"
+
+
+class EmergencyBroadcast(models.Model):
+    """An emergency broadcast message surfaced by the radio service.
+
+    Used for weather alerts, farm emergency notifications, and other
+    critical system messages. A broadcast is "active" when
+    ``is_active`` is true and the current time falls inside the
+    ``[starts_at, ends_at]`` window. Read endpoints are public; create
+    / update / delete are restricted to admins.
+
+    The design follows ``docs/architecture/radio/08_future_expansion.md``
+    (P5 — Emergency broadcasts).
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    priority = models.CharField(
+        max_length=20,
+        choices=EmergencyPriority.choices,
+        default=EmergencyPriority.MEDIUM,
+    )
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="emergency_broadcasts_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "radio_emergency_broadcast"
+        verbose_name = "Emergency broadcast"
+        verbose_name_plural = "Emergency broadcasts"
+        ordering = ["-priority", "-starts_at"]
+        indexes = [
+            models.Index(fields=["is_active", "starts_at", "ends_at"]),
+            models.Index(fields=["priority", "-starts_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"[{self.priority}] {self.title}"

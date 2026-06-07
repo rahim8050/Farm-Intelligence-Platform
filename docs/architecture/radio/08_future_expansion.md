@@ -336,5 +336,5 @@ def get_provider(slug: str) -> RadioProvider:
 | P3 | Listening history | Medium | Auth | ✅ shipped 2026-06-04 — see `IMPLEMENTATION_SUMMARY.md` § Phase 3 |
 | P4 | Podcasts | High | P0 | ✅ shipped 2026-06-04 — see `IMPLEMENTATION_SUMMARY.md` § Phase 4 |
 | P4 | Farm audio alerts | High | Activities, NDVI | ✅ shipped 2026-06-04 — see `IMPLEMENTATION_SUMMARY.md` § Phase 4 (audio alerts) |
-| P5 | Emergency broadcasts | Medium | P0 | ⏳ planned |
-| P5 | TTS | High | External API |
+| P5 | Emergency broadcasts | Medium | P0 | ✅ shipped 2026-06-07 — see `IMPLEMENTATION_SUMMARY.md` § Phase 5 (P5) |
+| P5 | TTS (radio-side endpoint) | High | alerts app | ✅ shipped 2026-06-07 — see `IMPLEMENTATION_SUMMARY.md` § Phase 5 (P5) |

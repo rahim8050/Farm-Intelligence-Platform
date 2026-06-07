@@ -644,3 +644,85 @@ satisfied for radio/alerts/podcasts:
 | 4.0 | June 04, 2026 | Phase 4 (podcasts) shipped: new top-level `podcasts/` app, `Podcast` + `PodcastEpisode` models, 5 endpoints (incl. auth'd refresh), `httpx` + `feedparser` RSS ingestion, hourly Celery task, sample data management command. |
 | 4.1 | June 04, 2026 | Phase 4 (farm audio alerts) shipped: new top-level `alerts/` app, pluggable TTS (piper/espeak/sine/noop), `AudioAlertSubscription` + `AudioAlert` models, 5 alert types, 8 endpoints, WebSocket push via extended `ActivityConsumer`, REST polling fallback, NDVI-decline + low-NDVI-absolute periodic scans, admin manual broadcast. |
 | 4.2 | June 05, 2026 | P3-followup hardening: applied `prompts/p3followup.md` API and Data Lifecycle Standards. New `config/api/pagination.py` (page/page_size, max 100, envelope-aware). All user-owned collection endpoints (favorites, history, alerts, subscriptions) now paginated. Cross-user privacy tests added (`radio/tests/test_privacy.py`, `alerts/tests/test_privacy.py`). Idempotency and event-recording contracts documented; scalability review table added. |
+| 5.0 | June 07, 2026 | Phase 5 (P5) shipped: `EmergencyBroadcast` model + 4 endpoints (public read, admin write), thin radio-side TTS view that reuses `alerts.tts.synthesize`, 25 new tests, OpenAPI envelopes. `EmergencyBroadcast` has composite indexes on `(is_active, starts_at, ends_at)` and `(priority, -starts_at)`. TTS is a thin wrapper, not a parallel engine stack. See `prompts/p5-implementation.md`. |
+
+---
+
+## Phase 5 (P5) — Emergency Broadcasts + Radio-side TTS (Shipped 2026-06-07)
+
+Phase 5 lands the two P5 items from
+[`08_future_expansion.md`](./08_future_expansion.md): emergency broadcasts
+and a thin radio-side TTS endpoint. The TTS endpoint reuses the
+existing `alerts.tts.synthesize` engine stack (piper / espeak / sine /
+noop, circuit breaker, per-engine executor pool); no parallel
+infrastructure is introduced.
+
+### New endpoints
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/v1/radio/emergency/current/` | Public | Highest-priority active emergency broadcast, or `data: null` |
+| `GET` | `/api/v1/radio/emergency/history/?limit=&offset=` | Public | History, newest first. `limit` 1..200 (default 50), `offset` ≥ 0 |
+| `POST` | `/api/v1/radio/emergency/` | IsAdminUser | Create a new broadcast |
+| `PATCH` | `/api/v1/radio/emergency/<id>/` | IsAdminUser | Partial update |
+| `DELETE` | `/api/v1/radio/emergency/<id>/` | IsAdminUser | Idempotent delete |
+| `POST` | `/api/v1/radio/tts/` | IsAuthenticated | Synthesise text to audio (base64) |
+
+### `EmergencyBroadcast` model (`radio/models.py:213-262`)
+
+- `BigAutoField` PK
+- `title` (200), `message` (text)
+- `priority` (low / medium / high / critical — `EmergencyPriority` TextChoices)
+- `starts_at`, `ends_at` (datetime)
+- `is_active` (bool)
+- `created_by` FK to `AUTH_USER_MODEL`, `on_delete=SET_NULL`, nullable
+- `created_at`, `updated_at`
+- Indexes:
+  - `(is_active, starts_at, ends_at)` — for the "current" lookup
+  - `(priority, -starts_at)` — for the history list
+
+### Service layer (`radio/services.py:405-518`)
+
+- `get_current_emergency(now=None)` — returns the highest-priority
+  active broadcast, or `None`.
+- `list_emergency_history(*, limit=50, offset=0)` — clamped to 1..200.
+- `create_emergency_broadcast(*, title, message, priority, starts_at, ends_at, is_active=True, created_by=None)`.
+- `update_emergency_broadcast(broadcast, *, fields={...})` — applies a
+  partial update.
+- `delete_emergency_broadcast(broadcast)` — idempotent.
+
+### TTS view (`radio/views.py:TTSSynthesizeView`)
+
+- Auth: `IsAuthenticated`.
+- Request body: `TTSSynthesizeRequestSerializer` — `text` (required,
+  capped by `TTS_MAX_TEXT_CHARS`, default 500) and optional `voice`.
+- Response data: `{mime_type, duration_ms, audio_base64}`.
+- Side effects: none. All engine dispatch, circuit-breaker behaviour,
+  and fallback handling live in `alerts.tts.synthesize` and are reused
+  unchanged.
+
+### New files / changes
+
+| File | Purpose |
+|---|---|
+| `radio/models.py:213-262` | `EmergencyPriority` TextChoices + `EmergencyBroadcast` model |
+| `radio/migrations/0005_emergencybroadcast.py` | Creates table and indexes |
+| `radio/serializers.py:148-219` | `EmergencyBroadcastSerializer`, `EmergencyBroadcastCreateSerializer`, `EmergencyBroadcastUpdateSerializer`, `TTSSynthesizeRequestSerializer` |
+| `radio/services.py:405-518` | `get_current_emergency`, `list_emergency_history`, `create_emergency_broadcast`, `update_emergency_broadcast`, `delete_emergency_broadcast` |
+| `radio/views.py` | `EmergencyCurrentView`, `EmergencyHistoryView`, `EmergencyCreateView`, `EmergencyDetailView`, `TTSSynthesizeView` + envelope schemas |
+| `radio/urls.py:50-69` | Five new routes |
+| `radio/admin.py:84-94` | `EmergencyBroadcastAdmin` |
+| `radio/tests/test_emergency.py` | 17 tests (services + endpoints, auth, validation) |
+| `radio/tests/test_tts_view.py` | 4 tests (auth, validation, success path with stubbed TTS) |
+| `docs/architecture/radio/08_future_expansion.md` | P5 rows marked shipped |
+| `prompts/p5-implementation.md` | Implementation report (this phase) |
+
+### Verification
+
+- `python manage.py makemigrations --check --dry-run` → No changes
+  detected.
+- `ruff check .` — all checks passed.
+- `ruff format .` — clean.
+- `mypy radio/` — no issues.
+- `bandit -c pyproject.toml -r radio/` — 0 issues.
+- `pytest radio/ alerts/ podcasts/` — 289 passed, 0 regressions.

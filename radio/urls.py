@@ -46,4 +46,29 @@ urlpatterns = [
         views.ListeningHistoryRecentView.as_view(),
         name="radio-history-recent",
     ),
+    path(
+        "radio/emergency/current/",
+        views.EmergencyCurrentView.as_view(),
+        name="radio-emergency-current",
+    ),
+    path(
+        "radio/emergency/history/",
+        views.EmergencyHistoryView.as_view(),
+        name="radio-emergency-history",
+    ),
+    path(
+        "radio/emergency/",
+        views.EmergencyCreateView.as_view(),
+        name="radio-emergency-create",
+    ),
+    path(
+        "radio/emergency/<int:pk>/",
+        views.EmergencyDetailView.as_view(),
+        name="radio-emergency-detail",
+    ),
+    path(
+        "radio/tts/",
+        views.TTSSynthesizeView.as_view(),
+        name="radio-tts",
+    ),
 ]

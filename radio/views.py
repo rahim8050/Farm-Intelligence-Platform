@@ -18,7 +18,7 @@ from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.exceptions import NotFound
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -33,20 +33,35 @@ from config.api.pagination import (
     pagination_parameters,
 )
 from config.api.responses import success_response
-from radio.models import Favorite, ListeningHistory, Provider, Station
+from radio.models import (
+    EmergencyBroadcast,
+    Favorite,
+    ListeningHistory,
+    Provider,
+    Station,
+)
 from radio.serializers import (
+    EmergencyBroadcastCreateSerializer,
+    EmergencyBroadcastSerializer,
+    EmergencyBroadcastUpdateSerializer,
     FavoriteCreateSerializer,
     FavoriteSerializer,
     ListeningHistorySerializer,
     ProviderSerializer,
     StationDetailSerializer,
     StationSerializer,
+    TTSSynthesizeRequestSerializer,
 )
 from radio.services import (
     add_favorite,
+    create_emergency_broadcast,
+    delete_emergency_broadcast,
+    get_current_emergency,
+    list_emergency_history,
     record_listening_session,
     remove_favorite,
     summarize_health,
+    update_emergency_broadcast,
 )
 
 StationListEnvelope = inline_serializer(
@@ -137,6 +152,27 @@ ListeningHistoryListEnvelope = paginated_envelope_serializer(
 radio_error_envelope = error_envelope_serializer("RadioErrorResponse")
 radio_null_envelope = success_envelope_serializer(
     "RadioNullEnvelope", data=serializers.JSONField(allow_null=True)
+)
+EmergencyBroadcastEnvelope = success_envelope_serializer(
+    "RadioEmergencyBroadcastEnvelope",
+    data=EmergencyBroadcastSerializer(),
+)
+EmergencyBroadcastListEnvelope = success_envelope_serializer(
+    "RadioEmergencyBroadcastListEnvelope",
+    data=EmergencyBroadcastSerializer(many=True),
+)
+TTSSynthesizeData = inline_serializer(
+    name="RadioTTSSynthesizeData",
+    fields={
+        "mime_type": serializers.CharField(),
+        "duration_ms": serializers.IntegerField(),
+        "audio_base64": serializers.CharField(
+            help_text="Base64-encoded audio bytes."
+        ),
+    },
+)
+TTSSynthesizeEnvelope = success_envelope_serializer(
+    "RadioTTSSynthesizeEnvelope", data=TTSSynthesizeData
 )
 
 
@@ -642,4 +678,274 @@ class ListeningHistoryRecentView(APIView):
             message="Recent history retrieved",
             page_size=limit,
             max_page_size=limit,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (P5): Emergency broadcasts
+# ---------------------------------------------------------------------------
+
+
+class EmergencyCurrentView(APIView):
+    """Return the currently active emergency broadcast, if any.
+
+    "Active" means ``is_active=True`` and the current time falls inside
+    ``[starts_at, ends_at]``. The endpoint returns the highest-priority
+    broadcast (critical > high > medium > low), then the most recently
+    started. Returns ``data: null`` when no broadcast is active.
+
+    Auth: Public
+    Throttle: None
+    Response: envelope with ``data`` = :class:`EmergencyBroadcastSerializer`
+    or ``null``.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        responses={200: EmergencyBroadcastEnvelope},
+        summary="Current emergency broadcast",
+        description=(
+            "Returns the highest-priority active emergency broadcast, "
+            "or `data: null` when no broadcast is currently active."
+        ),
+        operation_id="v1_radio_emergency_current",
+    )
+    def get(self, request: Request) -> Response:
+        """Return the active emergency broadcast (or null)."""
+        broadcast = get_current_emergency()
+        payload = (
+            EmergencyBroadcastSerializer(broadcast).data
+            if broadcast is not None
+            else None
+        )
+        return success_response(payload, message="Current emergency broadcast")
+
+
+class EmergencyHistoryView(APIView):
+    """Return a paginated history of emergency broadcasts, newest first.
+
+    Auth: Public
+    Throttle: None
+    Query params: ``limit`` (1..200, default 50), ``offset`` (>=0,
+    default 0).
+    Response: envelope with ``data`` = list of
+    :class:`EmergencyBroadcastSerializer`.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        responses={200: EmergencyBroadcastListEnvelope},
+        summary="Emergency broadcast history",
+        description=(
+            "Returns emergency broadcasts ordered by `starts_at` "
+            "descending. Supports `limit` (1..200, default 50) and "
+            "`offset` (>=0, default 0) query parameters."
+        ),
+        operation_id="v1_radio_emergency_history",
+    )
+    def get(self, request: Request) -> Response:
+        """Return the emergency-broadcast history page."""
+        try:
+            limit = int(request.query_params.get("limit", "50"))
+            offset = int(request.query_params.get("offset", "0"))
+        except (TypeError, ValueError):
+            return success_response(
+                data=None,
+                message="limit and offset must be integers",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if limit < 1 or limit > 200:
+            return success_response(
+                data=None,
+                message="limit must be between 1 and 200",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if offset < 0:
+            return success_response(
+                data=None,
+                message="offset must be >= 0",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        rows = list_emergency_history(limit=limit, offset=offset)
+        return success_response(
+            EmergencyBroadcastSerializer(rows, many=True).data,
+            message="Emergency history retrieved",
+        )
+
+
+@extend_schema(
+    auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+)
+class EmergencyCreateView(APIView):
+    """Create a new emergency broadcast (admin only).
+
+    Auth: IsAdminUser
+    Throttle: None
+    Request body: :class:`EmergencyBroadcastCreateSerializer`
+    Response data: :class:`EmergencyBroadcastSerializer`.
+    Side effects: inserts a new ``EmergencyBroadcast`` row.
+    """
+
+    permission_classes = [IsAdminUser]
+
+    @extend_schema(
+        request=EmergencyBroadcastCreateSerializer,
+        responses={
+            201: EmergencyBroadcastEnvelope,
+            400: radio_error_envelope,
+            401: radio_error_envelope,
+            403: radio_error_envelope,
+        },
+        summary="Create an emergency broadcast (admin)",
+        description=(
+            "Create a new emergency broadcast. The creator is recorded "
+            "as `created_by` for audit."
+        ),
+        operation_id="v1_radio_emergency_create",
+    )
+    def post(self, request: Request) -> Response:
+        """Validate input and create an ``EmergencyBroadcast`` row."""
+        serializer = EmergencyBroadcastCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        broadcast = create_emergency_broadcast(
+            created_by=getattr(request, "user", None),
+            **serializer.validated_data,
+        )
+        return success_response(
+            EmergencyBroadcastSerializer(broadcast).data,
+            message="Emergency broadcast created",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+
+@extend_schema(
+    auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+)
+class EmergencyDetailView(APIView):
+    """Update or delete a single emergency broadcast (admin only).
+
+    Auth: IsAdminUser
+    Throttle: None
+    PATCH: :class:`EmergencyBroadcastUpdateSerializer`
+    DELETE: idempotent — 200 even if the row is already gone.
+    Response data: :class:`EmergencyBroadcastSerializer` (on PATCH).
+    Side effects: updates or deletes one ``EmergencyBroadcast`` row.
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def _get_object(self, pk: int) -> EmergencyBroadcast:
+        broadcast = EmergencyBroadcast.objects.filter(pk=pk).first()
+        if broadcast is None:
+            raise NotFound("Emergency broadcast not found")
+        return broadcast
+
+    @extend_schema(
+        request=EmergencyBroadcastUpdateSerializer,
+        responses={
+            200: EmergencyBroadcastEnvelope,
+            400: radio_error_envelope,
+            401: radio_error_envelope,
+            403: radio_error_envelope,
+            404: radio_error_envelope,
+        },
+        summary="Update an emergency broadcast (admin)",
+        operation_id="v1_radio_emergency_update",
+    )
+    def patch(self, request: Request, pk: int) -> Response:
+        """Apply a partial update to one ``EmergencyBroadcast`` row."""
+        broadcast = self._get_object(pk)
+        serializer = EmergencyBroadcastUpdateSerializer(
+            broadcast, data=request.data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        updated = update_emergency_broadcast(
+            broadcast, fields=serializer.validated_data
+        )
+        return success_response(
+            EmergencyBroadcastSerializer(updated).data,
+            message="Emergency broadcast updated",
+        )
+
+    @extend_schema(
+        responses={
+            200: radio_null_envelope,
+            401: radio_error_envelope,
+            403: radio_error_envelope,
+        },
+        summary="Delete an emergency broadcast (admin)",
+        description="Idempotent: returns 200 whether or not the row existed.",
+        operation_id="v1_radio_emergency_delete",
+    )
+    def delete(self, request: Request, pk: int) -> Response:
+        """Delete one ``EmergencyBroadcast`` row. Idempotent."""
+        broadcast = EmergencyBroadcast.objects.filter(pk=pk).first()
+        if broadcast is not None:
+            delete_emergency_broadcast(broadcast)
+        return success_response(None, message="Emergency broadcast removed")
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (P5): TTS endpoint (thin radio-side wrapper)
+# ---------------------------------------------------------------------------
+
+
+@extend_schema(
+    auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+)
+class TTSSynthesizeView(APIView):
+    """Synthesise text into audio using the project's TTS service.
+
+    The endpoint is a thin radio-side wrapper around
+    ``alerts.tts.synthesize`` — the actual TTS engines, the circuit
+    breaker, and the per-engine executor pool all live in the
+    ``alerts`` app and are reused unchanged.
+
+    Auth: IsAuthenticated
+    Throttle: None
+    Request body: :class:`TTSSynthesizeRequestSerializer`
+    (``{"text": "...", "voice": "..."}``).
+    Response data: ``{mime_type, duration_ms, audio_base64}`` — the
+    audio bytes are base64-encoded so they fit the JSON envelope.
+    Side effects: none.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=TTSSynthesizeRequestSerializer,
+        responses={
+            200: TTSSynthesizeEnvelope,
+            400: radio_error_envelope,
+            401: radio_error_envelope,
+        },
+        summary="Synthesise text to audio",
+        description=(
+            "Synthesises the provided text into audio using the "
+            "configured TTS engine (see `settings.TTS_ENGINE`). The "
+            "audio bytes are returned base64-encoded under "
+            "`data.audio_base64`.",
+        ),
+        operation_id="v1_radio_tts_synthesize",
+    )
+    def post(self, request: Request) -> Response:
+        """Validate input, synthesise, return envelope with base64 audio."""
+        from alerts.tts import synthesize as tts_synthesize
+
+        serializer = TTSSynthesizeRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        text = serializer.validated_data["text"]
+        result = tts_synthesize(text)
+        import base64
+
+        encoded = base64.b64encode(result.audio_bytes).decode("ascii")
+        return success_response(
+            {
+                "mime_type": result.mime_type,
+                "duration_ms": result.duration_ms,
+                "audio_base64": encoded,
+            },
+            message="TTS synthesis complete",
         )

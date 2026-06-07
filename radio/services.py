@@ -25,6 +25,7 @@ from django.http import HttpRequest
 from django.utils import timezone
 
 from radio.models import (
+    EmergencyBroadcast,
     Favorite,
     ListeningHistory,
     Station,
@@ -395,3 +396,128 @@ def list_history_for_user(
     if limit is not None:
         qs = qs[:limit]
     return list(qs)
+
+
+# ---------------------------------------------------------------------------
+# Emergency broadcasts (Phase 5 / P5)
+# ---------------------------------------------------------------------------
+
+
+def get_current_emergency(
+    now: datetime | None = None,
+) -> EmergencyBroadcast | None:
+    """Return the most severe active :class:`EmergencyBroadcast`.
+
+    "Active" means ``is_active=True`` and the current time falls inside
+    the ``[starts_at, ends_at]`` window. The function returns the
+    highest-priority broadcast (critical > high > medium > low), then
+    the most recently started.
+    """
+    current = now or timezone.now()
+    priority_rank = {
+        "critical": 0,
+        "high": 1,
+        "medium": 2,
+        "low": 3,
+    }
+    qs = EmergencyBroadcast.objects.filter(
+        is_active=True,
+        starts_at__lte=current,
+        ends_at__gte=current,
+    )
+    items = list(qs)
+    if not items:
+        return None
+    items.sort(
+        key=lambda b: (
+            priority_rank.get(b.priority, 99),
+            -b.starts_at.timestamp(),
+        )
+    )
+    return items[0]
+
+
+def list_emergency_history(
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[EmergencyBroadcast]:
+    """Return a page of :class:`EmergencyBroadcast` rows, newest first.
+
+    Args:
+        limit: Maximum number of rows to return (1..200, default 50).
+        offset: Number of rows to skip from the top of the list.
+    """
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    return list(
+        EmergencyBroadcast.objects.order_by("-starts_at", "-id")[
+            offset : offset + limit
+        ]
+    )
+
+
+def create_emergency_broadcast(
+    *,
+    title: str,
+    message: str,
+    priority: str,
+    starts_at: datetime,
+    ends_at: datetime,
+    is_active: bool = True,
+    created_by: AbstractBaseUser | AnonymousUser | Any | None = None,
+) -> EmergencyBroadcast:
+    """Create a new :class:`EmergencyBroadcast` row.
+
+    Side effects: inserts a new row and emits a structured log line.
+    """
+    broadcast = EmergencyBroadcast.objects.create(
+        title=title,
+        message=message,
+        priority=priority,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        is_active=is_active,
+        created_by=created_by
+        if getattr(created_by, "is_authenticated", False)
+        else None,
+    )
+    logger.info(
+        "radio_emergency_broadcast_created id=%s priority=%s "
+        "starts_at=%s ends_at=%s",
+        broadcast.id,
+        broadcast.priority,
+        broadcast.starts_at.isoformat(),
+        broadcast.ends_at.isoformat(),
+    )
+    return broadcast
+
+
+def update_emergency_broadcast(
+    broadcast: EmergencyBroadcast,
+    *,
+    fields: dict[str, Any],
+) -> EmergencyBroadcast:
+    """Apply ``fields`` to ``broadcast`` and persist the change.
+
+    Only attributes that exist on the model are applied. Side effects:
+    one row update; no cascade.
+    """
+    editable = {
+        "title",
+        "message",
+        "priority",
+        "starts_at",
+        "ends_at",
+        "is_active",
+    }
+    for key, value in fields.items():
+        if key in editable:
+            setattr(broadcast, key, value)
+    broadcast.save()
+    return broadcast
+
+
+def delete_emergency_broadcast(broadcast: EmergencyBroadcast) -> None:
+    """Delete an :class:`EmergencyBroadcast` row. Idempotent."""
+    EmergencyBroadcast.objects.filter(pk=broadcast.pk).delete()

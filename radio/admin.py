@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from radio.models import (
+    EmergencyBroadcast,
     Favorite,
     ListeningHistory,
     Provider,
@@ -80,3 +81,19 @@ class ListeningHistoryAdmin(admin.ModelAdmin):
         "ip_address",
         "user_agent",
     ]
+
+
+@admin.register(EmergencyBroadcast)
+class EmergencyBroadcastAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "title",
+        "priority",
+        "is_active",
+        "starts_at",
+        "ends_at",
+        "created_by",
+    ]
+    list_filter = ["priority", "is_active"]
+    search_fields = ["title", "message"]
+    readonly_fields = ["created_at", "updated_at"]

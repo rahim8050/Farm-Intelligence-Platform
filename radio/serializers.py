@@ -2,7 +2,13 @@ from typing import Any
 
 from rest_framework import serializers
 
-from radio.models import Favorite, ListeningHistory, Provider, Station
+from radio.models import (
+    EmergencyBroadcast,
+    Favorite,
+    ListeningHistory,
+    Provider,
+    Station,
+)
 
 
 def _upgrade_to_https(value: str) -> str:
@@ -143,3 +149,103 @@ class ListeningHistorySerializer(serializers.ModelSerializer):
             "user_agent",
         ]
         read_only_fields = fields
+
+
+class EmergencyBroadcastSerializer(serializers.ModelSerializer):
+    """Output serializer for an :class:`EmergencyBroadcast` row."""
+
+    class Meta:
+        model = EmergencyBroadcast
+        fields = [
+            "id",
+            "title",
+            "message",
+            "priority",
+            "starts_at",
+            "ends_at",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class EmergencyBroadcastCreateSerializer(serializers.ModelSerializer):
+    """Input serializer for ``POST /api/v1/radio/emergency/`` (admin only)."""
+
+    class Meta:
+        model = EmergencyBroadcast
+        fields = [
+            "title",
+            "message",
+            "priority",
+            "starts_at",
+            "ends_at",
+            "is_active",
+        ]
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        starts_at = attrs.get("starts_at")
+        ends_at = attrs.get("ends_at")
+        if starts_at and ends_at and ends_at <= starts_at:
+            raise serializers.ValidationError(
+                {"ends_at": "ends_at must be after starts_at."}
+            )
+        return attrs
+
+
+class EmergencyBroadcastUpdateSerializer(serializers.ModelSerializer):
+    """Input serializer for ``PATCH /api/v1/radio/emergency/<id>/``."""
+
+    class Meta:
+        model = EmergencyBroadcast
+        fields = [
+            "title",
+            "message",
+            "priority",
+            "starts_at",
+            "ends_at",
+            "is_active",
+        ]
+        extra_kwargs = {
+            "title": {"required": False},
+            "message": {"required": False},
+            "priority": {"required": False},
+            "starts_at": {"required": False},
+            "ends_at": {"required": False},
+            "is_active": {"required": False},
+        }
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        starts_at = attrs.get(
+            "starts_at", getattr(self.instance, "starts_at", None)
+        )
+        ends_at = attrs.get("ends_at", getattr(self.instance, "ends_at", None))
+        if starts_at and ends_at and ends_at <= starts_at:
+            raise serializers.ValidationError(
+                {"ends_at": "ends_at must be after starts_at."}
+            )
+        return attrs
+
+
+class TTSSynthesizeRequestSerializer(serializers.Serializer):
+    """Input serializer for ``POST /api/v1/radio/tts/``.
+
+    The text length is capped by the server-side ``TTS_MAX_TEXT_CHARS``
+    setting (default 500).
+    """
+
+    text = serializers.CharField()
+    voice = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_text(self, value: str) -> str:
+        from django.conf import settings as django_settings
+
+        cap = int(getattr(django_settings, "TTS_MAX_TEXT_CHARS", 500))
+        if not value.strip():
+            raise serializers.ValidationError("text must not be empty.")
+        if len(value) > cap:
+            raise serializers.ValidationError(
+                f"text exceeds max length of {cap} characters."
+            )
+        return value

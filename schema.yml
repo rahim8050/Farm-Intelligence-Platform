@@ -3087,6 +3087,185 @@ paths:
               schema:
                 $ref: '#/components/schemas/PodcastsErrorResponse'
           description: ''
+  /api/v1/radio/emergency/:
+    post:
+      operationId: v1_radio_emergency_create
+      description: Create a new emergency broadcast. The creator is recorded as `created_by`
+        for audit.
+      summary: Create an emergency broadcast (admin)
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmergencyBroadcastCreate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EmergencyBroadcastCreate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/EmergencyBroadcastCreate'
+        required: true
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioEmergencyBroadcastEnvelope'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+  /api/v1/radio/emergency/{id}/:
+    patch:
+      operationId: v1_radio_emergency_update
+      description: Apply a partial update to one ``EmergencyBroadcast`` row.
+      summary: Update an emergency broadcast (admin)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedEmergencyBroadcastUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedEmergencyBroadcastUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedEmergencyBroadcastUpdate'
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioEmergencyBroadcastEnvelope'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+    delete:
+      operationId: v1_radio_emergency_delete
+      description: 'Idempotent: returns 200 whether or not the row existed.'
+      summary: Delete an emergency broadcast (admin)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioNullEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+  /api/v1/radio/emergency/current/:
+    get:
+      operationId: v1_radio_emergency_current
+      description: 'Returns the highest-priority active emergency broadcast, or `data:
+        null` when no broadcast is currently active.'
+      summary: Current emergency broadcast
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioEmergencyBroadcastEnvelope'
+          description: ''
+  /api/v1/radio/emergency/history/:
+    get:
+      operationId: v1_radio_emergency_history
+      description: Returns emergency broadcasts ordered by `starts_at` descending.
+        Supports `limit` (1..200, default 50) and `offset` (>=0, default 0) query
+        parameters.
+      summary: Emergency broadcast history
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioEmergencyBroadcastListEnvelope'
+          description: ''
   /api/v1/radio/favorites/:
     get:
       operationId: v1_radio_favorites_list
@@ -3369,6 +3548,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StreamUrlEnvelope'
+          description: ''
+  /api/v1/radio/tts/:
+    post:
+      operationId: v1_radio_tts_synthesize
+      description:
+      - Synthesises the provided text into audio using the configured TTS engine (see
+        `settings.TTS_ENGINE`). The audio bytes are returned base64-encoded under
+        `data.audio_base64`.
+      summary: Synthesise text to audio
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TTSSynthesizeRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TTSSynthesizeRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TTSSynthesizeRequest'
+        required: true
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioTTSSynthesizeEnvelope'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
           description: ''
   /api/v1/weather/current/:
     get:
@@ -4611,6 +4834,97 @@ components:
       - t_max_c
       - t_min_c
       - wind_speed_max_mps
+    EmergencyBroadcast:
+      type: object
+      description: Output serializer for an :class:`EmergencyBroadcast` row.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        title:
+          type: string
+          readOnly: true
+        message:
+          type: string
+          readOnly: true
+        priority:
+          enum:
+          - low
+          - medium
+          - high
+          - critical
+          type: string
+          description: |-
+            * `low` - Low
+            * `medium` - Medium
+            * `high` - High
+            * `critical` - Critical
+          x-spec-enum-id: e88e28221543c897
+          readOnly: true
+        starts_at:
+          type: string
+          format: date-time
+          readOnly: true
+        ends_at:
+          type: string
+          format: date-time
+          readOnly: true
+        is_active:
+          type: boolean
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - ends_at
+      - id
+      - is_active
+      - message
+      - priority
+      - starts_at
+      - title
+      - updated_at
+    EmergencyBroadcastCreate:
+      type: object
+      description: Input serializer for ``POST /api/v1/radio/emergency/`` (admin only).
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        message:
+          type: string
+        priority:
+          enum:
+          - low
+          - medium
+          - high
+          - critical
+          type: string
+          description: |-
+            * `low` - Low
+            * `medium` - Medium
+            * `high` - High
+            * `critical` - Critical
+          x-spec-enum-id: e88e28221543c897
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+      required:
+      - ends_at
+      - message
+      - starts_at
+      - title
     Farm:
       type: object
       properties:
@@ -6588,6 +6902,36 @@ components:
           type: string
           format: date-time
           readOnly: true
+    PatchedEmergencyBroadcastUpdate:
+      type: object
+      description: Input serializer for ``PATCH /api/v1/radio/emergency/<id>/``.
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        message:
+          type: string
+        priority:
+          enum:
+          - low
+          - medium
+          - high
+          - critical
+          type: string
+          description: |-
+            * `low` - Low
+            * `medium` - Medium
+            * `high` - High
+            * `critical` - Critical
+          x-spec-enum-id: e88e28221543c897
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
     PatchedFarm:
       type: object
       properties:
@@ -6976,6 +7320,48 @@ components:
       - errors
       - message
       - status
+    RadioEmergencyBroadcastEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/EmergencyBroadcast'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
+    RadioEmergencyBroadcastListEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/EmergencyBroadcast'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
     RadioErrorResponse:
       type: object
       properties:
@@ -7134,6 +7520,40 @@ components:
       properties:
         data:
           nullable: true
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
+    RadioTTSSynthesizeData:
+      type: object
+      properties:
+        mime_type:
+          type: string
+        duration_ms:
+          type: integer
+        audio_base64:
+          type: string
+          description: Base64-encoded audio bytes.
+      required:
+      - audio_base64
+      - duration_ms
+      - mime_type
+    RadioTTSSynthesizeEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/RadioTTSSynthesizeData'
         status:
           type: integer
         message:
@@ -7352,6 +7772,20 @@ components:
       - errors
       - message
       - status
+    TTSSynthesizeRequest:
+      type: object
+      description: |-
+        Input serializer for ``POST /api/v1/radio/tts/``.
+
+        The text length is capped by the server-side ``TTS_MAX_TEXT_CHARS``
+        setting (default 500).
+      properties:
+        text:
+          type: string
+        voice:
+          type: string
+      required:
+      - text
     TokenRefresh:
       type: object
       properties:
