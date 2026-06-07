@@ -3524,6 +3524,38 @@ paths:
               schema:
                 $ref: '#/components/schemas/StationDetailEnvelope'
           description: ''
+  /api/v1/radio/stations/{station_id}/health/:
+    get:
+      operationId: v1_radio_station_health_history
+      description: Returns the most recent health-check rows for a single station,
+        newest first. `limit` is 1..100, default 20. Returns 404 if the station does
+        not exist.
+      summary: Per-station health-check history
+      parameters:
+      - in: path
+        name: station_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioStationHealthHistoryEnvelope'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
   /api/v1/radio/stations/{station_id}/stream/:
     get:
       operationId: v1_radio_stations_stream
@@ -3552,10 +3584,9 @@ paths:
   /api/v1/radio/tts/:
     post:
       operationId: v1_radio_tts_synthesize
-      description:
-      - Synthesises the provided text into audio using the configured TTS engine (see
-        `settings.TTS_ENGINE`). The audio bytes are returned base64-encoded under
-        `data.audio_base64`.
+      description: Synthesises the provided text into audio using the configured TTS
+        engine (see `settings.TTS_ENGINE`). The audio bytes are returned base64-encoded
+        under `data.audio_base64`.
       summary: Synthesise text to audio
       tags:
       - v1
@@ -7524,6 +7555,54 @@ components:
           type: integer
         message:
           type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
+    RadioStationHealthCheckData:
+      type: object
+      properties:
+        station_id:
+          type: string
+        is_reachable:
+          type: boolean
+        checked_at:
+          type: string
+          format: date-time
+        status_code:
+          type: integer
+          nullable: true
+        response_time_ms:
+          type: integer
+          nullable: true
+        error_message:
+          type: string
+      required:
+      - checked_at
+      - error_message
+      - is_reachable
+      - response_time_ms
+      - station_id
+      - status_code
+    RadioStationHealthHistoryEnvelope:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RadioStationHealthCheckData'
+          description: List of health-check rows, newest first.
         errors:
           nullable: true
         request_id:

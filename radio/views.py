@@ -33,12 +33,14 @@ from config.api.pagination import (
     pagination_parameters,
 )
 from config.api.responses import success_response
+from radio.metrics import timed
 from radio.models import (
     EmergencyBroadcast,
     Favorite,
     ListeningHistory,
     Provider,
     Station,
+    StationHealthCheck,
 )
 from radio.serializers import (
     EmergencyBroadcastCreateSerializer,
@@ -57,6 +59,7 @@ from radio.services import (
     create_emergency_broadcast,
     delete_emergency_broadcast,
     get_current_emergency,
+    list_active_stations_cached,
     list_emergency_history,
     record_listening_session,
     remove_favorite,
@@ -174,6 +177,30 @@ TTSSynthesizeData = inline_serializer(
 TTSSynthesizeEnvelope = success_envelope_serializer(
     "RadioTTSSynthesizeEnvelope", data=TTSSynthesizeData
 )
+StationHealthCheckData = inline_serializer(
+    name="RadioStationHealthCheckData",
+    fields={
+        "station_id": serializers.CharField(),
+        "is_reachable": serializers.BooleanField(),
+        "checked_at": serializers.DateTimeField(),
+        "status_code": serializers.IntegerField(allow_null=True),
+        "response_time_ms": serializers.IntegerField(allow_null=True),
+        "error_message": serializers.CharField(allow_blank=True),
+    },
+)
+StationHealthHistoryEnvelope = inline_serializer(
+    name="RadioStationHealthHistoryEnvelope",
+    fields={
+        "status": serializers.IntegerField(),
+        "message": serializers.CharField(),
+        "data": serializers.ListField(
+            child=StationHealthCheckData,
+            help_text="List of health-check rows, newest first.",
+        ),
+        "errors": serializers.JSONField(allow_null=True),
+        "request_id": serializers.CharField(allow_null=True),
+    },
+)
 
 
 class StationListView(APIView):
@@ -192,17 +219,39 @@ class StationListView(APIView):
         description="Returns all active radio stations.",
         operation_id="v1_radio_stations_list",
     )
+    @timed("stations.list")
     def get(self, request: Request) -> Response:
         """Get all active radio stations.
+
+        The list is served from the per-process cache for
+        ``STATION_LIST_CACHE_TTL_SECONDS`` (default 60s). The cache
+        is bypassed when ``?genre=`` or ``?country=`` filters are
+        passed, because the cache key only covers the unfiltered
+        list.
+
+        Query params:
+            genre: Optional exact-match filter on ``Station.genre``.
+            country: Optional exact-match filter on
+                ``Station.country``.
 
         Outputs:
             - status: 0
             - message: "Stations retrieved successfully"
             - data: list of station objects
         """
-        stations = Station.objects.filter(is_active=True).select_related(
-            "provider"
-        )
+        genre = request.query_params.get("genre")
+        country = request.query_params.get("country")
+        if genre or country:
+            qs = Station.objects.filter(is_active=True).select_related(
+                "provider"
+            )
+            if genre:
+                qs = qs.filter(genre=genre)
+            if country:
+                qs = qs.filter(country=country)
+            stations = list(qs.order_by("name"))
+        else:
+            stations = list_active_stations_cached()
         return success_response(
             StationSerializer(stations, many=True).data,
             message="Stations retrieved successfully",
@@ -225,6 +274,7 @@ class StationDetailView(APIView):
         description="Returns details for a specific radio station.",
         operation_id="v1_radio_stations_retrieve",
     )
+    @timed("stations.detail")
     def get(self, request: Request, station_id: str) -> Response:
         """Get station by ID.
 
@@ -282,6 +332,7 @@ class StationStreamView(APIView):
         ),
         operation_id="v1_radio_stations_stream",
     )
+    @timed("stations.stream")
     def get(self, request: Request, station_id: str) -> Response:
         """Get stream URL for a station.
 
@@ -364,6 +415,7 @@ class RadioHealthView(APIView):
         ),
         operation_id="v1_radio_health",
     )
+    @timed("health")
     def get(self, request: Request) -> Response:
         """Return a lightweight health snapshot for the radio service.
 
@@ -374,6 +426,76 @@ class RadioHealthView(APIView):
         """
         data = summarize_health()
         return success_response(data, message="Radio health OK")
+
+
+class StationHealthHistoryView(APIView):
+    """Return the most recent health-check rows for one station.
+
+    The endpoint surfaces the audit trail behind
+    ``Station.is_available``: clients can see whether a station has
+    been flaky and what its most recent probe outcomes look like.
+
+    Auth: Public
+    Throttle: None
+    Path params: ``station_id`` (str).
+    Query params: ``limit`` (1..100, default 20).
+    Response: envelope with ``data`` = list of health-check rows,
+    newest first.
+
+    Side effects: none.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        responses={
+            200: StationHealthHistoryEnvelope,
+            404: radio_error_envelope,
+        },
+        summary="Per-station health-check history",
+        description=(
+            "Returns the most recent health-check rows for a single "
+            "station, newest first. `limit` is 1..100, default 20. "
+            "Returns 404 if the station does not exist."
+        ),
+        operation_id="v1_radio_station_health_history",
+    )
+    @timed("stations.health_history")
+    def get(self, request: Request, station_id: str) -> Response:
+        """Return the recent health-check audit trail for a station."""
+        if not Station.objects.filter(id=station_id).exists():
+            raise NotFound("Station not found")
+        try:
+            limit = int(request.query_params.get("limit", "20"))
+        except (TypeError, ValueError):
+            return success_response(
+                data=None,
+                message="limit must be an integer",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if limit < 1 or limit > 100:
+            return success_response(
+                data=None,
+                message="limit must be between 1 and 100",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        rows = list(
+            StationHealthCheck.objects.filter(station_id=station_id).order_by(
+                "-checked_at"
+            )[:limit]
+        )
+        payload = [
+            {
+                "station_id": r.station_id,
+                "is_reachable": r.is_reachable,
+                "checked_at": r.checked_at,
+                "status_code": r.status_code,
+                "response_time_ms": r.response_time_ms,
+                "error_message": r.error_message or "",
+            }
+            for r in rows
+        ]
+        return success_response(payload, message="Station health history")
 
 
 class ProviderListView(APIView):
@@ -711,6 +833,7 @@ class EmergencyCurrentView(APIView):
         ),
         operation_id="v1_radio_emergency_current",
     )
+    @timed("emergency.current")
     def get(self, request: Request) -> Response:
         """Return the active emergency broadcast (or null)."""
         broadcast = get_current_emergency()
@@ -745,6 +868,7 @@ class EmergencyHistoryView(APIView):
         ),
         operation_id="v1_radio_emergency_history",
     )
+    @timed("emergency.history")
     def get(self, request: Request) -> Response:
         """Return the emergency-broadcast history page."""
         try:
@@ -926,10 +1050,11 @@ class TTSSynthesizeView(APIView):
             "Synthesises the provided text into audio using the "
             "configured TTS engine (see `settings.TTS_ENGINE`). The "
             "audio bytes are returned base64-encoded under "
-            "`data.audio_base64`.",
+            "`data.audio_base64`."
         ),
         operation_id="v1_radio_tts_synthesize",
     )
+    @timed("tts.synthesize")
     def post(self, request: Request) -> Response:
         """Validate input, synthesise, return envelope with base64 audio."""
         from alerts.tts import synthesize as tts_synthesize

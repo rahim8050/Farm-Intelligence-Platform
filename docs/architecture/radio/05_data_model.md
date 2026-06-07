@@ -106,11 +106,11 @@ class Station(models.Model):
 | Field | Type | Description | Status |
 |-------|------|-------------|--------|
 | `description` | text | Station description | ⏳ planned |
-| `genre` | string | Music genre | ⏳ planned |
-| `bitrate` | int | Stream bitrate in kbps | ⏳ planned |
-| `format` | string | Audio format (MP3, AAC, HLS) | ⏳ planned |
-| `logo_url` | string | Station artwork | ⏳ planned |
-| `website_url` | string | Station website | ⏳ planned |
+| `genre` | string | Music genre | ✅ shipped (on `Station`) |
+| `bitrate` | int | Stream bitrate in kbps | ✅ shipped (on `Station`) |
+| `format` | string | Audio format (MP3, AAC, HLS) | ✅ shipped (on `Station`) |
+| `logo_url` | string | Station artwork | ✅ shipped (on `Station`) |
+| `website_url` | string | Station website | ✅ shipped (on `Station`) |
 | `last_health_check_at` | datetime (nullable) | Timestamp of the most recent probe. `null` until first probe. | ✅ shipped 2026-06-03 |
 | `is_available` | bool (nullable) | Result of the last probe. `null` = never checked, `true` = reachable, `false` = unreachable. | ✅ shipped 2026-06-03 |
 

@@ -245,6 +245,38 @@ groups:
           summary: "Radio health check stale"
           description: "radio.health.check_all_stations has not run for > 15m."
 
+      - alert: RadioApiLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (endpoint, le) (
+              rate(radio_api_request_latency_seconds_bucket[5m])
+            )
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Radio API latency high (p95 > 500ms)"
+          description: |
+            p95 latency for radio endpoint {{ $labels.endpoint }} > 500ms
+            for 10m. Investigate slow queries, cache misses, or upstream
+            stream URL probes.
+
+      - alert: RadioApiErrorsHigh
+        expr: |
+          sum by (endpoint, status_code) (
+            rate(radio_api_request_errors_total[5m])
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Radio API error rate high ({{ $labels.status_code }})"
+          description: |
+            Radio endpoint {{ $labels.endpoint }} is returning
+            {{ $labels.status_code }} at > 0.1 req/s for 5m.
+
   - name: weather
     rules:
       - alert: WeatherProviderErrorRateHigh

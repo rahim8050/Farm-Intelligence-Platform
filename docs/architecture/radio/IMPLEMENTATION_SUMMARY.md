@@ -645,6 +645,84 @@ satisfied for radio/alerts/podcasts:
 | 4.1 | June 04, 2026 | Phase 4 (farm audio alerts) shipped: new top-level `alerts/` app, pluggable TTS (piper/espeak/sine/noop), `AudioAlertSubscription` + `AudioAlert` models, 5 alert types, 8 endpoints, WebSocket push via extended `ActivityConsumer`, REST polling fallback, NDVI-decline + low-NDVI-absolute periodic scans, admin manual broadcast. |
 | 4.2 | June 05, 2026 | P3-followup hardening: applied `prompts/p3followup.md` API and Data Lifecycle Standards. New `config/api/pagination.py` (page/page_size, max 100, envelope-aware). All user-owned collection endpoints (favorites, history, alerts, subscriptions) now paginated. Cross-user privacy tests added (`radio/tests/test_privacy.py`, `alerts/tests/test_privacy.py`). Idempotency and event-recording contracts documented; scalability review table added. |
 | 5.0 | June 07, 2026 | Phase 5 (P5) shipped: `EmergencyBroadcast` model + 4 endpoints (public read, admin write), thin radio-side TTS view that reuses `alerts.tts.synthesize`, 25 new tests, OpenAPI envelopes. `EmergencyBroadcast` has composite indexes on `(is_active, starts_at, ends_at)` and `(priority, -starts_at)`. TTS is a thin wrapper, not a parallel engine stack. See `prompts/p5-implementation.md`. |
+| 6.0 | June 07, 2026 | Phase 6 (operational hardening) shipped: `radio_api_request_latency_seconds` histogram + `radio_api_request_errors_total` counter (per endpoint, per method, per status), `@timed` decorator on the heavy endpoints, station-list cache (`radio:stations:all`, TTL 60s) invalidated by `Station`/`Provider` signals, structured `extra=` logging in services, `/radio/stations/?genre=&country=` filters, `/radio/stations/<id>/health/` per-station audit endpoint, Grafana dashboard `weather-apis-radio`, two new Prometheus alerts (`RadioApiLatencyHigh`, `RadioApiErrorsHigh`). 17 new tests. See `prompts/p6-operational-hardening.md`. |
+
+---
+
+## Phase 6 — Operational Hardening (Shipped 2026-06-07)
+
+Phase 6 lands the items from
+[`09_operational.md`](./09_operational.md) that were still on the
+"planned" list at the end of Phase 5: request-latency / error
+counters, station-list caching, structured logging, station filters,
+the per-station health-history endpoint, a Grafana dashboard, and
+two new Prometheus alerts.
+
+### New and changed files
+
+| File | Purpose |
+|---|---|
+| `radio/metrics.py` | New `radio_api_request_latency_seconds` histogram (labels: `endpoint`, `method`) and `radio_api_request_errors_total` counter (labels: `endpoint`, `method`, `status_code`); `observe_request()` helper and `@timed` decorator |
+| `radio/services.py` | New `list_active_stations_cached()`, `invalidate_station_list_cache()`, `STATION_LIST_CACHE_KEY`, `STATION_LIST_CACHE_TTL_SECONDS` (default 60s). Structured `extra=` logging added to favorites/listening-history/emergency event logs |
+| `radio/signals.py` | New file: `post_save` / `post_delete` handlers on `Station` and `Provider` that invalidate the station-list cache |
+| `radio/apps.py:RadioConfig.ready` | Wires `radio.signals` |
+| `radio/views.py` | `@timed` decorator applied to `stations.list`, `stations.detail`, `stations.stream`, `health`, `emergency.current`, `emergency.history`, `tts.synthesize`; `StationListView` now supports `?genre=` and `?country=`; new `StationHealthHistoryView` and envelope schema |
+| `radio/urls.py` | New route `radio/stations/<station_id>/health/` |
+| `radio/tests/test_operational.py` | 17 new tests (metrics, cache, filter, history, signal invalidation, decorator) |
+| `monitoring/prometheus/alerts.yml` | New alerts `RadioApiLatencyHigh` and `RadioApiErrorsHigh` under group `radio` |
+| `grafana/dashboards/weather-apis-radio.json` | New dashboard: 4 stat panels + 4 time-series panels (probe latency, API latency, request rate, error rate) |
+| `docs/architecture/radio/05_data_model.md` | Stale "planned" labels corrected for fields already shipped on `Station` |
+| `docs/architecture/radio/09_operational.md` | "Status" header updated; "shipped 2026-06-07" labels for the two request metrics |
+| `docs/architecture/radio/IMPLEMENTATION_SUMMARY.md` | This section + version row |
+| `prompts/p6-operational-hardening.md` | Implementation report (this phase) |
+
+### `radio_api_request_latency_seconds` / `radio_api_request_errors_total`
+
+- Latency: histogram with buckets
+  `[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5]` (seconds), labels
+  `endpoint` (e.g. `stations.list`, `stations.stream`,
+  `emergency.current`, `tts.synthesize`) and `method`.
+- Errors: counter, labels `endpoint`, `method`, `status_code`
+  (string, e.g. `404`, `503`). Only incremented for status ≥ 400.
+- Recording: the `@timed` decorator wraps each wired view method
+  and calls `observe_request()` after the view returns. The
+  decorator swallows nothing — failures inside the view are still
+  surfaced; the metric hooks are wrapped in `try/except` and only
+  log at debug on failure so a Prometheus client bug can never
+  break a request.
+- Per-endpoint costs: less than 1 µs per call (label lookup + one
+  histogram observation + at most one counter inc).
+
+### Station-list cache
+
+- Key: `radio:stations:all`. TTL: 60 s.
+- Invalidation: any `post_save` / `post_delete` on `Station` or
+  `Provider` (provider is part of the cached payload via
+  `select_related('provider')` and `provider_name` /
+  `provider_logo_url`).
+- Bypassed when `?genre=` or `?country=` query params are passed —
+  the cache key only covers the unfiltered list. The filter path
+  goes through the DB and uses the existing
+  `(genre, country, is_active)` indexes on `Station`.
+
+### `StationHealthHistoryView`
+
+- `GET /api/v1/radio/stations/<id>/health/?limit=20` (limit 1..100,
+  default 20).
+- Returns the recent audit trail behind `Station.is_available`.
+  Useful for client-side "is this station flaky?" heuristics and
+  for ops when triaging the `RadioStationsAllUnavailable` alert.
+
+### Verification
+
+- `ruff check .` — all checks passed.
+- `ruff format .` — clean.
+- `mypy radio/` — no issues in 36 source files.
+- `bandit -c pyproject.toml -r radio/` — 0 issues.
+- `pytest radio/` — 125 passed (17 new in `test_operational.py`,
+  108 pre-existing, 0 regressions).
+- `python manage.py spectacular --file schema.yml` regenerates the
+  OpenAPI document with the new `/health/` endpoint.
 
 ---
 

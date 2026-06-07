@@ -1,10 +1,9 @@
 # Operational Considerations
 
-> **Status**: ✅ IMPLEMENTED (Periodic station health checks, Prometheus metrics, envelope errors, retention purge tasks)
+> **Status**: ✅ IMPLEMENTED (Periodic station health checks, Prometheus metrics, envelope errors, retention purge tasks, request-latency / error counters, station-list cache, structured `extra=` logging, Grafana dashboard JSON)
 > **Phase 2 delivered**: 2026-06-03 — see `IMPLEMENTATION_SUMMARY.md` § Phase 2.
-> **Still out of scope**: structured `extra=` logging, Grafana dashboard JSON, station-list
-> caching layer, fallback-station redirect, `radio_api_request_latency` /
-> `radio_api_request_errors` counters.
+> **Phase 6 delivered**: 2026-06-07 — see `IMPLEMENTATION_SUMMARY.md` § Phase 6 (operational hardening).
+> **Still out of scope**: fallback-station redirect.
 
 ## Logging Strategy
 
@@ -52,8 +51,8 @@ def get_station_by_id(station_id: str):
 | `radio_station_health_successes_total` | Counter | Per-station successful health checks (label: `station_id`) | n/a |
 | `radio_station_health_latency_seconds` | Histogram | Probe round-trip time in seconds | n/a |
 | `radio_health_checks_last_run_timestamp` | Gauge | Unix timestamp of the last successful task run | now - value > 10m → stale |
-| `radio_api_request_latency` | Counter (planned) | API response time | > 500ms — **not implemented yet** |
-| `radio_api_request_errors` | Counter (planned) | Failed requests | > 10/min — **not implemented yet** |
+| `radio_api_request_latency_seconds` | Histogram (labels: `endpoint`, `method`) | API response time, p95 per endpoint | > 500ms — **shipped 2026-06-07** |
+| `radio_api_request_errors_total` | Counter (labels: `endpoint`, `method`, `status_code`) | Failed requests (status ≥ 400) | > 0.1/s for 5m — **shipped 2026-06-07** |
 
 ### Prometheus Integration
 

@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
+from django.core.cache import cache
 from django.db import close_old_connections
 from django.http import HttpRequest
 from django.utils import timezone
@@ -33,6 +34,9 @@ from radio.models import (
 )
 
 logger = logging.getLogger("radio")
+
+STATION_LIST_CACHE_KEY = "radio:stations:all"
+STATION_LIST_CACHE_TTL_SECONDS = 60
 
 
 class StationUnavailableError(Exception):
@@ -271,6 +275,34 @@ def summarize_health() -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
+def list_active_stations_cached() -> list[Station]:
+    """Return the list of active stations, cached for
+    ``STATION_LIST_CACHE_TTL_SECONDS`` seconds.
+
+    The station list is small and changes infrequently, but the
+    public ``/api/v1/radio/stations/`` endpoint is hit on every
+    page load by clients. Caching it cuts DB round-trips without
+    staleness concerns: the cache is invalidated on station
+    create/update via the ``station_saved`` signal, and it expires
+    after ``STATION_LIST_CACHE_TTL_SECONDS`` regardless.
+    """
+    cached = cache.get(STATION_LIST_CACHE_KEY)
+    if cached is not None:
+        return list(cached)
+    stations = list(
+        Station.objects.filter(is_active=True)
+        .select_related("provider")
+        .order_by("name")
+    )
+    cache.set(STATION_LIST_CACHE_KEY, stations, STATION_LIST_CACHE_TTL_SECONDS)
+    return stations
+
+
+def invalidate_station_list_cache() -> None:
+    """Drop the cached station list. Called from station signals."""
+    cache.delete(STATION_LIST_CACHE_KEY)
+
+
 def get_favorite(
     user: AbstractBaseUser | AnonymousUser | Any,
     station_id: str,
@@ -298,6 +330,11 @@ def add_favorite(
             "radio_favorite_added user_id=%s station_id=%s",
             getattr(user, "id", None),
             station.id,
+            extra={
+                "event": "radio_favorite_added",
+                "user_id": getattr(user, "id", None),
+                "station_id": station.id,
+            },
         )
     return favorite, created
 
@@ -319,6 +356,11 @@ def remove_favorite(
             "radio_favorite_removed user_id=%s station_id=%s",
             getattr(user, "id", None),
             station_id,
+            extra={
+                "event": "radio_favorite_removed",
+                "user_id": getattr(user, "id", None),
+                "station_id": station_id,
+            },
         )
     return bool(deleted)
 
@@ -380,6 +422,11 @@ def record_listening_session(
             "radio_listening_history_record_failed user_id=%s station_id=%s",
             user_id,
             station.id,
+            extra={
+                "event": "radio_listening_history_record_failed",
+                "user_id": user_id,
+                "station_id": station.id,
+            },
         )
         return None
 
@@ -489,6 +536,13 @@ def create_emergency_broadcast(
         broadcast.priority,
         broadcast.starts_at.isoformat(),
         broadcast.ends_at.isoformat(),
+        extra={
+            "event": "radio_emergency_broadcast_created",
+            "broadcast_id": broadcast.id,
+            "priority": broadcast.priority,
+            "starts_at": broadcast.starts_at.isoformat(),
+            "ends_at": broadcast.ends_at.isoformat(),
+        },
     )
     return broadcast
 

@@ -17,6 +17,11 @@ urlpatterns = [
         name="station-stream",
     ),
     path(
+        "radio/stations/<str:station_id>/health/",
+        views.StationHealthHistoryView.as_view(),
+        name="station-health-history",
+    ),
+    path(
         "radio/providers/",
         views.ProviderListView.as_view(),
         name="provider-list",
