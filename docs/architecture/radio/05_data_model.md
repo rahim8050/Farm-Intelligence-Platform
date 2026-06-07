@@ -105,7 +105,8 @@ class Station(models.Model):
 
 | Field | Type | Description | Status |
 |-------|------|-------------|--------|
-| `description` | text | Station description | ⏳ planned |
+| `description` | text | Station description | ✅ shipped 2026-06-07 (Phase 7) |
+| `metadata_url` | string (URL, nullable) | ICY metadata endpoint used to populate `NowPlaying`. | ✅ shipped 2026-06-07 (Phase 7) |
 | `genre` | string | Music genre | ✅ shipped (on `Station`) |
 | `bitrate` | int | Stream bitrate in kbps | ✅ shipped (on `Station`) |
 | `format` | string | Audio format (MP3, AAC, HLS) | ✅ shipped (on `Station`) |
@@ -260,27 +261,50 @@ alerts).
   - `(user, is_acknowledged)` for the `?unread=true` filter.
   - `(alert_type, -created_at)` for per-type scans.
 
-#### Station Analytics
+#### Station Analytics (shipped 2026-06-07, Phase 7)
 
 ```python
 class StationAnalytics(models.Model):
-    """Aggregate station usage metrics."""
+    """Aggregate per-day station usage metrics.
+
+    Written by ``radio.services.rollup_station_analytics`` (invoked
+    from a Celery beat job at 00:15 and 12:00 UTC) which scans the
+    most recent N days of ``ListeningHistory`` rows and upserts one
+    ``StationAnalytics`` row per ``(station, date)`` pair.
+    """
 
     station = models.ForeignKey(Station, on_delete=models.CASCADE)
     date = models.DateField()
     total_listens = models.IntegerField(default=0)
     total_duration_seconds = models.IntegerField(default=0)
     unique_users = models.IntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ["station", "date"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["station", "date"],
+                name="uniq_station_analytics_station_date",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["station", "-date"]),
+        ]
 ```
 
-#### Currently Playing Metadata
+#### Currently Playing Metadata (shipped 2026-06-07, Phase 7)
 
 ```python
 class NowPlaying(models.Model):
-    """Current track metadata from station (if available)."""
+    """Most-recent track title / artist pulled from the station's
+    ICY ``metadata_url`` (if configured).
+
+    Written by ``radio.services.refresh_now_playing`` (invoked
+    from a Celery beat job every
+    ``RADIO_NOW_PLAYING_REFRESH_INTERVAL_SECONDS`` seconds, default
+    300). There is one row per station; the row is updated in place
+    via ``update_or_create``.
+    """
 
     station = models.OneToOneField(Station, on_delete=models.CASCADE)
     track_title = models.CharField(max_length=500, blank=True)

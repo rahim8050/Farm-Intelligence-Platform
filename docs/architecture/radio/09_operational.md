@@ -3,7 +3,7 @@
 > **Status**: ✅ IMPLEMENTED (Periodic station health checks, Prometheus metrics, envelope errors, retention purge tasks, request-latency / error counters, station-list cache, structured `extra=` logging, Grafana dashboard JSON)
 > **Phase 2 delivered**: 2026-06-03 — see `IMPLEMENTATION_SUMMARY.md` § Phase 2.
 > **Phase 6 delivered**: 2026-06-07 — see `IMPLEMENTATION_SUMMARY.md` § Phase 6 (operational hardening).
-> **Still out of scope**: fallback-station redirect.
+> **Phase 7 delivered**: 2026-06-07 — see `IMPLEMENTATION_SUMMARY.md` § Phase 7 (fallback-station redirect, station description, analytics rollup, now-playing).
 
 ## Logging Strategy
 

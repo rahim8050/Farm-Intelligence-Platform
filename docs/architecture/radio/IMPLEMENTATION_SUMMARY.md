@@ -39,8 +39,14 @@ suite covers views, providers, and the seed-data management command.
 - `radio/` Django app registered as `RadioConfig` (`radio/apps.py:4-7`).
 - Listed in `INSTALLED_APPS` (`config/settings.py:106`).
 - Mounted at `/api/v1/radio/` (`config/urls.py:95`).
-- Two migrations present: `radio/migrations/0001_initial.py`,
-  `radio/migrations/0002_add_provider_type.py`.
+- Six migrations present: `radio/migrations/0001_initial.py`,
+  `radio/migrations/0002_add_provider_type.py`,
+  `radio/migrations/0003_station_health_check.py`,
+  `radio/migrations/0004_favorite_listeninghistory.py`,
+  `radio/migrations/0005_emergencybroadcast.py`,
+  `radio/migrations/0006_station_description_station_metadata_url_nowplaying_and_more.py`
+  (Phase 7: `Station.description`, `Station.metadata_url`, `StationAnalytics`,
+  `NowPlaying`).
 
 ### Models
 
@@ -646,6 +652,7 @@ satisfied for radio/alerts/podcasts:
 | 4.2 | June 05, 2026 | P3-followup hardening: applied `prompts/p3followup.md` API and Data Lifecycle Standards. New `config/api/pagination.py` (page/page_size, max 100, envelope-aware). All user-owned collection endpoints (favorites, history, alerts, subscriptions) now paginated. Cross-user privacy tests added (`radio/tests/test_privacy.py`, `alerts/tests/test_privacy.py`). Idempotency and event-recording contracts documented; scalability review table added. |
 | 5.0 | June 07, 2026 | Phase 5 (P5) shipped: `EmergencyBroadcast` model + 4 endpoints (public read, admin write), thin radio-side TTS view that reuses `alerts.tts.synthesize`, 25 new tests, OpenAPI envelopes. `EmergencyBroadcast` has composite indexes on `(is_active, starts_at, ends_at)` and `(priority, -starts_at)`. TTS is a thin wrapper, not a parallel engine stack. See `prompts/p5-implementation.md`. |
 | 6.0 | June 07, 2026 | Phase 6 (operational hardening) shipped: `radio_api_request_latency_seconds` histogram + `radio_api_request_errors_total` counter (per endpoint, per method, per status), `@timed` decorator on the heavy endpoints, station-list cache (`radio:stations:all`, TTL 60s) invalidated by `Station`/`Provider` signals, structured `extra=` logging in services, `/radio/stations/?genre=&country=` filters, `/radio/stations/<id>/health/` per-station audit endpoint, Grafana dashboard `weather-apis-radio`, two new Prometheus alerts (`RadioApiLatencyHigh`, `RadioApiErrorsHigh`). 17 new tests. See `prompts/p6-operational-hardening.md`. |
+| 7.0 | June 07, 2026 | Phase 7 (fallback stations + description + analytics + now-playing) shipped: 503 `errors.fallback` payload, `Station.description` + `Station.metadata_url`, new `StationAnalytics` + `NowPlaying` models, `rollup_station_analytics` (twice-daily beat) and `refresh_now_playing` (interval beat) Celery tasks, two new public endpoints (`/stations/<id>/analytics/`, `/stations/<id>/now-playing/`), 31 new tests. See `prompts/p7-implementation.md`. |
 
 ---
 
@@ -804,3 +811,78 @@ infrastructure is introduced.
 - `mypy radio/` — no issues.
 - `bandit -c pyproject.toml -r radio/` — 0 issues.
 - `pytest radio/ alerts/ podcasts/` — 289 passed, 0 regressions.
+
+---
+
+## Phase 7 — Fallback Stations, Station Description, Analytics, Now-Playing (Shipped 2026-06-07)
+
+This phase fills the four remaining gaps from
+[`08_future_expansion.md`](./08_future_expansion.md) that were
+noted as "Still out of scope" or otherwise left as future work in
+earlier docs:
+
+1. **Fallback-station redirect** — when `StationStreamView` cannot
+   serve a station (health check failing, provider offline, etc.)
+   the 503 response now includes an `errors.fallback` block with
+   the fallback station's `id`, `name`, `stream_url`, `format`,
+   and `bitrate`. The default map (`bbc_1xtra → bbc_radio1`,
+   `bbc_radio1 → bbc_radio2`, `bbc_radio2 → bbc_radio1`) lives in
+   `radio.services.DEFAULT_FALLBACK_STATION_MAP` and can be
+   overridden (or fully replaced) via the
+   `RADIO_FALLBACK_STATION_MAP` setting. See
+   `radio/services.py:DEFAULT_FALLBACK_STATION_MAP` and
+   `radio/views.py:StationStreamView` for the wiring.
+2. **`Station.description` + `Station.metadata_url`** — `description`
+   is a free-text blurb surfaced by the station serializer;
+   `metadata_url` is the ICY endpoint used by the now-playing
+   refresher. Both ship in migration `0006`.
+3. **`StationAnalytics` model + rollup** — a new daily-rollup
+   table (`station`, `date`, `total_listens`,
+   `total_duration_seconds`, `unique_users`) populated by
+   `radio.services.rollup_station_analytics`. The rollup runs
+   twice daily (00:15 and 12:00 UTC) from Celery beat with
+   `lookback_days=2` so the previous day is re-aggregated after
+   midnight. A new public endpoint
+   `GET /api/v1/radio/stations/<id>/analytics/?days=<1..90>`
+   returns the most-recent rows.
+4. **`NowPlaying` model + ingestion** — a one-row-per-station
+   table (`track_title`, `artist`, `album`, `artwork_url`,
+   `updated_at`) populated by
+   `radio.services.refresh_now_playing`. The refresher opens an
+   ICY `httpx.Client` request with `Icy-MetaData: 1`, parses the
+   `StreamTitle='...';` payload (16 KiB cap, Latin-1 → UTF-8
+   decode fallback), and `update_or_create`s the row. The
+   refresher runs every
+   `RADIO_NOW_PLAYING_REFRESH_INTERVAL_SECONDS` seconds
+   (default 300). A new public endpoint
+   `GET /api/v1/radio/stations/<id>/now-playing/` returns the
+   row (or `data: null` when absent).
+
+### Files added / changed in Phase 7
+
+| File | Change |
+|------|--------|
+| `radio/models.py` | `Station.description`, `Station.metadata_url`, new `StationAnalytics` and `NowPlaying` models |
+| `radio/migrations/0006_*.py` | New migration for Phase 7 fields/models |
+| `radio/services.py` | `DEFAULT_FALLBACK_STATION_MAP`, `get_fallback_station[_map]`, `rollup_station_analytics`, `get_station_analytics`, `_parse_icy_stream_title`, `fetch_icy_metadata`, `refresh_now_playing`, `get_now_playing`, `NOW_PLAYING_*` constants |
+| `radio/tasks.py` | `rollup_station_analytics_task`, `refresh_now_playing_task` (both `autoretry_for=(OperationalError, DatabaseError)`, `max_retries=2`) |
+| `radio/serializers.py` | `NowPlayingSerializer`, `StationAnalyticsSerializer`; `StationSerializer` extended with `description` |
+| `radio/views.py` | `StationNowPlayingView`, `StationAnalyticsView`, `NowPlayingEnvelope`, `StationAnalyticsListEnvelope`; `StationStreamView` 503 enriched with `errors.fallback` |
+| `radio/urls.py` | `station-now-playing`, `station-analytics` routes |
+| `radio/admin.py` | `StationAnalyticsAdmin`, `NowPlayingAdmin`; `StationAdmin.search_fields` includes `description` |
+| `radio/tests/test_phase7.py` | 31 tests (fallback service + endpoint, ICY parse/fetch, refresh + endpoint, rollup + endpoint + days clamping) |
+| `config/settings.py` | `RADIO_NOW_PLAYING_REFRESH_INTERVAL_SECONDS=300` (env-overridable), `RADIO_FALLBACK_STATION_MAP: dict[str, str] \| None = None`; 3 new beat schedule entries |
+| `docs/architecture/radio/05_data_model.md` | `description` / `metadata_url` shipped; `StationAnalytics` / `NowPlaying` blocks updated to reflect Phase 7 reality |
+| `docs/architecture/radio/09_operational.md` | "Still out of scope" fallback line removed; Phase 7 status line added |
+| `prompts/p7-implementation.md` | Implementation report (local, gitignored) |
+
+### Verification (Phase 7)
+
+- `python manage.py makemigrations --check --dry-run` → No changes
+  detected.
+- `ruff check .` — all checks passed.
+- `ruff format .` — clean.
+- `mypy radio/` — no issues found in 39 source files.
+- `bandit -c pyproject.toml -r radio/` — 0 issues.
+- `pytest radio/` — 156 passed, 0 regressions (31 new + 125
+  pre-existing).

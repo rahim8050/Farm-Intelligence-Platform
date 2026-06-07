@@ -3524,6 +3524,38 @@ paths:
               schema:
                 $ref: '#/components/schemas/StationDetailEnvelope'
           description: ''
+  /api/v1/radio/stations/{station_id}/analytics/:
+    get:
+      operationId: v1_radio_station_analytics
+      description: Returns up to `days` (1..90, default 7) of daily analytics rows
+        for a station, newest first. A row contains `total_listens`, `total_duration_seconds`,
+        and `unique_users`.
+      summary: Per-station analytics
+      parameters:
+      - in: path
+        name: station_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioStationAnalyticsListEnvelope'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
   /api/v1/radio/stations/{station_id}/health/:
     get:
       operationId: v1_radio_station_health_history
@@ -3549,6 +3581,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RadioStationHealthHistoryEnvelope'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+  /api/v1/radio/stations/{station_id}/now-playing/:
+    get:
+      operationId: v1_radio_station_now_playing
+      description: 'Returns the cached now-playing metadata for a single station,
+        or `data: null` if the station has no `metadata_url` configured or no successful
+        poll has occurred yet.'
+      summary: Per-station now-playing metadata
+      parameters:
+      - in: path
+        name: station_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioNowPlayingEnvelope'
           description: ''
         '404':
           content:
@@ -6590,6 +6654,37 @@ components:
       - message
       - request_id
       - status
+    NowPlaying:
+      type: object
+      description: Output serializer for a :class:`NowPlaying` row.
+      properties:
+        station_id:
+          type: string
+          readOnly: true
+        track_title:
+          type: string
+          readOnly: true
+        artist:
+          type: string
+          readOnly: true
+        album:
+          type: string
+          readOnly: true
+        artwork_url:
+          type: string
+          format: uri
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - album
+      - artist
+      - artwork_url
+      - station_id
+      - track_title
+      - updated_at
     NullEnvelope:
       type: object
       properties:
@@ -7546,11 +7641,53 @@ components:
       - next
       - previous
       - results
+    RadioNowPlayingEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/NowPlaying'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
     RadioNullEnvelope:
       type: object
       properties:
         data:
           nullable: true
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
+    RadioStationAnalyticsListEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/StationAnalytics'
         status:
           type: integer
         message:
@@ -7701,6 +7838,9 @@ components:
           type: string
           nullable: true
           readOnly: true
+        description:
+          type: string
+          description: Free-form station description surfaced in detail views.
         genre:
           type: string
           maxLength: 100
@@ -7724,6 +7864,37 @@ components:
       - provider
       - provider_logo_url
       - provider_name
+    StationAnalytics:
+      type: object
+      description: Output serializer for a :class:`StationAnalytics` row.
+      properties:
+        station_id:
+          type: string
+          readOnly: true
+        date:
+          type: string
+          format: date
+          readOnly: true
+        total_listens:
+          type: integer
+          readOnly: true
+        total_duration_seconds:
+          type: integer
+          readOnly: true
+        unique_users:
+          type: integer
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - date
+      - station_id
+      - total_duration_seconds
+      - total_listens
+      - unique_users
+      - updated_at
     StationDetail:
       type: object
       description: Extended serializer with stream URL.
@@ -7743,6 +7914,9 @@ components:
           type: string
           nullable: true
           readOnly: true
+        description:
+          type: string
+          description: Free-form station description surfaced in detail views.
         genre:
           type: string
           maxLength: 100

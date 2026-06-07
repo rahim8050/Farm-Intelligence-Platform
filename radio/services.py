@@ -15,13 +15,15 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
+from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.core.cache import cache
-from django.db import close_old_connections
+from django.db import close_old_connections, transaction
+from django.db.models import Count
 from django.http import HttpRequest
 from django.utils import timezone
 
@@ -29,7 +31,9 @@ from radio.models import (
     EmergencyBroadcast,
     Favorite,
     ListeningHistory,
+    NowPlaying,
     Station,
+    StationAnalytics,
     StationHealthCheck,
 )
 
@@ -37,6 +41,24 @@ logger = logging.getLogger("radio")
 
 STATION_LIST_CACHE_KEY = "radio:stations:all"
 STATION_LIST_CACHE_TTL_SECONDS = 60
+
+# Default fallback-station map. If a station is unavailable, the
+# ``/api/v1/radio/stations/<id>/stream/`` endpoint includes the
+# fallback's stream URL in the 503 payload so the client can pivot
+# without a second round-trip. Operators can override this map via
+# the ``RADIO_FALLBACK_STATION_MAP`` Django setting (a flat dict of
+# ``{primary_id: fallback_id}``).
+DEFAULT_FALLBACK_STATION_MAP: dict[str, str] = {
+    "bbc_1xtra": "bbc_radio1",
+    "bbc_radio1": "bbc_radio2",
+    "bbc_radio2": "bbc_radio1",
+}
+
+# Cap on how much text we are willing to scan when looking for the
+# ICY ``StreamTitle=`` line. Real metadata blocks are < 16 KiB; this
+# cap is a defensive bound for misbehaving servers.
+NOW_PLAYING_MAX_METADATA_BYTES = 16 * 1024
+NOW_PLAYING_HTTP_TIMEOUT_SECONDS = 5.0
 
 
 class StationUnavailableError(Exception):
@@ -575,3 +597,279 @@ def update_emergency_broadcast(
 def delete_emergency_broadcast(broadcast: EmergencyBroadcast) -> None:
     """Delete an :class:`EmergencyBroadcast` row. Idempotent."""
     EmergencyBroadcast.objects.filter(pk=broadcast.pk).delete()
+
+
+# ---------------------------------------------------------------------------
+# Fallback stations (Phase 7)
+# ---------------------------------------------------------------------------
+
+
+def get_fallback_station_map() -> dict[str, str]:
+    """Return the effective fallback-station map.
+
+    The operator-provided ``RADIO_FALLBACK_STATION_MAP`` setting
+    wins over :data:`DEFAULT_FALLBACK_STATION_MAP`. Operators can
+    set the setting to an empty dict to disable every fallback
+    (useful for tests / staging). If the setting is not configured
+    at all (``None``) the defaults are used.
+    """
+    raw = getattr(settings, "RADIO_FALLBACK_STATION_MAP", None)
+    if raw is None:
+        return dict(DEFAULT_FALLBACK_STATION_MAP)
+    if not isinstance(raw, dict):
+        return dict(DEFAULT_FALLBACK_STATION_MAP)
+    return {str(k): str(v) for k, v in raw.items()}
+
+
+def get_fallback_station(primary_id: str) -> Station | None:
+    """Return the fallback :class:`Station` for ``primary_id``, if any.
+
+    The lookup uses :func:`get_fallback_station_map`; the fallback
+    station must be ``is_active=True`` and must have a populated
+    stream URL. ``None`` means "no fallback configured / fallback
+    inactive".
+    """
+    mapping = get_fallback_station_map()
+    fallback_id = mapping.get(primary_id)
+    if not fallback_id or fallback_id == primary_id:
+        return None
+    return (
+        Station.objects.filter(id=fallback_id, is_active=True)
+        .only("id", "name", "stream_url", "format", "bitrate", "is_available")
+        .first()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Station analytics rollup (Phase 7)
+# ---------------------------------------------------------------------------
+
+
+def rollup_station_analytics(
+    *,
+    lookback_days: int = 1,
+    target_date: date | None = None,
+) -> dict[str, int]:
+    """Roll :class:`ListeningHistory` rows into
+    :class:`StationAnalytics` rows.
+
+    Args:
+        lookback_days: How many days back from ``target_date`` (or
+            today) to scan. The default of 1 covers the
+            just-finished UTC day; the periodic task uses 2 so the
+            previous day is re-aggregated after midnight.
+        target_date: Reference date for the rollup window. ``None``
+            means ``timezone.now().date()``.
+
+    Returns:
+        Dict with ``stations_processed``, ``days_processed``,
+        ``rows_written``.
+    """
+    target = target_date or timezone.now().date()
+    rows_written = 0
+    stations_processed = 0
+    for offset in range(lookback_days):
+        day = target - timedelta(days=offset)
+        day_start = datetime.combine(day, datetime.min.time(), tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        per_station = (
+            ListeningHistory.objects.filter(
+                started_at__gte=day_start, started_at__lt=day_end
+            )
+            .values("station_id")
+            .annotate(
+                total_listens=Count("id"),
+                unique_users=Count("user_id", distinct=True),
+            )
+        )
+        for row in per_station:
+            station_id = row["station_id"]
+            with transaction.atomic():
+                obj, _ = StationAnalytics.objects.update_or_create(
+                    station_id=station_id,
+                    date=day,
+                    defaults={
+                        "total_listens": row["total_listens"],
+                        "unique_users": row["unique_users"],
+                    },
+                )
+                rows_written += 1
+                stations_processed += 1
+    logger.info(
+        "radio_analytics_rollup_completed days=%d stations=%d rows=%d",
+        lookback_days,
+        stations_processed,
+        rows_written,
+        extra={
+            "event": "radio_analytics_rollup_completed",
+            "lookback_days": lookback_days,
+            "stations_processed": stations_processed,
+            "rows_written": rows_written,
+        },
+    )
+    return {
+        "stations_processed": stations_processed,
+        "days_processed": lookback_days,
+        "rows_written": rows_written,
+    }
+
+
+def get_station_analytics(
+    station_id: str,
+    *,
+    days: int = 7,
+) -> list[StationAnalytics]:
+    """Return up to ``days`` of :class:`StationAnalytics` rows for
+    ``station_id``, newest first."""
+    days = max(1, min(int(days), 90))
+    return list(
+        StationAnalytics.objects.filter(station_id=station_id).order_by(
+            "-date"
+        )[:days]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Now-playing ingestion (Phase 7)
+# ---------------------------------------------------------------------------
+
+
+def _parse_icy_stream_title(metadata_text: str) -> str:
+    """Extract the ``StreamTitle=...;`` value from an ICY metadata blob.
+
+    The ICY protocol stores stream metadata as
+    ``StreamTitle='Artist - Title';StreamUrl='...';`` inside the
+    body of a periodic metadata block. We pull the first
+    ``StreamTitle=`` value and decode it as UTF-8 (with a Latin-1
+    fallback for older servers).
+    """
+    text = metadata_text
+    idx = text.find("StreamTitle=")
+    if idx < 0:
+        return ""
+    after = text[idx + len("StreamTitle=") :]
+    quote = after.find("'")
+    if quote < 0:
+        return after.split(";", 1)[0].strip()
+    end = after.find("'", quote + 1)
+    if end < 0:
+        # Unterminated string: take everything after the opening
+        # quote up to the next semicolon (or the end of the blob).
+        semi = after.find(";", quote + 1)
+        raw = after[quote + 1 : semi if semi > quote else len(after)]
+    else:
+        raw = after[quote + 1 : end]
+    try:
+        return raw.encode("latin-1", errors="replace").decode(
+            "utf-8", errors="replace"
+        )
+    except Exception:  # noqa: BLE001
+        return raw
+
+
+def fetch_icy_metadata(url: str) -> dict[str, str]:
+    """Fetch an ICY / SHOUTcast stream URL and return the parsed
+    ``StreamTitle`` plus the separated artist / title fields.
+
+    Best-effort: a non-ICY response, a timeout, or a missing
+    ``StreamTitle`` line all return ``{}``; the caller decides
+    whether to upsert the row.
+    """
+    try:
+        with httpx.Client(
+            timeout=NOW_PLAYING_HTTP_TIMEOUT_SECONDS, follow_redirects=True
+        ) as client:
+            response = client.get(
+                url,
+                headers={
+                    "Icy-MetaData": "1",
+                    "User-Agent": "weather-apis/1.0",
+                },
+            )
+    except httpx.HTTPError as exc:
+        logger.info(
+            "radio_icy_metadata_fetch_failed url=%s err=%s",
+            url,
+            exc.__class__.__name__,
+        )
+        return {}
+
+    if response.status_code >= 400:
+        return {}
+
+    raw = response.content[:NOW_PLAYING_MAX_METADATA_BYTES]
+    try:
+        text = raw.decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        return {}
+
+    stream_title = _parse_icy_stream_title(text)
+    if not stream_title:
+        return {}
+
+    artist = ""
+    title = stream_title
+    if " - " in stream_title:
+        artist, title = stream_title.split(" - ", 1)
+    return {
+        "track_title": title.strip(),
+        "artist": artist.strip(),
+    }
+
+
+def refresh_now_playing(station_id: str | None = None) -> dict[str, int]:
+    """Refresh :class:`NowPlaying` rows from each station's
+    configured ``metadata_url``.
+
+    Args:
+        station_id: Optional single station to refresh. ``None``
+            means "all stations with a metadata_url".
+
+    Returns:
+        Dict with ``attempted`` / ``updated`` / ``skipped`` counts.
+    """
+    qs = Station.objects.filter(is_active=True).exclude(metadata_url="")
+    if station_id is not None:
+        qs = qs.filter(id=station_id)
+    attempted = 0
+    updated = 0
+    skipped = 0
+    for station in qs:
+        attempted += 1
+        if not station.metadata_url:
+            skipped += 1
+            continue
+        parsed = fetch_icy_metadata(station.metadata_url)
+        if not parsed:
+            skipped += 1
+            continue
+        with transaction.atomic():
+            NowPlaying.objects.update_or_create(
+                station=station,
+                defaults={
+                    "track_title": parsed.get("track_title", "")[:500],
+                    "artist": parsed.get("artist", "")[:500],
+                },
+            )
+        updated += 1
+    logger.info(
+        "radio_now_playing_refresh_completed attempted=%d "
+        "updated=%d skipped=%d",
+        attempted,
+        updated,
+        skipped,
+        extra={
+            "event": "radio_now_playing_refresh_completed",
+            "attempted": attempted,
+            "updated": updated,
+            "skipped": skipped,
+        },
+    )
+    return {"attempted": attempted, "updated": updated, "skipped": skipped}
+
+
+def get_now_playing(station_id: str) -> NowPlaying | None:
+    """Return the cached :class:`NowPlaying` row for ``station_id``,
+    or ``None`` if the station has none (no metadata URL or no
+    successful poll yet)."""
+    return NowPlaying.objects.filter(station_id=station_id).first()

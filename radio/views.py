@@ -49,7 +49,9 @@ from radio.serializers import (
     FavoriteCreateSerializer,
     FavoriteSerializer,
     ListeningHistorySerializer,
+    NowPlayingSerializer,
     ProviderSerializer,
+    StationAnalyticsSerializer,
     StationDetailSerializer,
     StationSerializer,
     TTSSynthesizeRequestSerializer,
@@ -59,6 +61,9 @@ from radio.services import (
     create_emergency_broadcast,
     delete_emergency_broadcast,
     get_current_emergency,
+    get_fallback_station,
+    get_now_playing,
+    get_station_analytics,
     list_active_stations_cached,
     list_emergency_history,
     record_listening_session,
@@ -200,6 +205,13 @@ StationHealthHistoryEnvelope = inline_serializer(
         "errors": serializers.JSONField(allow_null=True),
         "request_id": serializers.CharField(allow_null=True),
     },
+)
+NowPlayingEnvelope = success_envelope_serializer(
+    "RadioNowPlayingEnvelope", data=NowPlayingSerializer()
+)
+StationAnalyticsListEnvelope = success_envelope_serializer(
+    "RadioStationAnalyticsListEnvelope",
+    data=StationAnalyticsSerializer(many=True),
 )
 
 
@@ -360,6 +372,16 @@ class StationStreamView(APIView):
             raise NotFound("Station not found")
 
         if station.is_available is False:
+            fallback = get_fallback_station(station.id)
+            fallback_payload: dict[str, object] | None = None
+            if fallback is not None:
+                fallback_payload = {
+                    "station_id": fallback.id,
+                    "station_name": fallback.name,
+                    "stream_url": fallback.stream_url,
+                    "format": fallback.format,
+                    "bitrate": fallback.bitrate,
+                }
             return Response(
                 {
                     "status": 1,
@@ -368,6 +390,7 @@ class StationStreamView(APIView):
                     "errors": {
                         "station_id": station.id,
                         "reason": "health_check_failed",
+                        "fallback": fallback_payload,
                     },
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -496,6 +519,102 @@ class StationHealthHistoryView(APIView):
             for r in rows
         ]
         return success_response(payload, message="Station health history")
+
+
+class StationNowPlayingView(APIView):
+    """Return the cached now-playing metadata for one station.
+
+    The endpoint surfaces the row populated by
+    ``radio.tasks.refresh_now_playing``. Returns ``data: null`` when
+    the station has no ``metadata_url`` configured or no successful
+    poll has happened yet.
+
+    Auth: Public
+    Throttle: None
+    Path params: ``station_id`` (str).
+    Response: envelope with ``data`` = :class:`NowPlayingSerializer`
+    or ``null``.
+    Side effects: none.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        responses={200: NowPlayingEnvelope, 404: radio_error_envelope},
+        summary="Per-station now-playing metadata",
+        description=(
+            "Returns the cached now-playing metadata for a single "
+            "station, or `data: null` if the station has no "
+            "`metadata_url` configured or no successful poll has "
+            "occurred yet."
+        ),
+        operation_id="v1_radio_station_now_playing",
+    )
+    @timed("stations.now_playing")
+    def get(self, request: Request, station_id: str) -> Response:
+        """Return the cached now-playing row for a station."""
+        if not Station.objects.filter(id=station_id).exists():
+            raise NotFound("Station not found")
+        row = get_now_playing(station_id)
+        payload = NowPlayingSerializer(row).data if row is not None else None
+        return success_response(payload, message="Station now playing")
+
+
+class StationAnalyticsView(APIView):
+    """Return per-day listen analytics for one station.
+
+    The endpoint surfaces the daily aggregates built by
+    ``radio.tasks.rollup_station_analytics``. Newest first.
+
+    Auth: Public
+    Throttle: None
+    Path params: ``station_id`` (str).
+    Query params: ``days`` (1..90, default 7).
+    Response: envelope with ``data`` = list of
+    :class:`StationAnalyticsSerializer`.
+    Side effects: none.
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        responses={
+            200: StationAnalyticsListEnvelope,
+            404: radio_error_envelope,
+        },
+        summary="Per-station analytics",
+        description=(
+            "Returns up to `days` (1..90, default 7) of daily "
+            "analytics rows for a station, newest first. A row "
+            "contains `total_listens`, `total_duration_seconds`, "
+            "and `unique_users`."
+        ),
+        operation_id="v1_radio_station_analytics",
+    )
+    @timed("stations.analytics")
+    def get(self, request: Request, station_id: str) -> Response:
+        """Return the recent analytics rows for a station."""
+        if not Station.objects.filter(id=station_id).exists():
+            raise NotFound("Station not found")
+        try:
+            days = int(request.query_params.get("days", "7"))
+        except (TypeError, ValueError):
+            return success_response(
+                data=None,
+                message="days must be an integer",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if days < 1 or days > 90:
+            return success_response(
+                data=None,
+                message="days must be between 1 and 90",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        rows = get_station_analytics(station_id, days=days)
+        return success_response(
+            StationAnalyticsSerializer(rows, many=True).data,
+            message="Station analytics",
+        )
 
 
 class ProviderListView(APIView):

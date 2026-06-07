@@ -53,7 +53,11 @@ from radio.metrics import (
     radio_stations_total,
 )
 from radio.models import ListeningHistory, Station, StationHealthCheck
-from radio.services import probe_all_active_stations
+from radio.services import (
+    probe_all_active_stations,
+    refresh_now_playing,
+    rollup_station_analytics,
+)
 
 logger = logging.getLogger("radio")
 
@@ -224,3 +228,44 @@ def purge_old_health_checks() -> dict[str, int]:
         keep,
     )
     return {"deleted": deleted, "keep_per_station": keep}
+
+
+# --- Phase 7 tasks ------------------------------------------------------
+
+
+@shared_task(
+    name="radio.tasks.rollup_station_analytics",
+    autoretry_for=(OperationalError, DatabaseError),
+    retry_backoff=True,
+    max_retries=2,
+    time_limit=600,
+)
+def rollup_station_analytics_task(
+    lookback_days: int = 2,
+) -> dict[str, int]:
+    """Roll up :class:`ListeningHistory` into per-station daily
+    :class:`StationAnalytics` rows.
+
+    Scheduled to run just after midnight UTC (with a 2-day
+    ``lookback_days`` so the just-finished day is re-aggregated
+    after midnight) and again at noon UTC to catch late-arriving
+    history rows.
+    """
+    return rollup_station_analytics(lookback_days=lookback_days)
+
+
+@shared_task(
+    name="radio.tasks.refresh_now_playing",
+    autoretry_for=(OperationalError, DatabaseError),
+    retry_backoff=True,
+    max_retries=2,
+    time_limit=300,
+)
+def refresh_now_playing_task(station_id: str | None = None) -> dict[str, int]:
+    """Poll each active station's ``metadata_url`` and update its
+    :class:`NowPlaying` row.
+
+    Best-effort: a single failed fetch is logged and skipped; one
+    broken station does not block the rest of the poll.
+    """
+    return refresh_now_playing(station_id=station_id)

@@ -6,8 +6,10 @@ from radio.models import (
     EmergencyBroadcast,
     Favorite,
     ListeningHistory,
+    NowPlaying,
     Provider,
     Station,
+    StationAnalytics,
 )
 
 
@@ -55,6 +57,7 @@ class StationSerializer(serializers.ModelSerializer):
             "provider",
             "provider_name",
             "provider_logo_url",
+            "description",
             "genre",
             "country",
             "language",
@@ -249,3 +252,35 @@ class TTSSynthesizeRequestSerializer(serializers.Serializer):
                 f"text exceeds max length of {cap} characters."
             )
         return value
+
+
+class NowPlayingSerializer(serializers.ModelSerializer):
+    """Output serializer for a :class:`NowPlaying` row."""
+
+    class Meta:
+        model = NowPlaying
+        fields = [
+            "station_id",
+            "track_title",
+            "artist",
+            "album",
+            "artwork_url",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class StationAnalyticsSerializer(serializers.ModelSerializer):
+    """Output serializer for a :class:`StationAnalytics` row."""
+
+    class Meta:
+        model = StationAnalytics
+        fields = [
+            "station_id",
+            "date",
+            "total_listens",
+            "total_duration_seconds",
+            "unique_users",
+            "updated_at",
+        ]
+        read_only_fields = fields

@@ -93,6 +93,14 @@ RADIO_HEALTH_CHECK_KEEP_PER_STATION = env.int(
     "RADIO_HEALTH_CHECK_KEEP_PER_STATION", default=20
 )
 
+# Operator override for the fallback-station map. Flat
+# ``{primary_station_id: fallback_station_id}`` dict. When ``None``
+# (the default) the built-in map in
+# ``radio.services.DEFAULT_FALLBACK_STATION_MAP`` is used. Set to an
+# empty dict to disable every fallback; set to a partial dict to
+# fully replace the built-in map with your own.
+RADIO_FALLBACK_STATION_MAP: dict[str, str] | None = None
+
 
 # Application definition
 
@@ -802,6 +810,13 @@ RADIO_HEALTH_CHECK_TIMEOUT_SECONDS = env.float(
     "RADIO_HEALTH_CHECK_TIMEOUT_SECONDS",
     default=5.0,
 )
+# Now-playing refresh interval. Defaults to 5 minutes (same as the
+# health-check loop) so clients see fresh track metadata within one
+# poll window.
+RADIO_NOW_PLAYING_REFRESH_INTERVAL_SECONDS = env.int(
+    "RADIO_NOW_PLAYING_REFRESH_INTERVAL_SECONDS",
+    default=300,
+)
 
 # Podcast feed refresh scheduling
 PODCASTS_REFRESH_INTERVAL_SECONDS = env.int(
@@ -1087,6 +1102,18 @@ CELERY_BEAT_SCHEDULE = {
     "radio-purge-old-health-checks": {
         "task": "radio.tasks.purge_old_health_checks",
         "schedule": crontab(hour=5, minute=45),
+    },
+    "radio-rollup-station-analytics": {
+        "task": "radio.tasks.rollup_station_analytics_task",
+        "schedule": crontab(hour=0, minute=15),
+    },
+    "radio-rollup-station-analytics-noon": {
+        "task": "radio.tasks.rollup_station_analytics_task",
+        "schedule": crontab(hour=12, minute=0),
+    },
+    "radio-refresh-now-playing": {
+        "task": "radio.tasks.refresh_now_playing_task",
+        "schedule": RADIO_NOW_PLAYING_REFRESH_INTERVAL_SECONDS,
     },
 }
 CELERY_ENABLE_UTC = True

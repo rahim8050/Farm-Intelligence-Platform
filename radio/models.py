@@ -47,6 +47,10 @@ class Station(models.Model):
         on_delete=models.PROTECT,
         related_name="stations",
     )
+    description = models.TextField(
+        blank=True,
+        help_text="Free-form station description surfaced in detail views.",
+    )
     genre = models.CharField(max_length=100, blank=True)
     country = models.CharField(max_length=100)
     language = models.CharField(max_length=100)
@@ -55,6 +59,14 @@ class Station(models.Model):
     bitrate = models.IntegerField(default=128)
     logo_url = models.URLField(blank=True)
     website_url = models.URLField(blank=True)
+    metadata_url = models.URLField(
+        blank=True,
+        help_text=(
+            "Optional URL that exposes ICY / SHOUTcast metadata for "
+            "the station's stream. Polled by "
+            "``radio.tasks.refresh_now_playing``."
+        ),
+    )
     is_active = models.BooleanField(default=True)
     is_available = models.BooleanField(
         null=True,
@@ -207,6 +219,76 @@ class ListeningHistory(models.Model):
     def __str__(self) -> str:
         ts = self.started_at.isoformat()
         return f"{self.user_id} -> {self.station_id} @ {ts}"
+
+
+class StationAnalytics(models.Model):
+    """Per-station daily listen aggregate.
+
+    Populated by :func:`radio.tasks.rollup_station_analytics`, which
+    walks :class:`ListeningHistory` and increments
+    ``total_listens`` / ``unique_users`` per (station, date). The
+    row is unique on the pair.
+    """
+
+    station = models.ForeignKey(
+        Station,
+        on_delete=models.CASCADE,
+        related_name="analytics",
+    )
+    date = models.DateField()
+    total_listens = models.IntegerField(default=0)
+    total_duration_seconds = models.IntegerField(default=0)
+    unique_users = models.IntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "radio_station_analytics"
+        verbose_name = "Station analytics"
+        verbose_name_plural = "Station analytics"
+        ordering = ["-date"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["station", "date"],
+                name="radio_station_analytics_station_date_unique",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["station", "-date"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.station_id} {self.date} ({self.total_listens} listens)"
+
+
+class NowPlaying(models.Model):
+    """Current track metadata for a station.
+
+    The row is populated by the periodic
+    :func:`radio.tasks.refresh_now_playing` task, which polls
+    :attr:`Station.metadata_url` (when configured) and parses the
+    ICY / SHOUTcast metadata block. Stations without a
+    ``metadata_url`` get an empty row, which the API surfaces as
+    ``data: null``.
+    """
+
+    station = models.OneToOneField(
+        Station,
+        on_delete=models.CASCADE,
+        related_name="now_playing",
+    )
+    track_title = models.CharField(max_length=500, blank=True)
+    artist = models.CharField(max_length=500, blank=True)
+    album = models.CharField(max_length=500, blank=True)
+    artwork_url = models.URLField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "radio_now_playing"
+        verbose_name = "Now playing"
+        verbose_name_plural = "Now playing"
+
+    def __str__(self) -> str:
+        return f"{self.station_id}: {self.artist} - {self.track_title}"
 
 
 class EmergencyPriority(models.TextChoices):

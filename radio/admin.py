@@ -4,8 +4,10 @@ from radio.models import (
     EmergencyBroadcast,
     Favorite,
     ListeningHistory,
+    NowPlaying,
     Provider,
     Station,
+    StationAnalytics,
     StationHealthCheck,
 )
 
@@ -29,7 +31,35 @@ class StationAdmin(admin.ModelAdmin):
         "last_health_check_at",
     ]
     list_filter = ["is_active", "is_available", "provider", "country"]
-    search_fields = ["name", "id"]
+    search_fields = ["name", "id", "description"]
+
+
+@admin.register(StationAnalytics)
+class StationAnalyticsAdmin(admin.ModelAdmin):
+    list_display = [
+        "station",
+        "date",
+        "total_listens",
+        "total_duration_seconds",
+        "unique_users",
+        "updated_at",
+    ]
+    list_filter = ["date", "station"]
+    search_fields = ["station__id", "station__name"]
+    readonly_fields = ["updated_at"]
+
+
+@admin.register(NowPlaying)
+class NowPlayingAdmin(admin.ModelAdmin):
+    list_display = [
+        "station",
+        "artist",
+        "track_title",
+        "album",
+        "updated_at",
+    ]
+    search_fields = ["station__id", "station__name", "artist", "track_title"]
+    readonly_fields = ["updated_at"]
 
 
 @admin.register(StationHealthCheck)
