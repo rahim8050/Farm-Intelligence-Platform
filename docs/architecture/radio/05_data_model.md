@@ -101,19 +101,12 @@ class Station(models.Model):
 
 ## Optional Future Fields
 
-### Station Extensions
-
-| Field | Type | Description | Status |
-|-------|------|-------------|--------|
-| `description` | text | Station description | ✅ shipped 2026-06-07 (Phase 7) |
-| `metadata_url` | string (URL, nullable) | ICY metadata endpoint used to populate `NowPlaying`. | ✅ shipped 2026-06-07 (Phase 7) |
-| `genre` | string | Music genre | ✅ shipped (on `Station`) |
-| `bitrate` | int | Stream bitrate in kbps | ✅ shipped (on `Station`) |
-| `format` | string | Audio format (MP3, AAC, HLS) | ✅ shipped (on `Station`) |
-| `logo_url` | string | Station artwork | ✅ shipped (on `Station`) |
-| `website_url` | string | Station website | ✅ shipped (on `Station`) |
-| `last_health_check_at` | datetime (nullable) | Timestamp of the most recent probe. `null` until first probe. | ✅ shipped 2026-06-03 |
-| `is_available` | bool (nullable) | Result of the last probe. `null` = never checked, `true` = reachable, `false` = unreachable. | ✅ shipped 2026-06-03 |
+Every "Optional Future Field" on this page has shipped. The
+`Station` model carries all of the fields below; the schema is
+documented under [§ Station](#station) above. No new fields are
+currently planned — see
+[`08_future_expansion.md` § Remaining Work](./08_future_expansion.md#remaining-work)
+for the few open items that exist.
 
 ### Future Models
 

@@ -179,29 +179,6 @@ health checks", medium complexity). The full design is in
 
 ---
 
-## What Is Intentionally Out of Scope
-
-These items come from the future-expansion document
-([`08_future_expansion.md`](./08_future_expansion.md)) and are **not**
-implemented, by design:
-
-- Podcast ingestion and feeds.
-- Emergency-broadcast routing and TTS-driven announcements.
-- Multi-tenant provider credentials (per-user API keys).
-- Per-user listening history and analytics.
-
-These are documented in [`08_future_expansion.md`](./08_future_expansion.md)
-as future work; no current code path references them.
-
-Note: the P2 row "Station health checks" is **not** in this list — it shipped
-on 2026-06-03 and is documented in § Phase 2 above. Same for the two P3 rows
-"favorites" and "listening history", which shipped 2026-06-04 (see § Phase 3
-below). Same for the P4 row "Podcasts", which shipped 2026-06-04 (see
-§ Phase 4 below). The second P4 row "Farm audio alerts" is documented in
-§ Phase 4 (audio alerts) below.
-
----
-
 ## Phase 3 — Favorites & Listening History (2026-06-04)
 
 Phase 3 ships per-user favorites and a per-user listening-history log.

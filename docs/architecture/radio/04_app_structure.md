@@ -155,54 +155,15 @@ class StationDetailSerializer(StationSerializer):
 - **Model serialization**: Using model `__str__` for API responses
 - **Direct DB access in views**: Always go through services
 
-## Future Migration Path: Constants → Database
+## Migration Path: Constants → Database → Admin
 
-### Phase 1: Hardcoded (v1)
+All three phases of this migration are complete.
 
-```python
-# radio/services.py - Hardcoded stations
-STATIONS = [
-    {
-        "id": "bbc_1xtra",
-        "name": "BBC 1Xtra",
-        "stream_url": "http://stream.live.vc.bbcmedia.co.uk/bbc_1xtra",
-        ...
-    },
-]
-
-def get_stations():
-    return STATIONS
-```
-
-### Phase 2: Database with Seed Data (v1.1)
-
-```python
-# radio/models.py
-class Station(models.Model):
-    id = models.CharField(max_length=50, primary_key=True)
-    name = models.CharField(max_length=200)
-    stream_url = models.URLField()
-    ...
-
-# radio/management/commands/load_stations.py
-def handle(self, *args, **options):
-    for station in SEED_DATA:
-        Station.objects.get_or_create(
-            id=station["id"],
-            defaults=station
-        )
-```
-
-### Phase 3: Admin-Managed (v2)
-
-- Add Django admin for station management
-- Allow non-code updates to station data
-- Support multiple providers via admin
-
-### Migration Path Summary
-
-| Phase | Approach | Use Case |
-|-------|----------|----------|
-| v1 | Hardcoded constants | Fast MVP |
-| v1.1 | Database + seed | Data-driven, versionable |
-| v2 | Admin-managed | Non-developer updates |
+- **v1 (hardcoded constants)** — superseded; no constants left in `radio/services.py`.
+- **v1.1 (database + seed)** — `Station` and `Provider` are real
+  Django models, seeded at deploy time by the
+  `seed_radio_stations` management command.
+- **v2 (admin-managed)** — `Station` and `Provider` are
+  registered in `radio/admin.py` and editable by any
+  superuser. Multiple providers are supported via the
+  `Provider` foreign key on `Station`.
