@@ -168,6 +168,12 @@ jobs:
           path: coverage.xml
           if-no-files-found: ignore
 
+      - name: Import Codecov GPG key
+        if: always()
+        run: |
+          gpg --keyserver keyserver.ubuntu.com \
+              --recv-keys 27034E7FDB850E0BBC2C62FF806BB28AED779869 || true
+
       - name: Upload coverage to Codecov
         if: always()
         uses: codecov/codecov-action@v5
