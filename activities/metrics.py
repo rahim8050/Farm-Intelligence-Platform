@@ -52,3 +52,33 @@ activities_lock_contention = Counter(
     "Activity claim or execution contention events",
     ["stage"],
 )
+
+activities_circuit_breaker_trips = Counter(
+    "activities_circuit_breaker_trips_total",
+    "Circuit breaker trips by handler type",
+    ["type"],
+)
+
+activities_circuit_breaker_resets = Counter(
+    "activities_circuit_breaker_resets_total",
+    "Circuit breaker resets by handler type",
+    ["type"],
+)
+
+activities_dead_letter_count = Counter(
+    "activities_dead_letter_count_total",
+    "Dead-letter entries registered",
+    ["type"],
+)
+
+activities_chained_count = Counter(
+    "activities_chained_count_total",
+    "Follow-up activities created from chaining",
+    ["source_type", "target_type"],
+)
+
+activities_ndvi_event_count = Counter(
+    "activities_ndvi_event_count_total",
+    "NDVI events received",
+    ["event_type", "status"],
+)

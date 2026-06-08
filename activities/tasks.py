@@ -25,7 +25,11 @@ from activities.handlers import (  # noqa: F401
     irrigation,
     vaccination,
 )
-from activities.handlers.base import HandlerResult
+from activities.handlers.base import (
+    HandlerResult,
+    PermanentHandlerError,
+    TemporaryHandlerError,
+)
 
 # Import metrics
 from activities.metrics import (  # noqa: F401
@@ -175,6 +179,15 @@ def execute_activity(
     Transitions to SUCCESS/FAILED.
     Emits WebSocket event on completion.
 
+    Circuit breaker: if the handler type's breaker is open, dispatch is
+    skipped and the activity is marked as failed with a clear message.
+
+    Dead-letter: permanently failed activities are registered as dead
+    letters for later replay.
+
+    Handler exception hierarchy: ``PermanentHandlerError`` avoids
+    unnecessary retries; ``TemporaryHandlerError`` allows retry.
+
     Args:
         activity_id: Activity ID to execute.
         execution_id: Execution ID for idempotency validation.
@@ -193,6 +206,40 @@ def execute_activity(
 
     activity = validate_execution(activity_id, execution_id)
     correlation_id = _correlation_id(activity)
+    handler_type = activity.type
+
+    # Circuit breaker check
+    from activities.circuit_breaker import (
+        can_try_half_open,
+        is_open,
+        record_failure,
+        record_success,
+    )
+
+    if is_open(handler_type):
+        if not can_try_half_open(handler_type):
+            err = f"Circuit breaker open for {handler_type} — dispatch blocked"
+            transition_to_failed(activity, err)
+            from activities.dead_letter import register_dead_letter
+
+            register_dead_letter(
+                activity.id,
+                reason="circuit_breaker_open",
+                activity_type=handler_type,
+                error=err,
+            )
+            logger.warning(
+                "activity_circuit_blocked activity_id=%d type=%s "
+                "correlation_id=%s",
+                activity.id,
+                handler_type,
+                correlation_id or "none",
+            )
+            return {
+                "status": "circuit_blocked",
+                "activity_id": activity_id,
+                "result": err,
+            }
 
     transition_to_running(activity)
 
@@ -203,12 +250,10 @@ def execute_activity(
         handler = _get_handler(activity.type)
         result = handler.execute(activity)
 
+        record_success(handler_type)
+
         transition_to_success(activity)
         activity.refresh_from_db()
-        reschedule_recurring(activity)
-
-        duration = time.time() - start_time
-        activity_duration_seconds.labels(type=activity.type).observe(duration)
 
         # Handle HandlerResult or string return
         if isinstance(result, HandlerResult):
@@ -217,6 +262,18 @@ def execute_activity(
         else:
             message = str(result)
             metadata = {}
+
+        # Conditional recurrence: handler metadata can block reschedule
+        reschedule_recurring(activity, handler_result_metadata=metadata)
+
+        # Activity chaining from NDVI recommendations
+        if handler_type == "ndvi_trigger" and metadata.get(
+            "recommended_actions"
+        ):
+            _chain_ndvi_actions(activity, metadata)
+
+        duration = time.time() - start_time
+        activity_duration_seconds.labels(type=activity.type).observe(duration)
 
         logger.info(
             "activity_executed activity_id=%d type=%s result=%s "
@@ -272,8 +329,74 @@ def execute_activity(
             "result": message,
         }
 
+    except PermanentHandlerError as e:
+        err = str(e)
+        transition_to_failed(activity, err)
+        logger.error(
+            "activity_permanent_failure activity_id=%d type=%s error=%s "
+            "correlation_id=%s",
+            activity.id,
+            activity.type,
+            err,
+            correlation_id or "none",
+        )
+
+        from activities.dead_letter import register_dead_letter
+
+        register_dead_letter(
+            activity.id,
+            reason="permanent_handler_failure",
+            activity_type=handler_type,
+            error=err,
+            metadata=e.metadata,
+        )
+        return {
+            "status": "permanent_failure",
+            "activity_id": activity_id,
+            "result": err,
+        }
+
+    except TemporaryHandlerError as e:
+        err = str(e)
+        record_failure(handler_type)
+        transition_to_failed(activity, err)
+        logger.warning(
+            "activity_temporary_failure activity_id=%d type=%s error=%s "
+            "correlation_id=%s",
+            activity.id,
+            activity.type,
+            err,
+            correlation_id or "none",
+        )
+
+        def emit_audio_alert_failed() -> None:
+            try:
+                from alerts.triggers import on_activity_completed
+
+                on_activity_completed(
+                    user_id=activity.owner_id,
+                    farm_id=activity.farm_id,
+                    activity_id=activity.id,
+                    activity_type=activity.type,
+                    status="failed",
+                    message=err,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "audio alert hook failed for activity %d: %s",
+                    activity.id,
+                    exc.__class__.__name__,
+                )
+
+        transaction.on_commit(emit_audio_alert_failed)
+        raise
+
+    except ImportError:
+        raise
+
     except Exception as e:
         err = str(e)
+        record_failure(handler_type)
         transition_to_failed(activity, err)
         logger.error(
             "activity_failed activity_id=%d type=%s error=%s "
@@ -305,6 +428,39 @@ def execute_activity(
 
         transaction.on_commit(emit_audio_alert_failed)
         raise
+
+
+def _chain_ndvi_actions(activity: Any, metadata: dict[str, Any]) -> None:
+    """Chain NDVI recommended actions as follow-up activities.
+
+    Called after a successful ndvi_trigger execution. Creates one
+    PENDING activity per recommended action linked to the same farm.
+    """
+    from activities.metrics import activities_chained_count
+    from activities.services import chain_activity
+
+    actions: list[str] = metadata.get("recommended_actions") or []
+    for action_type in actions:
+        chained = chain_activity(
+            activity,
+            action_type,
+            metadata={
+                "triggered_by_ndvi": True,
+                "source_ndvi_state": metadata.get("state"),
+                "source_farm_id": metadata.get("farm_id"),
+            },
+        )
+        if chained:
+            activities_chained_count.labels(
+                source_type="ndvi_trigger",
+                target_type=action_type,
+            ).inc()
+            logger.info(
+                "ndvi_chained_action activity_id=%d target_type=%s new_id=%d",
+                activity.id,
+                action_type,
+                chained.id,
+            )
 
 
 def _validate_and_execute(activity_id: int, execution_id: str) -> Any:

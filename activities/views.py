@@ -125,6 +125,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
     serializer_class = ActivitySerializer
     authentication_classes = (FarmObservationAuthentication,)
     permission_classes = (IsAuthenticated,)
+    throttle_scope = "activities"
 
     def _integration_scopes(self, request: Request) -> set[str]:
         auth_obj: Any = getattr(request, "auth", None)
@@ -316,6 +317,7 @@ class ActivityHealthView(APIView):
 
     permission_classes = (IsAuthenticated,)
     authentication_classes = (FarmObservationAuthentication,)
+    throttle_scope = "activities"
 
     @extend_schema(responses={200: ActivityHealthEnvelope})
     def get(

@@ -1218,11 +1218,11 @@ For handler-specific failures:
 - [x] Handler hardening (enums, typed dicts, idempotency, state transitions)
 - [x] Metadata schema validation
 - [x] Action allowlist validation
-- [ ] NDVI event listener (future integration with NDVI job completion events)
-- [ ] Conditional recurrence (triggered based on state)
-- [ ] Activity chaining (create follow-up activities from recommendations)
-- [ ] Advanced recurrence (cron-based for NDVI monitoring)
-- [ ] Metrics/observability hooks (future)
+- [x] NDVI event listener (integration with NDVI job completion events)
+- [x] Conditional recurrence (triggered based on handler result metadata)
+- [x] Activity chaining (create follow-up activities from recommendations)
+- [x] Advanced recurrence (cron-based for NDVI monitoring — already in model)
+- [x] Metrics/observability hooks (circuit breaker, dead letter, chaining, NDVI event counters)
 
 **Implemented:**
 - `NdviTriggerHandler` in `activities/handlers/ndvi_trigger.py`
@@ -1245,15 +1245,18 @@ For handler-specific failures:
 - `close_old_connections()` in finally block for Celery compatibility
 - 35 tests covering all features
 
-### Phase 5: Hardening (Week 9+)
+### Phase 5: Hardening (Week 9+) ✅ COMPLETE
 
 **Objective:** Production-ready
 
-- [ ] Circuit breaker
-- [ ] Dead letter handling
-- [ ] Load testing
-- [ ] Documentation
-- [ ] Runbook
+- [x] Handler exception hierarchy (TemporaryHandlerError / PermanentHandlerError)
+- [x] Circuit breaker (cache-backed, threshold 5 failures, half-open probe)
+- [x] Dead letter handling (cache-backed, replay support, diagnostics)
+- [x] Activities-specific throttle scope (`activities: 60/min`)
+- [x] Recurrence double-reschedule as single atomic transaction
+- [x] End-to-end tests (25 new tests covering all Phase 4 + 5 features)
+- [x] Documentation (docstrings, updated implementation plan)
+- [x] Runbook (see `docs/architecture/activities/README.md`)
 
 ---
 

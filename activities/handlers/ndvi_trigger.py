@@ -38,6 +38,7 @@ from django.db import close_old_connections
 
 from activities.handlers.base import HandlerResult
 from activities.handlers.registry import register_handler
+from activities.metrics import activities_ndvi_event_count
 
 if TYPE_CHECKING:
     from activities.models import Activity
@@ -412,6 +413,112 @@ class NdviTriggerHandler:
             return True
 
         return False
+
+
+# ---------------------------------------------------------------------------
+# NDVI event listener — hook into NDVI job/completion events
+# ---------------------------------------------------------------------------
+
+
+def on_ndvi_job_completed(
+    *,
+    farm_id: int,
+    engine: str = "sentinelhub",
+    mean_ndvi: float | None = None,
+    state: str | None = None,
+    metadata: dict | None = None,
+) -> dict[str, object]:
+    """Event listener called when an NDVI job completes.
+
+    This is the integration point between the NDVI processing pipeline
+    and the activity scheduler. It creates or triggers ndvi_trigger
+    activities for the farm whose NDVI state has been refreshed.
+
+    This function is idempotent within a short window — consecutive
+    calls for the same farm_id within the idempotency TTL are silently
+    skipped.
+
+    Args:
+        farm_id: The farm whose NDVI state was refreshed.
+        engine: The NDVI engine used.
+        mean_ndvi: Optional mean NDVI value from the job.
+        state: Optional farm state classification.
+        metadata: Optional additional context.
+
+    Returns:
+        Dict with keys ``triggered`` (bool), ``activity_id`` (int|None),
+        and ``message`` (str).
+    """
+    from activities.models import Activity
+    from activities.services import chain_activity
+
+    meta = dict(metadata or {})
+    meta["farm_id"] = farm_id
+    meta["engine"] = engine
+    meta["source"] = "ndvi_job_completed"
+    if mean_ndvi is not None:
+        meta["mean_ndvi"] = mean_ndvi
+    if state is not None:
+        meta["state"] = state
+
+    # Check idempotency: avoid creating duplicate triggers for same
+    # farm within the TTL window
+    idem_key = f"ndvi_event:listener:{farm_id}:{engine}"
+    if cache.get(idem_key):
+        activities_ndvi_event_count.labels(
+            event_type="job_completed", status="duplicate"
+        ).inc()
+        return {
+            "triggered": False,
+            "activity_id": None,
+            "message": "duplicate",
+        }
+
+    cache.set(idem_key, "1", timeout=IDEMPOTENCY_TTL_SECONDS)
+
+    # Find owner from farm (first user who has an activity for this farm)
+    farm_activities = (
+        Activity.objects.filter(farm_id=farm_id, type="ndvi_trigger")
+        .select_related("owner")
+        .order_by("-created_at")[:1]
+    )
+
+    if not farm_activities:
+        activities_ndvi_event_count.labels(
+            event_type="job_completed", status="no_owner"
+        ).inc()
+        return {
+            "triggered": False,
+            "activity_id": None,
+            "message": "no ndvi_trigger activity found for farm",
+        }
+
+    source = farm_activities[0]
+    chained = chain_activity(
+        source,
+        "ndvi_trigger",
+        metadata=meta,
+    )
+    if chained:
+        activities_ndvi_event_count.labels(
+            event_type="job_completed", status="triggered"
+        ).inc()
+        logger.info(
+            "ndvi_event_triggered farm_id=%d activity_id=%d",
+            farm_id,
+            chained.id,
+        )
+        return {
+            "triggered": True,
+            "activity_id": chained.id,
+            "message": "ndvi_trigger activity created",
+        }
+
+    return {
+        "triggered": False,
+        "activity_id": None,
+        "message": "no owner found for farm",
+    }
 
 
 register_handler(NdviTriggerHandler)

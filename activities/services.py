@@ -316,12 +316,20 @@ def recover_stale_activity(activity: Activity) -> Activity:
     return activity
 
 
-def reschedule_recurring(activity: Activity) -> Activity:
+def reschedule_recurring(
+    activity: Activity,
+    *,
+    handler_result_metadata: dict | None = None,
+) -> Activity:
     """Reschedule a recurring activity after successful execution.
 
     For cron-recurring activities, computes the next due time and
-    transitions the activity back to PENDING so the scheduler pick it up.
+    transitions the activity back to PENDING so the scheduler picks it up.
     For interval-recurring activities, does the same using interval_days.
+
+    When ``handler_result_metadata`` contains a ``conditional_skip`` key
+    with value ``True``, the reschedule is skipped (conditional recurrence
+    gates on handler output).
 
     Returns:
         The updated activity, or the original if not recurring.
@@ -329,6 +337,17 @@ def reschedule_recurring(activity: Activity) -> Activity:
     from activities.models import Activity as ActivityModel
 
     if activity.recurrence_type == ActivityModel.RecurrenceType.NONE:
+        return activity
+
+    result = handler_result_metadata or {}
+
+    # Conditional recurrence: handler result says "don't reschedule"
+    if result.get("conditional_skip"):
+        logger.info(
+            "reschedule_conditional_skip activity_id=%d type=%s",
+            activity.id,
+            activity.type,
+        )
         return activity
 
     if activity.recurrence_type == ActivityModel.RecurrenceType.CRON:
@@ -363,6 +382,50 @@ def reschedule_recurring(activity: Activity) -> Activity:
         )
         return activity
 
+    return activity
+
+
+def chain_activity(
+    source: Activity,
+    target_type: str,
+    *,
+    scheduled_at: datetime | None = None,
+    metadata: dict | None = None,
+) -> Activity | None:
+    """Create a follow-up activity chained from a completed source activity.
+
+    The chained activity is owned by the same user and linked to the same
+    farm (if any). It starts in ``PENDING`` status so the scheduler picks
+    it up on the next poll cycle.
+
+    Returns:
+        The newly created Activity, or ``None`` if the source has no owner.
+    """
+    from activities.models import Activity as ActivityModel
+
+    owner = source.owner
+    if owner is None:
+        return None
+
+    chain_meta = dict(metadata or {})
+    chain_meta["chained_from"] = source.id
+    chain_meta["chained_from_type"] = source.type
+
+    activity = ActivityModel.objects.create(
+        owner=owner,
+        farm_id=source.farm_id,
+        type=target_type,
+        status=ActivityModel.Status.PENDING,
+        scheduled_at=scheduled_at or timezone.now(),
+        next_due_at=scheduled_at or timezone.now(),
+        metadata=chain_meta,
+    )
+    logger.info(
+        "chained_activity source_id=%d target_type=%s new_id=%d",
+        source.id,
+        target_type,
+        activity.id,
+    )
     return activity
 
 

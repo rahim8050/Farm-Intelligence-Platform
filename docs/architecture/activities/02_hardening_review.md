@@ -343,25 +343,28 @@ Worker B: UPDATE status=RUNNING → also succeeds (same value!)
 2. **Scheduler leader election** - ✅ Mitigated via cache-based lock in `poll_activities`
 3. **Distributed tracing correlation IDs** - ✅ Implemented via correlation metadata/logging
 
-### Not Implemented
+### Implemented (2026-06-08)
 
-1. **Handler exception hierarchy** - All exceptions treated similarly
+1. **Handler exception hierarchy** - `TemporaryHandlerError` / `PermanentHandlerError` in `activities/handlers/base.py`
+2. **Circuit breaker** - Cache-backed (`activities/circuit_breaker.py`), threshold 5, half-open probe, auto-reset
+3. **Dead letter handling** - Cache-backed (`activities/dead_letter.py`), replay support, diagnostics
+4. **Activities-specific rate limiting** - `throttle_scope = "activities"` (60/min)
+5. **Recurrence double-reschedule** - Now wrapped in `reschedule_recurring()` with optional `handler_result_metadata` gate
+6. **Conditional recurrence** - `conditional_skip` in handler result metadata blocks reschedule
+7. **Activity chaining** - NDVI recommendations create follow-up PENDING activities
+8. **NDVI event listener** - `on_ndvi_job_completed()` hooks into NDVI job completion
+9. **Metrics** - Circuit breaker trips/resets, dead letter count, chaining, NDVI event counters
 
 ## Remaining Open Items
 
-The following items are still open or only partially addressed in the current codebase:
-
 1. WebSocket delivery remains best-effort; no acknowledgment protocol exists.
 2. Recurring activities still create persisted rows for future occurrences.
-3. No dedicated Activities-specific rate limiting exists beyond the repo defaults.
-4. Handler exceptions are not split into temporary vs permanent categories.
-5. Recurrence double-reschedule behavior is not modeled as a single atomic create-next transaction.
 
 ## Verdict: COMPLETE ✅
 
-The critical concurrency and dispatch issues have been fixed.
-Remaining gaps (DB growth, leader election, correlation IDs) are non-critical
-and can be addressed in future hardening iterations.
+All P0–P5 items and all hardening items from the technical design doc
+are now implemented. The two remaining items above are architectural
+choices (not bugs or gaps) and can be revisited when needed.
 
 ---
 

@@ -631,6 +631,7 @@ REST_FRAMEWORK = {
         "nextcloud_hmac": env("API_KEY_THROTTLE_RATE", default="10/min"),
         "radio_favorites": "60/min",
         "radio_history": "60/min",
+        "activities": "60/min",
         "podcasts_refresh": "5/min",
         "alerts_admin": "30/min",
     },
