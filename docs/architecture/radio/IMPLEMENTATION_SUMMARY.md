@@ -863,3 +863,28 @@ earlier docs:
 - `bandit -c pyproject.toml -r radio/` — 0 issues.
 - `pytest radio/` — 156 passed, 0 regressions (31 new + 125
   pre-existing).
+
+---
+
+## Phase 8 — Radio Browser API Provider (Shipped 2026-06-07)
+
+| Version | Date | Summary |
+|---------|------|---------|
+| 8.0 | June 07, 2026 | Phase 8 (Radio Browser API provider) shipped: new `RadioBrowserProvider` class fetches top-100 stations by click count from the community-maintained Radio Browser directory (~30k stations, open-licensed, no API key). Follows the same pattern as `SomaFMProvider` and `TuneInProvider`. Auto-registers via `radio/providers/radiobrowser.py`. `load_stations.py` extended with a `radiobrowser` `Provider` row. 9 new tests. No model changes. |
+
+### New and changed files
+
+| File | Change |
+|------|--------|
+| `radio/providers/radiobrowser.py` | New — `RadioBrowserProvider(RadioProvider)` with `get_stations()` (filters `hidebroken=true`, orders by click count) and `get_stream_url()`. Caches API response on instance. |
+| `radio/tests/test_providers.py` | 9 new tests: API response parsing, fallback to `url` when `url_resolved` is empty, whitespace stripping, empty-uuid skipping, instance caching, API failure, stream URL lookup (valid + invalid + wrong prefix), health check. |
+| `radio/management/commands/load_stations.py` | Extended with `radiobrowser` Provider row (type `API_BASED`). |
+| `docs/architecture/radio/08_future_expansion.md` | Providers table updated to `✅ shipped`; Radio Browser removed from remaining-work table; note added that it shipped 2026-06-07. |
+
+### Verification
+
+- `ruff check .` — all checks passed.
+- `ruff format .` — clean.
+- `mypy radio/providers/radiobrowser.py` — no issues.
+- `bandit -c pyproject.toml -r radio/providers/radiobrowser.py` — 0 issues.
+- `python -m pytest radio/tests/test_providers.py radio/tests/test_management.py` — 35 passed (29 provider + 6 management).

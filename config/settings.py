@@ -818,6 +818,12 @@ RADIO_NOW_PLAYING_REFRESH_INTERVAL_SECONDS = env.int(
     default=300,
 )
 
+# Signed stream URLs — time-limited JWT expiry in seconds.
+RADIO_SIGNED_STREAM_TTL_SECONDS = env.int(
+    "RADIO_SIGNED_STREAM_TTL_SECONDS",
+    default=3600,
+)
+
 # Podcast feed refresh scheduling
 PODCASTS_REFRESH_INTERVAL_SECONDS = env.int(
     "PODCASTS_REFRESH_INTERVAL_SECONDS",

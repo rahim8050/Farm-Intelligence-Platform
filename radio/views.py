@@ -12,9 +12,13 @@ the standard DRF error envelope.
 
 from __future__ import annotations
 
+import datetime
 from typing import cast
 
+import jwt as pyjwt
+from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.exceptions import NotFound
@@ -410,6 +414,126 @@ class StationStreamView(APIView):
                 "station_name": station.name,
             },
             message="Stream URL retrieved successfully",
+        )
+
+
+SignedStreamData = inline_serializer(
+    name="SignedStreamData",
+    fields={
+        "token": serializers.CharField(
+            help_text="JWT signed stream-access token"
+        ),
+        "stream_url": serializers.URLField(
+            help_text="Resolved stream URL for playback"
+        ),
+        "expires_at": serializers.DateTimeField(
+            help_text="Token expiry timestamp (UTC)"
+        ),
+        "format": serializers.CharField(
+            help_text="Audio format (e.g. MP3, AAC, HLS)"
+        ),
+        "bitrate": serializers.IntegerField(
+            help_text="Stream bitrate in kbps"
+        ),
+        "station_name": serializers.CharField(
+            help_text="Human-readable station name"
+        ),
+    },
+)
+SignedStreamEnvelope = success_envelope_serializer(
+    "RadioSignedStreamEnvelope",
+    data=SignedStreamData,
+)
+
+
+@extend_schema(
+    auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+)
+class SignedStreamView(APIView):
+    """Return a time-limited signed stream URL.
+
+    Generates a JWT that encodes ``station_id``, ``user_id``, and
+    ``exp`` (expiry). The token is signed with the project's
+    ``SECRET_KEY`` using HS256 so callers or a downstream proxy
+    can verify it without a separate DB round-trip.
+
+    Auth: IsAuthenticated
+    Throttle: None
+    Response: envelope with ``data`` = ``{token, stream_url,
+    expires_at, format, bitrate, station_name}``.
+    Errors: 401 if unauthenticated, 404 if station not found/inactive.
+    Side effects: records a listening-history row.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        responses={200: SignedStreamEnvelope, 401: radio_error_envelope},
+        summary="Get signed stream URL",
+        description=(
+            "Returns a time-limited JWT and the stream URL for "
+            "playback. The token is valid for "
+            "``RADIO_SIGNED_STREAM_TTL_SECONDS`` (default 3600s = 1 "
+            "hour). Records a listening-history row for the "
+            "authenticated user."
+        ),
+        operation_id="v1_radio_stations_stream_signed",
+    )
+    @timed("stations.stream_signed")
+    def get(self, request: Request, station_id: str) -> Response:
+        """Return signed stream URL for an authenticated client.
+
+        Args:
+            station_id: The station identifier.
+
+        Outputs:
+            - status: 0
+            - message: "Signed stream URL generated"
+            - data: token, stream_url, expires_at, format,
+              bitrate, station_name
+
+        Side effects:
+            - Records a ListeningHistory row for the user/station.
+        """
+        station = (
+            Station.objects.filter(id=station_id, is_active=True)
+            .select_related("provider")
+            .first()
+        )
+        if not station:
+            raise NotFound("Station not found")
+
+        ttl = getattr(settings, "RADIO_SIGNED_STREAM_TTL_SECONDS", 3600)
+        expires_at = timezone.now() + datetime.timedelta(seconds=ttl)
+        user = cast(AbstractBaseUser, request.user)
+
+        token = cast(
+            str,
+            pyjwt.encode(
+                {
+                    "station_id": station.id,
+                    "user_id": str(user.id),
+                    "exp": int(expires_at.timestamp()),
+                    "iat": int(timezone.now().timestamp()),
+                    "purpose": "stream_access",
+                },
+                settings.SECRET_KEY,
+                algorithm="HS256",
+            ),
+        )
+
+        record_listening_session(user, station, request=request)
+
+        return success_response(
+            {
+                "token": token,
+                "stream_url": station.stream_url,
+                "expires_at": expires_at.isoformat(),
+                "format": station.format,
+                "bitrate": station.bitrate,
+                "station_name": station.name,
+            },
+            message="Signed stream URL generated",
         )
 
 

@@ -12,6 +12,11 @@ urlpatterns = [
         name="station-detail",
     ),
     path(
+        "radio/stations/<str:station_id>/stream/signed/",
+        views.SignedStreamView.as_view(),
+        name="station-stream-signed",
+    ),
+    path(
         "radio/stations/<str:station_id>/stream/",
         views.StationStreamView.as_view(),
         name="station-stream",

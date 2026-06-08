@@ -3,6 +3,7 @@ from unittest.mock import patch
 import requests
 from django.test import TestCase
 
+from radio.providers.radiobrowser import RadioBrowserProvider
 from radio.providers.registry import (
     PROVIDER_REGISTRY,
     get_available_providers,
@@ -174,4 +175,166 @@ class TestTuneInProvider(TestCase):
         """Test health check for non-existent station."""
         provider = TuneInProvider()
         result = provider.health_check("nonexistent")
+        self.assertFalse(result)
+
+
+class TestRadioBrowserProvider(TestCase):
+    """Tests for Radio Browser provider."""
+
+    API_RESPONSE_SAMPLE = [
+        {
+            "stationuuid": "abc-123",
+            "name": "Test Radio One",
+            "tags": "Pop, Rock",
+            "country": "USA",
+            "language": "English",
+            "url": "http://example.com/stream",
+            "url_resolved": "http://example.com/stream-resolved",
+            "codec": "MP3",
+            "bitrate": 128,
+            "favicon": "http://example.com/favicon.ico",
+            "homepage": "http://example.com",
+        },
+        {
+            "stationuuid": "def-456",
+            "name": "  Test Radio Two  ",
+            "tags": "News",
+            "country": "UK",
+            "language": "English",
+            "url": "http://example2.com/stream",
+            "url_resolved": "",
+            "codec": "AAC",
+            "bitrate": 192,
+            "favicon": None,
+            "homepage": None,
+        },
+    ]
+
+    def setUp(self) -> None:
+        self.provider = RadioBrowserProvider(limit=100)
+
+    def test_get_stations_fetches_from_api(self) -> None:
+        """Test get_stations fetches and parses API response."""
+        with patch("radio.providers.radiobrowser.requests.get") as mock_get:
+            mock_resp = mock_get.return_value
+            mock_resp.json.return_value = self.API_RESPONSE_SAMPLE
+            mock_resp.raise_for_status.return_value = None
+            stations = self.provider.get_stations()
+        self.assertEqual(len(stations), 2)
+        self.assertEqual(stations[0]["id"], "radiobrowser_abc-123")
+        self.assertEqual(stations[0]["name"], "Test Radio One")
+        self.assertEqual(
+            stations[0]["stream_url"],
+            "http://example.com/stream-resolved",
+        )
+        self.assertEqual(stations[0]["format"], "MP3")
+        self.assertEqual(stations[0]["bitrate"], 128)
+        self.assertEqual(
+            stations[0]["logo_url"], "http://example.com/favicon.ico"
+        )
+        self.assertEqual(stations[0]["website_url"], "http://example.com")
+
+    def test_get_stations_uses_url_fallback_when_resolved_empty(self) -> None:
+        """Test stream_url falls back to url when url_resolved is empty."""
+        with patch("radio.providers.radiobrowser.requests.get") as mock_get:
+            mock_resp = mock_get.return_value
+            mock_resp.json.return_value = self.API_RESPONSE_SAMPLE
+            mock_resp.raise_for_status.return_value = None
+            stations = self.provider.get_stations()
+        self.assertEqual(
+            stations[1]["stream_url"],
+            "http://example2.com/stream",
+        )
+
+    def test_get_stations_strips_whitespace_from_name(self) -> None:
+        """Test station name is stripped."""
+        with patch("radio.providers.radiobrowser.requests.get") as mock_get:
+            mock_resp = mock_get.return_value
+            mock_resp.json.return_value = self.API_RESPONSE_SAMPLE
+            mock_resp.raise_for_status.return_value = None
+            stations = self.provider.get_stations()
+        self.assertEqual(stations[1]["name"], "Test Radio Two")
+
+    def test_get_stations_handles_empty_stationuuid(self) -> None:
+        """Test stations with empty uuid are skipped."""
+        data = self.API_RESPONSE_SAMPLE + [
+            {
+                "stationuuid": "",
+                "name": "Bad Station",
+                "tags": "",
+                "country": "",
+                "language": "",
+                "url": "",
+                "url_resolved": "",
+                "codec": "",
+                "bitrate": 0,
+            }
+        ]
+        with patch("radio.providers.radiobrowser.requests.get") as mock_get:
+            mock_resp = mock_get.return_value
+            mock_resp.json.return_value = data
+            mock_resp.raise_for_status.return_value = None
+            stations = self.provider.get_stations()
+        self.assertEqual(len(stations), 2)
+
+    def test_get_stations_caches_on_instance(self) -> None:
+        """Test stations are cached on the instance after first fetch."""
+        with patch("radio.providers.radiobrowser.requests.get") as mock_get:
+            mock_resp = mock_get.return_value
+            mock_resp.json.return_value = self.API_RESPONSE_SAMPLE
+            mock_resp.raise_for_status.return_value = None
+            self.provider.get_stations()
+            self.provider.get_stations()
+        self.assertEqual(mock_get.call_count, 1)
+
+    def test_get_stations_api_failure_returns_empty(self) -> None:
+        """Test get_stations returns empty list on API failure."""
+        with patch("radio.providers.radiobrowser.requests.get") as mock_get:
+            mock_get.side_effect = requests.RequestException("Network error")
+            stations = self.provider.get_stations()
+        self.assertEqual(stations, [])
+
+    def test_get_stream_url_valid(self) -> None:
+        """Test getting stream URL for valid station."""
+        with patch("radio.providers.radiobrowser.requests.get") as mock_get:
+            mock_resp = mock_get.return_value
+            mock_resp.json.return_value = self.API_RESPONSE_SAMPLE
+            mock_resp.raise_for_status.return_value = None
+            url = self.provider.get_stream_url("radiobrowser_abc-123")
+        self.assertEqual(url, "http://example.com/stream-resolved")
+
+    def test_get_stream_url_non_radiobrowser_prefix_raises(self) -> None:
+        """Test stream URL for non-radiobrowser prefix raises."""
+        with self.assertRaises(ValueError) as ctx:
+            self.provider.get_stream_url("somafm_groovesalad")
+        self.assertEqual(
+            str(ctx.exception),
+            "Not a Radio Browser station: somafm_groovesalad",
+        )
+
+    def test_get_stream_url_nonexistent_raises(self) -> None:
+        """Test stream URL for unknown station raises."""
+        with patch("radio.providers.radiobrowser.requests.get") as mock_get:
+            mock_resp = mock_get.return_value
+            mock_resp.json.return_value = self.API_RESPONSE_SAMPLE
+            mock_resp.raise_for_status.return_value = None
+            with self.assertRaises(ValueError) as ctx:
+                self.provider.get_stream_url("radiobrowser_unknown")
+        self.assertEqual(
+            str(ctx.exception),
+            "Station not found: radiobrowser_unknown",
+        )
+
+    def test_health_check_existing_station(self) -> None:
+        """Test health check for existing station."""
+        with patch("radio.providers.radiobrowser.requests.get") as mock_get:
+            mock_resp = mock_get.return_value
+            mock_resp.json.return_value = self.API_RESPONSE_SAMPLE
+            mock_resp.raise_for_status.return_value = None
+            result = self.provider.health_check("radiobrowser_abc-123")
+        self.assertTrue(result)
+
+    def test_health_check_nonexistent_station(self) -> None:
+        """Test health check for non-existent station."""
+        result = self.provider.health_check("nonexistent")
         self.assertFalse(result)

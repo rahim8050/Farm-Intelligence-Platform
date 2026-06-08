@@ -42,6 +42,17 @@ class Command(BaseCommand):
         )
         self.stdout.write(f"Provider: {tunein_provider.name}")
 
+        radiobrowser_provider, _ = Provider.objects.get_or_create(
+            slug="radiobrowser",
+            defaults={
+                "name": "Radio Browser",
+                "provider_type": ProviderType.API_BASED,
+                "website_url": "https://www.radio-browser.info",
+                "is_active": True,
+            },
+        )
+        self.stdout.write(f"Provider: {radiobrowser_provider.name}")
+
         bbc_stations = [
             {
                 "id": "bbc_radio1",
