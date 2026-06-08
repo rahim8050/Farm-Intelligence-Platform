@@ -32,7 +32,13 @@ All successful responses use the project envelope produced by
 `config.api.responses.success_response`:
 
 ```json
-{ "status": 0, "message": "string", "data": {}, "errors": null }
+{
+  "status": 0,
+  "message": "string",
+  "data": {},
+  "errors": null,
+  "request_id": "req_..."
+}
 ```
 
 | Method | Path | Auth | Purpose | Key params |
@@ -75,7 +81,8 @@ Response:
     "wind_speed_mps": 3.5,
     "source": "open_meteo"
   },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -106,7 +113,8 @@ Response:
       }
     ]
   },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -124,7 +132,8 @@ Response:
   "status": 0,
   "message": "OK",
   "data": { "reports": [{ "week_start": "2024-12-30", "week_end": "2025-01-05" }] },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -156,7 +165,8 @@ Response:
       }
     ]
   },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 

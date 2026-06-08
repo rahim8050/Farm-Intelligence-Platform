@@ -27,7 +27,13 @@ All successful responses use the project envelope produced by
 `config.api.responses.success_response`:
 
 ```json
-{ "status": 0, "message": "string", "data": {}, "errors": null }
+{
+  "status": 0,
+  "message": "string",
+  "data": {},
+  "errors": null,
+  "request_id": "req_..."
+}
 ```
 
 | Method | Path | Auth | Purpose |

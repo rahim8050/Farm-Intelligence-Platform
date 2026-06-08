@@ -41,11 +41,11 @@ standard DRF serializer JSON (they do not use `success_response`; from code:
 
 | Method | Path | Auth | Purpose | Key params |
 | --- | --- | --- | --- | --- |
-| GET | `/api/v1/farms/` | JWT or `X-API-Key` | List farms (owner-scoped) | none |
-| POST | `/api/v1/farms/` | JWT or `X-API-Key` | Create a farm | body: `name`, optional spatial fields |
-| GET | `/api/v1/farms/<id>/` | JWT or `X-API-Key` | Retrieve a farm (owner-only) | path: `id` |
-| PATCH | `/api/v1/farms/<id>/` | JWT or `X-API-Key` | Update a farm (owner-only) | path: `id` |
-| DELETE | `/api/v1/farms/<id>/` | JWT or `X-API-Key` | Delete a farm (owner-only) | path: `id` |
+| GET | `/api/v1/farms/` | JWT, `X-API-Key`, or integration JWT | List farms (owner-scoped) | none |
+| POST | `/api/v1/farms/` | JWT, `X-API-Key`, or integration JWT | Create a farm | body: `name`, optional spatial fields |
+| GET | `/api/v1/farms/<id>/` | JWT, `X-API-Key`, or integration JWT | Retrieve a farm (owner-only) | path: `id` |
+| PATCH | `/api/v1/farms/<id>/` | JWT, `X-API-Key`, or integration JWT | Update a farm (owner-only) | path: `id` |
+| DELETE | `/api/v1/farms/<id>/` | JWT, `X-API-Key`, or integration JWT | Delete a farm (owner-only) | path: `id` |
 
 ### Farm observations
 
@@ -62,6 +62,22 @@ requires the integration client to be allow-listed for the farm via
 | GET | `/api/v1/farms/<farm_id>/observations/<id>/` | JWT, `X-API-Key`, or integration JWT | Retrieve an observation | path: `farm_id`, `id` |
 | PATCH | `/api/v1/farms/<farm_id>/observations/<id>/` | JWT, `X-API-Key`, or integration JWT | Update an observation | path: `farm_id`, `id` |
 | DELETE | `/api/v1/farms/<farm_id>/observations/<id>/` | JWT, `X-API-Key`, or integration JWT | Delete an observation | path: `farm_id`, `id` |
+
+### Farm activities
+
+These endpoints return the `success_response` envelope and support
+JWT, `X-API-Key`, or integration JWT authentication. Integration JWT access
+requires the integration client to be allow-listed for the farm via
+`farms.models.FarmIntegrationAccess`. Integration JWT scope must include
+`read` for GET and `write` for POST/PATCH/DELETE.
+
+| Method | Path | Auth | Purpose | Key params |
+| --- | --- | --- | --- | --- |
+| GET | `/api/v1/farms/<farm_id>/activities/` | JWT, `X-API-Key`, or integration JWT | List activities | path: `farm_id`, optional query: `status`, `type`, `limit`, `offset` |
+| POST | `/api/v1/farms/<farm_id>/activities/` | JWT, `X-API-Key`, or integration JWT | Create an activity | body: `type`, `scheduled_at`, optional `recurrence_type`, `interval_days`, `cron_expression`, `farm`, `metadata` |
+| GET | `/api/v1/farms/<farm_id>/activities/<id>/` | JWT, `X-API-Key`, or integration JWT | Retrieve an activity | path: `farm_id`, `id` |
+| PATCH | `/api/v1/farms/<farm_id>/activities/<id>/` | JWT, `X-API-Key`, or integration JWT | Update an activity | path: `farm_id`, `id` |
+| DELETE | `/api/v1/farms/<farm_id>/activities/<id>/` | JWT, `X-API-Key`, or integration JWT | Delete an activity | path: `farm_id`, `id` |
 
 ### Examples
 

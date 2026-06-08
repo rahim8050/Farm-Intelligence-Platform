@@ -53,7 +53,13 @@ All successful JSON responses use the project envelope produced by
 `config.api.responses.success_response`:
 
 ```json
-{ "status": 0, "message": "string", "data": {}, "errors": null }
+{
+  "status": 0,
+  "message": "string",
+  "data": {},
+  "errors": null,
+  "request_id": "req_..."
+}
 ```
 
 | Method | Path | Auth | Purpose | Key params |
@@ -116,7 +122,8 @@ Response:
     "farm": 1,
     "metadata": {"cattle_id": 123}
   },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -177,7 +184,8 @@ Response:
       "scheduled_at": "2026-06-01T09:00:00+00:00"
     }
   ],
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 

@@ -35,7 +35,13 @@ All successful JSON responses use the project envelope produced by
 `config.api.responses.success_response`:
 
 ```json
-{ "status": 0, "message": "string", "data": {}, "errors": null }
+{
+  "status": 0,
+  "message": "string",
+  "data": {},
+  "errors": null,
+  "request_id": "req_..."
+}
 ```
 
 AuthZ notes:
@@ -81,7 +87,8 @@ Response:
     "is_partial": true,
     "missing_buckets_count": 2
   },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -103,7 +110,8 @@ Response:
   "status": 0,
   "message": "Latest NDVI",
   "data": { "observation": null, "stale": true, "engine": "sentinelhub" },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -124,7 +132,8 @@ Response (queued):
   "status": 0,
   "message": "Refresh queued",
   "data": { "job_id": 123 },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -158,7 +167,8 @@ Response (queued):
   "status": 0,
   "message": "Raster render queued",
   "data": { "job_id": 456 },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -172,7 +182,13 @@ curl -sS "http://localhost:8000/api/v1/ndvi/jobs/$JOB_ID/" \
 Response:
 
 ```json
-{ "status": 0, "message": "Job status", "data": { "status": "queued" }, "errors": null }
+{
+  "status": 0,
+  "message": "Job status",
+  "data": { "status": "queued" },
+  "errors": null,
+  "request_id": "req_..."
+}
 ```
 
 ## Business logic

@@ -24,11 +24,18 @@ All successful responses from this app use the project envelope produced by
 `config.api.responses.success_response`:
 
 ```json
-{ "status": 0, "message": "string", "data": {}, "errors": null }
+{
+  "status": 0,
+  "message": "string",
+  "data": {},
+  "errors": null,
+  "request_id": "req_..."
+}
 ```
 
 Error responses are wrapped by the global exception handler in
-`config/api/exceptions.py` (shape varies by error type).
+`config/api/exceptions.py` and use the same envelope shape with
+`status: 1`, `data: null`, and a populated `errors` payload.
 
 | Method | Path | Auth | Purpose | Key params |
 | --- | --- | --- | --- | --- |
@@ -57,7 +64,8 @@ Response (success envelope):
   "status": 0,
   "message": "Registered successfully",
   "data": { "user": {}, "tokens": { "access": "...", "refresh": "..." } },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -76,7 +84,8 @@ Response:
   "status": 0,
   "message": "Login successful",
   "data": { "user": {}, "tokens": { "access": "...", "refresh": "..." } },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -95,7 +104,8 @@ Response:
   "status": 0,
   "message": "Token refreshed",
   "data": { "access": "..." },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -113,7 +123,8 @@ Response:
   "status": 0,
   "message": "User profile",
   "data": { "id": 123, "username": "alice", "email": "alice@example.com" },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -129,7 +140,13 @@ curl -sS -X POST http://localhost:8000/api/v1/auth/password/change/ \
 Response:
 
 ```json
-{ "status": 0, "message": "Password changed", "data": null, "errors": null }
+{
+  "status": 0,
+  "message": "Password changed",
+  "data": null,
+  "errors": null,
+  "request_id": "req_..."
+}
 ```
 
 #### Password reset request
@@ -147,7 +164,8 @@ Response (always 200, generic message):
   "status": 0,
   "message": "If an account exists for this email, a reset link has been sent.",
   "data": null,
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -166,7 +184,8 @@ Success response:
   "status": 0,
   "message": "Password has been reset.",
   "data": null,
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -177,7 +196,8 @@ Invalid/expired token response:
   "status": 1,
   "message": "Invalid or expired reset link.",
   "data": null,
-  "errors": { "token": ["Invalid or expired token."] }
+  "errors": { "token": ["Invalid or expired token."] },
+  "request_id": "req_..."
 }
 ```
 

@@ -33,7 +33,13 @@ All successful responses use the project envelope produced by
 `config.api.responses.success_response`:
 
 ```json
-{ "status": 0, "message": "string", "data": {}, "errors": null }
+{
+  "status": 0,
+  "message": "string",
+  "data": {},
+  "errors": null,
+  "request_id": "req_..."
+}
 ```
 
 | Method | Path | Auth | Purpose | Key params |
@@ -55,7 +61,13 @@ curl -sS http://localhost:8000/api/v1/keys/ \
 Response:
 
 ```json
-{ "status": 0, "message": "API keys", "data": [{ "id": "..." }], "errors": null }
+{
+  "status": 0,
+  "message": "API keys",
+  "data": [{ "id": "..." }],
+  "errors": null,
+  "request_id": "req_..."
+}
 ```
 
 #### Create key
@@ -74,7 +86,8 @@ Response (plaintext returned once):
   "status": 0,
   "message": "API key created",
   "data": { "id": "...", "api_key": "wk_live_..." },
-  "errors": null
+  "errors": null,
+  "request_id": "req_..."
 }
 ```
 
@@ -88,7 +101,13 @@ curl -sS -X DELETE http://localhost:8000/api/v1/keys/$KEY_ID/ \
 Response:
 
 ```json
-{ "status": 0, "message": "API key revoked", "data": null, "errors": null }
+{
+  "status": 0,
+  "message": "API key revoked",
+  "data": null,
+  "errors": null,
+  "request_id": "req_..."
+}
 ```
 
 #### Rotate key
@@ -103,7 +122,13 @@ curl -sS -X POST http://localhost:8000/api/v1/keys/$KEY_ID/rotate/ \
 Response (plaintext returned once):
 
 ```json
-{ "status": 0, "message": "API key rotated", "data": { "api_key": "wk_live_..." }, "errors": null }
+{
+  "status": 0,
+  "message": "API key rotated",
+  "data": { "api_key": "wk_live_..." },
+  "errors": null,
+  "request_id": "req_..."
+}
 ```
 
 ## Business logic
@@ -156,4 +181,3 @@ auth is logged (from code: `api_keys/auth.py`).
 
 - Tests live in `tests/test_api_keys.py`.
 - Run: `pytest tests/test_api_keys.py`
-
