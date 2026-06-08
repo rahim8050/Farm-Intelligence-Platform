@@ -67,6 +67,11 @@ urlpatterns = [
         name="radio-history-recent",
     ),
     path(
+        "radio/history/<int:session_id>/stop/",
+        views.ListeningSessionStopView.as_view(),
+        name="radio-history-stop",
+    ),
+    path(
         "radio/emergency/current/",
         views.EmergencyCurrentView.as_view(),
         name="radio-emergency-current",

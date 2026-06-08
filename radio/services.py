@@ -58,6 +58,7 @@ DEFAULT_FALLBACK_STATION_MAP: dict[str, str] = {
 # ICY ``StreamTitle=`` line. Real metadata blocks are < 16 KiB; this
 # cap is a defensive bound for misbehaving servers.
 NOW_PLAYING_MAX_METADATA_BYTES = 16 * 1024
+NOW_PLAYING_ENRICH_TIMEOUT_SECONDS = 3.0
 NOW_PLAYING_HTTP_TIMEOUT_SECONDS = 5.0
 
 
@@ -453,6 +454,28 @@ def record_listening_session(
         return None
 
 
+def stop_listening_session(
+    user: AbstractBaseUser | AnonymousUser | Any,
+    session_id: int,
+) -> ListeningHistory | None:
+    """Set ``ended_at`` on a listening-history row (client stop).
+
+    The session must belong to the given user; otherwise ``None`` is
+    returned and nothing is modified (the caller should return 404).
+
+    Idempotent: calling again on an already-stopped session is a no-op
+    (returns the row as-is).
+    """
+    try:
+        session = ListeningHistory.objects.get(id=session_id, user=user)
+    except ListeningHistory.DoesNotExist:
+        return None
+    if session.ended_at is None:
+        session.ended_at = timezone.now()
+        session.save(update_fields=["ended_at"])
+    return session
+
+
 def list_history_for_user(
     user: AbstractBaseUser | AnonymousUser | Any,
     *,
@@ -817,6 +840,50 @@ def fetch_icy_metadata(url: str) -> dict[str, str]:
     }
 
 
+def _enrich_with_album_artwork(artist: str, title: str) -> dict[str, str]:
+    """Look up album and artwork URL for a given artist + title.
+
+    Uses the Deezer public search API (no key needed). Best-effort:
+    any network error, timeout, or non-200 response silently returns
+    ``{}`` so it can never break the now-playing refresh loop.
+    """
+    if not artist or not title:
+        return {}
+    query = f'artist:"{artist}" track:"{title}"'
+    url = "https://api.deezer.com/search"
+    try:
+        with httpx.Client(
+            timeout=NOW_PLAYING_ENRICH_TIMEOUT_SECONDS
+        ) as client:
+            response = client.get(
+                url,
+                params={"q": query, "limit": 1, "output": "json"},
+                headers={"User-Agent": "weather-apis/1.0"},
+            )
+    except httpx.HTTPError:
+        return {}
+    if response.status_code != 200:
+        return {}
+    try:
+        data = response.json()
+    except Exception:  # noqa: BLE001
+        return {}
+    items = data.get("data", [])
+    if not items:
+        return {}
+    album = items[0].get("album", {})
+    if not album:
+        return {}
+    result: dict[str, str] = {}
+    raw_album = album.get("title", "")
+    if raw_album:
+        result["album"] = raw_album[:500]
+    raw_artwork = album.get("cover_medium", "") or album.get("cover_big", "")
+    if raw_artwork:
+        result["artwork_url"] = raw_artwork
+    return result
+
+
 def refresh_now_playing(station_id: str | None = None) -> dict[str, int]:
     """Refresh :class:`NowPlaying` rows from each station's
     configured ``metadata_url``.
@@ -843,13 +910,21 @@ def refresh_now_playing(station_id: str | None = None) -> dict[str, int]:
         if not parsed:
             skipped += 1
             continue
+        enriched = _enrich_with_album_artwork(
+            parsed.get("artist", ""), parsed.get("track_title", "")
+        )
+        defaults: dict[str, object] = {
+            "track_title": parsed.get("track_title", "")[:500],
+            "artist": parsed.get("artist", "")[:500],
+        }
+        if enriched.get("album"):
+            defaults["album"] = enriched["album"]
+        if enriched.get("artwork_url"):
+            defaults["artwork_url"] = enriched["artwork_url"]
         with transaction.atomic():
             NowPlaying.objects.update_or_create(
                 station=station,
-                defaults={
-                    "track_title": parsed.get("track_title", "")[:500],
-                    "artist": parsed.get("artist", "")[:500],
-                },
+                defaults=defaults,
             )
         updated += 1
     logger.info(

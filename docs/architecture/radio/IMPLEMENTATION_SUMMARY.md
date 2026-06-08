@@ -888,3 +888,58 @@ earlier docs:
 - `mypy radio/providers/radiobrowser.py` — no issues.
 - `bandit -c pyproject.toml -r radio/providers/radiobrowser.py` — 0 issues.
 - `python -m pytest radio/tests/test_providers.py radio/tests/test_management.py` — 35 passed (29 provider + 6 management).
+
+---
+
+## Phase 9 — Signed Stream URLs (Shipped 2026-06-08)
+
+| Version | Date | Summary |
+|---------|------|---------|
+| 9.0 | June 08, 2026 | New `GET /api/v1/radio/stations/<id>/stream/signed/` endpoint. Auth-gated (`IsAuthenticated`). Generates an HS256 JWT (signed with `SECRET_KEY`) encoding `station_id`, `user_id`, `exp`, `iat`, `purpose: "stream_access"`. TTL configurable via `RADIO_SIGNED_STREAM_TTL_SECONDS` (default 3600s). Records a listening-history row like the public endpoint. |
+
+### New and changed files
+
+| File | Change |
+|------|--------|
+| `config/settings.py` | New `RADIO_SIGNED_STREAM_TTL_SECONDS=3600` (env-overridable) |
+| `radio/views.py` | New `SignedStreamView` class + `SignedStreamData` / `SignedStreamEnvelope` for OpenAPI |
+| `radio/urls.py` | New `station-stream-signed` route |
+| `radio/tests/test_signed_stream.py` | 8 tests: auth gating, JWT decoding, TTL config, expires_at response, 404 for missing/inactive station, history recording, distinct tokens per user |
+
+### Verification
+
+- `ruff check .` — all checks passed.
+- `ruff format .` — clean.
+- `mypy radio/views.py` — no issues.
+- `bandit -c pyproject.toml -r radio/views.py radio/urls.py` — 0 issues.
+- `python manage.py spectacular --file /tmp/schema.yml` — no new errors.
+- `python -m pytest radio/tests/test_signed_stream.py` — 8 passed.
+
+---
+
+## Phase 10 — Stop Events + Now-Playing Enrichment (Shipped 2026-06-08)
+
+| Version | Date | Summary |
+|---------|------|---------|
+| 10.0 | June 08, 2026 | Two remaining gaps closed: (1) `POST /api/v1/radio/history/<id>/stop/` sets `ListeningHistory.ended_at` (auth-gated, idempotent, validates ownership). (2) `refresh_now_playing` enriches ICY metadata with `album` + `artwork_url` via Deezer public API (best-effort, 3s timeout, silent failure). All P0–P6 roadmap items and all future-expansion items now shipped. |
+
+### New and changed files
+
+| File | Change |
+|------|--------|
+| `radio/services.py` | New `stop_listening_session(user, session_id)`; new `_enrich_with_album_artwork(artist, title)` using Deezer search API; `refresh_now_playing` updated to call enrichment |
+| `radio/views.py` | New `ListeningSessionStopView` class |
+| `radio/urls.py` | New `radio-history-stop` route |
+| `radio/tests/test_stop_session.py` | 8 tests (4 service + 4 endpoint): stop, idempotency, wrong user, nonexistent, auth gating, 404s |
+| `radio/tests/test_now_playing.py` | 9 tests (7 unit + 2 integration): enrichment hits/misses/errors/empty input, integration with refresh loop |
+| `docs/architecture/radio/08_future_expansion.md` | Remaining-work section now empty (all items shipped) |
+
+### Verification
+
+- `ruff check .` — all checks passed.
+- `ruff format .` — clean.
+- `mypy radio/services.py radio/views.py` — no issues.
+- `bandit -c pyproject.toml -r radio/` — 0 issues.
+- `python manage.py makemigrations --check --dry-run` — no changes.
+- `python manage.py spectacular --file /tmp/schema.yml` — no new errors (only 2 pre-existing).
+- `python -m pytest radio/tests/test_stop_session.py radio/tests/test_now_playing.py` — 17 passed.

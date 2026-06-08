@@ -1,11 +1,11 @@
 # Future Expansion Planning
 
-> **Status (2026-06-08)**: Every P0–P6 row in the feature roadmap
-> at the bottom of this document has shipped. The rest of this
+> **Status (2026-06-08)**: Every roadmap item and every
+> future-expansion item listed below has shipped. The rest of this
 > document is kept as a historical sketch of how the system grew;
 > see the pointers next to each section for the current
-> implementation. Genuine future work is listed in
-> [§ Remaining Work](#remaining-work) at the end.
+> implementation. There is **no remaining work** — the radio app
+> is complete per the planned scope.
 
 ## Additional Radio Stations
 
@@ -121,13 +121,8 @@ providers.
 
 ## Remaining Work
 
-These items are **not** in the P0–P6 roadmap and have not
-shipped. They are kept here so the next agent has a written
-record of what's still possible. (Radio Browser API provider
-shipped 2026-06-07; signed URLs shipped 2026-06-08 — neither is
-listed below.)
-
-| Item | Notes | Doc reference |
-|------|-------|---------------|
-| **Client-driven listening session stop events** | `ListeningHistory.ended_at` stays `NULL` because there is no client endpoint that posts a stop. Needs `POST /api/v1/radio/listening/sessions/<id>/stop/` (auth'd) and matching start event. | `05_data_model.md:156, 619` |
-| **Now-playing artwork + album fields** | `NowPlaying.album` and `NowPlaying.artwork_url` exist on the model but are not populated by `refresh_now_playing` (ICY only carries `StreamTitle`). Would require a richer metadata source (e.g. RadioDNS / RadioEPG). | `radio/models.py:NowPlaying` |
+All items from the original roadmap and future-expansion list
+have shipped as of 2026-06-08. (Radio Browser API provider
+shipped 2026-06-07; signed URLs shipped 2026-06-08;
+client-driven stop events shipped 2026-06-08; now-playing
+artwork + album enrichment shipped 2026-06-08.)

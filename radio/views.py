@@ -72,6 +72,7 @@ from radio.services import (
     list_emergency_history,
     record_listening_session,
     remove_favorite,
+    stop_listening_session,
     summarize_health,
     update_emergency_broadcast,
 )
@@ -1043,6 +1044,68 @@ class ListeningHistoryRecentView(APIView):
             message="Recent history retrieved",
             page_size=limit,
             max_page_size=limit,
+        )
+
+
+@extend_schema(
+    auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+)
+class ListeningSessionStopView(APIView):
+    """Stop a listening session (set ``ended_at``).
+
+    The session must belong to the authenticated user. Idempotent:
+    calling again on an already-stopped session is a no-op (200).
+
+    Auth: IsAuthenticated
+    Throttle: scope ``radio_history`` (60/min)
+    Response: envelope with ``data`` = ``{ended_at}``.
+    Errors: 401 if unauthenticated, 404 if session not found or
+    belongs to another user.
+    Side effects: sets ``ListeningHistory.ended_at``.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_scope = "radio_history"
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: radio_null_envelope,
+            401: radio_error_envelope,
+            404: radio_error_envelope,
+        },
+        summary="Stop a listening session",
+        description=(
+            "Sets ``ended_at`` on the listening-history row identified "
+            "by ``session_id``. The session must belong to the "
+            "authenticated user. Idempotent."
+        ),
+        operation_id="v1_radio_history_stop",
+    )
+    def post(self, request: Request, session_id: int) -> Response:
+        """Stop a listening session.
+
+        Args:
+            session_id: The listening-history row ID.
+
+        Outputs:
+            - status: 0
+            - message: "Listening session stopped"
+            - data: None
+
+        Side effects:
+            - Sets ``ListeningHistory.ended_at`` to now.
+        """
+        user = cast(
+            AbstractBaseUser | AnonymousUser,
+            getattr(request, "user", AnonymousUser()),
+        )
+        session = stop_listening_session(user, session_id)
+        if session is None:
+            raise NotFound("Listening session not found")
+        return success_response(
+            data=None,
+            message="Listening session stopped",
         )
 
 
