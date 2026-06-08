@@ -1,6 +1,6 @@
 # Future Expansion Planning
 
-> **Status (2026-06-07)**: Every P0–P5 row in the feature roadmap
+> **Status (2026-06-08)**: Every P0–P6 row in the feature roadmap
 > at the bottom of this document has shipped. The rest of this
 > document is kept as a historical sketch of how the system grew;
 > see the pointers next to each section for the current
@@ -121,13 +121,13 @@ providers.
 
 ## Remaining Work
 
-These items are **not** in the P0–P5 roadmap and have not
+These items are **not** in the P0–P6 roadmap and have not
 shipped. They are kept here so the next agent has a written
 record of what's still possible. (Radio Browser API provider
-was shipped 2026-06-07 and is no longer listed below.)
+shipped 2026-06-07; signed URLs shipped 2026-06-08 — neither is
+listed below.)
 
 | Item | Notes | Doc reference |
 |------|-------|---------------|
-| **Authenticated streams (signed URLs)** | Replace the public `/radio/stations/<id>/stream/` with a JWT-gated `SignedStreamUrlView` that issues time-limited URLs. Sketch lives in `06_security.md` § Future. Low volume; today all clients are first-party. | `06_security.md:128` |
 | **Client-driven listening session stop events** | `ListeningHistory.ended_at` stays `NULL` because there is no client endpoint that posts a stop. Needs `POST /api/v1/radio/listening/sessions/<id>/stop/` (auth'd) and matching start event. | `05_data_model.md:156, 619` |
 | **Now-playing artwork + album fields** | `NowPlaying.album` and `NowPlaying.artwork_url` exist on the model but are not populated by `refresh_now_playing` (ICY only carries `StreamTitle`). Would require a richer metadata source (e.g. RadioDNS / RadioEPG). | `radio/models.py:NowPlaying` |
