@@ -172,3 +172,35 @@ def push_failures(*, reason: str) -> None:
     if alerts_push_failures_total is None:  # pragma: no cover
         return
     alerts_push_failures_total.labels(reason=reason).inc()
+
+
+# --- Client acknowledgment ------------------------------------------------
+
+alerts_acknowledgments_total = _counter(
+    "alerts_acknowledgments_total",
+    "Client WebSocket ack received for an audio alert.",
+    ["method"],
+)
+
+
+def acknowledgment(*, method: str = "websocket") -> None:
+    """Increment :data:`alerts_acknowledgments_total`."""
+    if alerts_acknowledgments_total is None:  # pragma: no cover
+        return
+    alerts_acknowledgments_total.labels(method=method).inc()
+
+
+# --- Replay ---------------------------------------------------------------
+
+alerts_replay_total = _counter(
+    "alerts_replay_total",
+    "Audio alerts replayed to client on reconnect.",
+    ["result"],
+)
+
+
+def replay(*, result: str = "success") -> None:
+    """Increment :data:`alerts_replay_total`."""
+    if alerts_replay_total is None:  # pragma: no cover
+        return
+    alerts_replay_total.labels(result=result).inc()

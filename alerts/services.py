@@ -218,12 +218,31 @@ def dispatch_alert_fast(
         delivered = False
         try:
             sent = emit_audio_alert_event(user_id, build_push_payload(alert))
+            alert.delivery_attempts += 1
             if sent:
                 alert.is_delivered = True
                 alert.delivered_at = timezone.now()
-                alert.save(update_fields=["is_delivered", "delivered_at"])
+                alert.save(
+                    update_fields=[
+                        "is_delivered",
+                        "delivered_at",
+                        "delivery_attempts",
+                    ]
+                )
                 delivered = True
+            else:
+                alert.last_delivery_error = (
+                    "push returned 0 (no layer or error)"
+                )
+                alert.save(
+                    update_fields=["delivery_attempts", "last_delivery_error"]
+                )
         except Exception as exc:  # noqa: BLE001
+            alert.delivery_attempts += 1
+            alert.last_delivery_error = str(exc)
+            alert.save(
+                update_fields=["delivery_attempts", "last_delivery_error"]
+            )
             metrics.dispatch_failures(
                 alert_type=alert_type, reason=exc.__class__.__name__
             )
@@ -286,12 +305,32 @@ def dispatch_alert(
     return result
 
 
+def confirm_delivery(*, user_id: int, alert_id: UUID) -> bool:
+    """Record a client-confirmed delivery via WebSocket ack. Idempotent.
+
+    The client sends a ``ack_audio_alert`` message over the WebSocket
+    after receiving and decoding the alert payload. This function
+    records the confirmation timestamp so the system can distinguish
+    "server pushed" (``is_delivered`` / ``delivered_at``) from
+    "client confirmed receipt" (``client_confirmed_at``).
+    """
+    close_old_connections()
+    updated = AudioAlert.objects.filter(
+        user_id=user_id, id=alert_id, client_confirmed_at__isnull=True
+    ).update(client_confirmed_at=timezone.now())
+    if updated:
+        metrics.acknowledgment(method="websocket")
+    return bool(updated)
+
+
 def acknowledge_alert(*, user_id: int, alert_id: UUID) -> bool:
     """Mark one of the user's alerts as acknowledged. Idempotent."""
     close_old_connections()
     updated = AudioAlert.objects.filter(
         user_id=user_id, id=alert_id, is_acknowledged=False
     ).update(is_acknowledged=True, acknowledged_at=timezone.now())
+    if updated:
+        metrics.acknowledgment(method="rest_api")
     return bool(updated)
 
 

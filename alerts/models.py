@@ -117,7 +117,9 @@ class AudioAlert(models.Model):
     source_object_id = models.CharField(max_length=64, blank=True)
     is_delivered = models.BooleanField(
         default=False,
-        help_text="True once a WebSocket push has been confirmed.",
+        help_text=(
+            "True once a WebSocket push has been confirmed by the server."
+        ),
     )
     is_acknowledged = models.BooleanField(
         default=False,
@@ -125,6 +127,20 @@ class AudioAlert(models.Model):
     )
     delivered_at = models.DateTimeField(null=True, blank=True)
     acknowledged_at = models.DateTimeField(null=True, blank=True)
+    client_confirmed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the client confirmed delivery via WebSocket ack.",
+    )
+    delivery_attempts = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Number of WebSocket push attempts for this alert.",
+    )
+    last_delivery_error = models.TextField(
+        blank=True,
+        default="",
+        help_text="Last error message from WebSocket push, if any.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

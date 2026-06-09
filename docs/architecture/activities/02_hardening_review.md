@@ -355,16 +355,35 @@ Worker B: UPDATE status=RUNNING → also succeeds (same value!)
 8. **NDVI event listener** - `on_ndvi_job_completed()` hooks into NDVI job completion
 9. **Metrics** - Circuit breaker trips/resets, dead letter count, chaining, NDVI event counters
 
+### WebSocket Acknowledgment Protocol (2026-06-09)
+
+10. **Client-to-server ack** — `ActivityConsumer.receive()` now handles
+    ``ack_audio_alert`` messages and calls
+    ``alerts.services.confirm_delivery()`` to set
+    ``AudioAlert.client_confirmed_at``.
+11. **Replay on reconnect** — ``ActivityConsumer._replay_alerts()`` queries
+    unacknowledged ``AudioAlert`` rows and re-pushes them when a client
+    reconnects.
+12. **Delivery tracking** — ``AudioAlert`` gained ``delivery_attempts``,
+    ``last_delivery_error``, and ``client_confirmed_at`` fields.
+    ``dispatch_alert_fast`` increments ``delivery_attempts`` on each push
+    and records errors.
+13. **Metrics** — ``alerts_acknowledgments_total{method}``,
+    ``alerts_replay_total{result}``, ``activities_websocket_events{status=acked}``,
+    ``activities_websocket_events{status=replayed}``.
+14. **Tests** — 17 new tests covering ack handler, replay, confirm_delivery
+    service, and delivery_attempts tracking.
+
 ## Remaining Open Items
 
-1. WebSocket delivery remains best-effort; no acknowledgment protocol exists.
-2. Recurring activities still create persisted rows for future occurrences.
+1. Recurring activities still create persisted rows for future occurrences.
 
 ## Verdict: COMPLETE ✅
 
-All P0–P5 items and all hardening items from the technical design doc
-are now implemented. The two remaining items above are architectural
-choices (not bugs or gaps) and can be revisited when needed.
+All P0–P5 items, all hardening items from the technical design doc,
+and the WebSocket acknowledgment protocol are now implemented. The
+remaining item (recurrence persistence) is an architectural choice
+that can be revisited when needed.
 
 ---
 
@@ -375,6 +394,7 @@ choices (not bugs or gaps) and can be revisited when needed.
 | 1.0 | May 3, 2026 | opencode | Initial hardening review |
 | 1.1 | May 9, 2026 | opencode | Updated with implementation status |
 | 1.2 | May 12, 2026 | opencode | Phase 5 complete - cleanup, lock, correlation IDs |
+| 1.3 | Jun 9, 2026 | opencode | WebSocket ack protocol + replay on reconnect |
 
 ---
 

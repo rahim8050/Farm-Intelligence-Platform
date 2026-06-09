@@ -14,12 +14,27 @@ Backpressure Strategy:
 - Clients should reconnect on disconnect
 - Server-side rate limiting can be added via throttle scopes
 - No guaranteed delivery - client should poll REST API for state
+
+Acknowledgment Protocol:
+- Clients send ``{"type": "ack_audio_alert", "alert_id": "<uuid>"}`` after
+  receiving and decoding an ``audio_alert`` payload. The server records
+  the ``client_confirmed_at`` timestamp on the corresponding
+  ``AudioAlert`` row and the system can distinguish "server pushed" from
+  "client confirmed receipt".
+- On reconnect, any unacknowledged alerts are automatically replayed,
+  giving recovering clients a chance to catch up on missed alerts.
+- Both the ack and the replay are best-effort; failures are logged and
+  counted but never propagated.
 """
+
+from __future__ import annotations
 
 import json
 import logging
 from typing import Any
+from uuid import UUID
 
+from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.layers import get_channel_layer
 
@@ -37,8 +52,12 @@ class ActivityConsumer(AsyncWebsocketConsumer):
     Auth: AuthMiddlewareStack (authenticated users only)
     WebSocket URL: ws://domain/ws/activities/
 
-    Events:
+    Events (server -> client):
         - activity_event: Sent when activity status changes
+        - audio_alert: Sent when an audio alert is dispatched
+
+    Messages (client -> server):
+        - ack_audio_alert: Client confirms receipt of an audio alert
     """
 
     async def connect(self) -> None:
@@ -59,6 +78,9 @@ class ActivityConsumer(AsyncWebsocketConsumer):
 
         await self.accept()
 
+        # Replay any unacknowledged alerts on reconnect
+        await self._replay_alerts()
+
     async def disconnect(self, close_code: Any) -> None:
         """Handle WebSocket disconnection."""
         if hasattr(self, "group_name"):
@@ -66,6 +88,51 @@ class ActivityConsumer(AsyncWebsocketConsumer):
                 self.group_name,
                 self.channel_name,
             )
+
+    async def receive(
+        self, text_data: str | None = None, bytes_data: bytes | None = None
+    ) -> None:  # noqa: ARG002
+        """Handle an incoming WebSocket message.
+
+        Supports:
+            - ``ack_audio_alert``: client confirms delivery of an audio alert.
+        """
+        if not text_data:
+            return
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError:
+            return
+        msg_type = data.get("type")
+        if msg_type == "ack_audio_alert":
+            await self._handle_ack(data)
+
+    async def _handle_ack(self, data: dict[str, Any]) -> None:
+        """Process a client ack for an audio alert.
+
+        Expected payload: ``{"type": "ack_audio_alert", "alert_id": "<uuid>"}``
+        """
+        raw_id = data.get("alert_id")
+        if not raw_id:
+            return
+        try:
+            alert_id = UUID(raw_id)
+        except (ValueError, TypeError):
+            logger.warning(
+                "websocket_ack_invalid_id user=%s alert_id=%s",
+                self.user.id,
+                raw_id,
+            )
+            return
+        from alerts.services import confirm_delivery
+
+        ok = await sync_to_async(confirm_delivery)(
+            user_id=self.user.id, alert_id=alert_id
+        )
+        if ok:
+            activities_websocket_events.labels(status="acked").inc()
+        else:
+            activities_websocket_events.labels(status="ack_duplicate").inc()
 
     async def activity_event(self, event: dict) -> None:
         """Handle activity events from worker.
@@ -117,6 +184,49 @@ class ActivityConsumer(AsyncWebsocketConsumer):
         except Exception:
             activities_websocket_failures.labels(stage="send").inc()
             logger.warning("websocket_send_failed: event=%s", event)
+
+    async def _replay_alerts(self) -> None:
+        """Push any unacknowledged alerts to the newly-connected client.
+
+        On reconnect, the client may have missed alerts while
+        disconnected. This method queries the DB for alerts where
+        ``is_acknowledged=False`` and re-pushes them.
+
+        Best-effort: failures are logged and counted but not propagated.
+        """
+        from alerts.metrics import replay as replay_metric
+        from alerts.models import AudioAlert
+        from alerts.services import build_push_payload
+
+        try:
+            alerts = await sync_to_async(list)(
+                AudioAlert.objects.filter(
+                    user=self.user, is_acknowledged=False
+                ).order_by("-created_at")[:50]
+            )
+        except Exception:
+            logger.warning(
+                "websocket_replay_query_failed user=%s", self.user.id
+            )
+            return
+
+        for alert in alerts:
+            try:
+                payload = await sync_to_async(build_push_payload)(alert)
+                await self.send(
+                    text_data=json.dumps(
+                        {"type": "audio_alert", "event": payload}
+                    )
+                )
+                activities_websocket_events.labels(status="replayed").inc()
+            except Exception:
+                activities_websocket_failures.labels(stage="replay").inc()
+                logger.warning(
+                    "websocket_replay_failed user=%s alert=%s",
+                    self.user.id,
+                    alert.id,
+                )
+        replay_metric(result="success")
 
 
 async def emit_activity_event(user_id: int, event: dict) -> None:
