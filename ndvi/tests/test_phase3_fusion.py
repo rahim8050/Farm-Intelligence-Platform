@@ -5,7 +5,7 @@ Covers:
 - Confidence degradation on fallback
 - Deterministic decision tree selection
 - Conflict rule (source disagreement)
-- Landsat and MODIS engine stubs
+- Landsat and MODIS engines (mocked STAC)
 """
 
 from __future__ import annotations
@@ -333,9 +333,19 @@ class TestFuseObservations:
         assert result.selected.source == "sentinelhub"
 
 
+class _MockStacClient:
+    """Minimal mock that returns no STAC items."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.collection = str(kwargs.get("collection", ""))
+
+    def search(self, *args: object, **kwargs: object) -> list[object]:
+        return []
+
+
 class TestLandsatEngine:
     def test_stub_empty_timeseries(self) -> None:
-        engine = LandsatEngine()
+        engine = LandsatEngine(client=_MockStacClient())  # type: ignore[arg-type]
         points = engine.get_timeseries(
             bbox=BBox(
                 south=Decimal("1.0"),
@@ -351,7 +361,7 @@ class TestLandsatEngine:
         assert points == []
 
     def test_stub_none_latest(self) -> None:
-        engine = LandsatEngine()
+        engine = LandsatEngine(client=_MockStacClient())  # type: ignore[arg-type]
         result = engine.get_latest(
             bbox=BBox(
                 south=Decimal("1.0"),
@@ -367,7 +377,7 @@ class TestLandsatEngine:
 
 class TestModisEngine:
     def test_stub_empty_timeseries(self) -> None:
-        engine = ModisEngine()
+        engine = ModisEngine(client=_MockStacClient())  # type: ignore[arg-type]
         points = engine.get_timeseries(
             bbox=BBox(
                 south=Decimal("1.0"),
@@ -383,7 +393,7 @@ class TestModisEngine:
         assert points == []
 
     def test_stub_none_latest(self) -> None:
-        engine = ModisEngine()
+        engine = ModisEngine(client=_MockStacClient())  # type: ignore[arg-type]
         result = engine.get_latest(
             bbox=BBox(
                 south=Decimal("1.0"),

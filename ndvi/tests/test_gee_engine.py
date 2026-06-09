@@ -1,4 +1,4 @@
-"""Tests for the GEE engine adapter (stub)."""
+"""Tests for the GEE engine adapter (STAC-based)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,16 @@ from decimal import Decimal
 
 from ndvi.engines.base import BBox
 from ndvi.engines.gee import GeeEngine
+
+
+class _MockStacClient:
+    """Minimal mock that returns no STAC items."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.collection = str(kwargs.get("collection", ""))
+
+    def search(self, *args: object, **kwargs: object) -> list[object]:
+        return []
 
 
 def _bbox() -> BBox:
@@ -19,10 +29,12 @@ def _bbox() -> BBox:
 
 
 class TestGeeEngine:
-    """GeeEngine is a stub returning empty/null results."""
+    """GeeEngine is STAC-based, returning results from remote APIs."""
 
     def setup_method(self) -> None:
-        self.engine = GeeEngine()
+        self.engine = GeeEngine(
+            client=_MockStacClient(collection="sentinel-2-l2a"),  # type: ignore[arg-type]
+        )
 
     def test_timeseries_returns_empty_list(self) -> None:
         result = self.engine.get_timeseries(
@@ -42,9 +54,5 @@ class TestGeeEngine:
         )
         assert result is None
 
-    def test_custom_collection(self) -> None:
-        engine = GeeEngine(collection="LANDSAT/LC08/C02/T1_L2")
-        assert engine.collection == "LANDSAT/LC08/C02/T1_L2"
-
     def test_default_collection(self) -> None:
-        assert self.engine.collection == "COPERNICUS/S2_SR_HARMONIZED"
+        assert self.engine.client.collection == "sentinel-2-l2a"

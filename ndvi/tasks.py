@@ -33,7 +33,11 @@ from ndvi.stac_client import (
     StacWafBlockedError,
 )
 
-from .metrics import ndvi_jobs_total, ndvi_task_runtime_seconds
+from .metrics import (
+    ndvi_backfill_rows_total,
+    ndvi_jobs_total,
+    ndvi_task_runtime_seconds,
+)
 from .models import NdviJob, NdviRasterArtifact
 from .raster.service import render_ndvi_png
 from .services import (
@@ -308,6 +312,10 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                         points=points,
                     )
                 )
+                if job.job_type == NdviJob.JobType.BACKFILL:
+                    ndvi_backfill_rows_total.labels(
+                        engine=job.engine, status="success"
+                    ).inc(len(points))
         _with_fresh_connection(
             lambda: job.mark_finished(NdviJob.JobStatus.SUCCESS)
         )

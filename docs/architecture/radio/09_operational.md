@@ -61,15 +61,17 @@ def get_station_by_id(station_id: str):
 
 from prometheus_client import Counter, Histogram
 
-radio_requests_total = Counter(
-    "radio_api_requests_total",
-    "Total radio API requests",
-    ["endpoint", "status"]
+radio_api_request_errors_total = Counter(
+    "radio_api_request_errors_total",
+    "Total number of failed (status >= 400) radio API requests",
+    ["endpoint", "method", "status_code"],
 )
 
-radio_request_duration = Histogram(
-    "radio_api_request_duration_seconds",
-    "Radio API request duration"
+radio_api_request_latency_seconds = Histogram(
+    "radio_api_request_latency_seconds",
+    "Latency of radio API requests in seconds",
+    ["endpoint", "method"],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5),
 )
 ```
 

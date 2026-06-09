@@ -46,7 +46,7 @@ from .raster.registry import resolve_raster_engine_name
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_ENGINES = ("gee", "sentinelhub", "stac")
+SUPPORTED_ENGINES = ("gee", "sentinelhub", "stac", "landsat", "modis")
 
 _CB_STATES = ("closed", "open", "half_open")
 
@@ -949,10 +949,26 @@ def _build_gee_engine() -> NDVIEngine:
     return GeeEngine()
 
 
+@lru_cache(maxsize=1)
+def _build_landsat_engine() -> NDVIEngine:
+    from .engines.landsat import LandsatEngine
+
+    return LandsatEngine()
+
+
+@lru_cache(maxsize=1)
+def _build_modis_engine() -> NDVIEngine:
+    from .engines.modis import ModisEngine
+
+    return ModisEngine()
+
+
 ENGINE_FACTORIES: dict[str, Callable[[], NDVIEngine]] = {
     "gee": _build_gee_engine,
     "sentinelhub": _build_sentinelhub_engine,
     "stac": _build_stac_engine,
+    "landsat": _build_landsat_engine,
+    "modis": _build_modis_engine,
 }
 
 
@@ -991,6 +1007,9 @@ def get_engine(engine_name: str | None = None) -> NDVIEngine:
     factory = ENGINE_FACTORIES.get(engine)
     if not factory:
         raise ValueError(f"Unsupported NDVI engine: {engine}")
+    from ndvi.metrics import ndvi_source_usage_total
+
+    ndvi_source_usage_total.labels(source=engine, endpoint="get_engine").inc()
     return factory()
 
 

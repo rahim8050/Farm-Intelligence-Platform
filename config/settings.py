@@ -928,6 +928,61 @@ NDVI_STAC_JITTER_MAX_SECS = env.float(
     default=5.0,  # Max jitter in seconds
 )
 
+# Landsat engine settings (STAC-backed)
+NDVI_LANDSAT_STAC_API_URL = env(
+    "NDVI_LANDSAT_STAC_API_URL",
+    default="https://planetarycomputer.microsoft.com/api/stac/v1/",
+)
+NDVI_LANDSAT_STAC_COLLECTION = env(
+    "NDVI_LANDSAT_STAC_COLLECTION",
+    default="landsat-8-c2-l2",
+)
+NDVI_LANDSAT_TIMEOUT_SECS = env.float(
+    "NDVI_LANDSAT_TIMEOUT_SECS", default=30.0
+)
+NDVI_LANDSAT_DATE_WINDOW_DAYS = env.int(
+    "NDVI_LANDSAT_DATE_WINDOW_DAYS", default=5
+)
+NDVI_LANDSAT_MAX_CLOUD_DEFAULT = env.int(
+    "NDVI_LANDSAT_MAX_CLOUD_DEFAULT", default=30
+)
+NDVI_LANDSAT_ASSET_RED = env("NDVI_LANDSAT_ASSET_RED", default="B4")
+NDVI_LANDSAT_ASSET_NIR = env("NDVI_LANDSAT_ASSET_NIR", default="B5")
+
+# MODIS engine settings (STAC-backed)
+NDVI_MODIS_STAC_API_URL = env(
+    "NDVI_MODIS_STAC_API_URL",
+    default="https://planetarycomputer.microsoft.com/api/stac/v1/",
+)
+NDVI_MODIS_STAC_COLLECTION = env(
+    "NDVI_MODIS_STAC_COLLECTION",
+    default="modis-13q1-061",
+)
+NDVI_MODIS_TIMEOUT_SECS = env.float("NDVI_MODIS_TIMEOUT_SECS", default=30.0)
+NDVI_MODIS_DATE_WINDOW_DAYS = env.int("NDVI_MODIS_DATE_WINDOW_DAYS", default=5)
+NDVI_MODIS_MAX_CLOUD_DEFAULT = env.int(
+    "NDVI_MODIS_MAX_CLOUD_DEFAULT", default=30
+)
+NDVI_MODIS_NDVI_BAND = env("NDVI_MODIS_NDVI_BAND", default="NDVI")
+NDVI_MODIS_QA_BAND = env("NDVI_MODIS_QA_BAND", default="DetailedQA")
+
+# GEE engine settings (STAC-backed, independently configurable)
+NDVI_GEE_STAC_API_URL = env(
+    "NDVI_GEE_STAC_API_URL",
+    default="https://stac.dataspace.copernicus.eu/v1/",
+)
+NDVI_GEE_STAC_COLLECTION = env(
+    "NDVI_GEE_STAC_COLLECTION",
+    default="sentinel-2-l2a",
+)
+NDVI_GEE_TIMEOUT_SECS = env.float("NDVI_GEE_TIMEOUT_SECS", default=30.0)
+NDVI_GEE_DATE_WINDOW_DAYS = env.int("NDVI_GEE_DATE_WINDOW_DAYS", default=3)
+NDVI_GEE_MAX_CLOUD_DEFAULT = env.int("NDVI_GEE_MAX_CLOUD_DEFAULT", default=30)
+NDVI_GEE_ASSET_RED = env("NDVI_GEE_ASSET_RED", default="B04_10m")
+NDVI_GEE_ASSET_NIR = env("NDVI_GEE_ASSET_NIR", default="B08_10m")
+NDVI_GEE_ASSET_SCL = env("NDVI_GEE_ASSET_SCL", default="SCL")
+NDVI_GEE_MASK_WATER = env.bool("NDVI_GEE_MASK_WATER", default=False)
+
 NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS = env.int(
     "NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS",
     default=900,

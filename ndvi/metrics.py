@@ -252,3 +252,39 @@ ndvi_source_disagreement_total = Counter(
     "Count of source disagreement events during fusion",
     labelnames=["engine_a", "engine_b"],
 )
+
+# V2 confidence score distribution
+ndvi_v2_confidence_bucket = Histogram(
+    "ndvi_v2_confidence_bucket",
+    "Distribution of V2 confidence scores",
+    labelnames=["engine", "source"],
+    buckets=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
+
+# Source usage tracking per endpoint
+ndvi_source_usage_total = Counter(
+    "ndvi_source_usage_total",
+    "Count of NDVI source usage by source and endpoint",
+    labelnames=["source", "endpoint"],
+)
+
+# V2 suppressed observations (passed over in fusion selection)
+ndvi_v2_suppressed_observations_total = Counter(
+    "ndvi_v2_suppressed_observations_total",
+    "Count of V2 observations suppressed during fusion",
+    labelnames=["reason"],
+)
+
+# Backfill rows processed
+ndvi_backfill_rows_total = Counter(
+    "ndvi_backfill_rows_total",
+    "Count of backfill rows processed by engine and status",
+    labelnames=["engine", "status"],
+)
+
+# DLQ messages
+ndvi_stream_dlq_total = Counter(
+    "ndvi_stream_dlq_total",
+    "Count of messages moved to NDVI stream DLQ",
+    labelnames=["consumer"],
+)

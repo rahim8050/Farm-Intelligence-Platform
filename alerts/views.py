@@ -261,9 +261,6 @@ class AlertListView(APIView):
         )
 
 
-@extend_schema(
-    auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
-)
 class AlertDetailView(APIView):
     """Retrieve or acknowledge a single audio alert.
 
@@ -275,6 +272,7 @@ class AlertDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
         responses={
             200: AlertDetailEnvelope,
             401: AlertErrorEnvelope,
@@ -294,6 +292,8 @@ class AlertDetailView(APIView):
         return success_response(data)
 
     @extend_schema(
+        auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+        request=None,
         responses={
             200: AlertAckEnvelope,
             401: AlertErrorEnvelope,

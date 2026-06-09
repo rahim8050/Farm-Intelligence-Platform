@@ -428,6 +428,9 @@ class Command(BaseCommand):
             # Fallback if pending_info is unexpectedly empty
             dlq_payload["dlq_delivery_count"] = "1"
 
+        from ndvi.metrics import ndvi_stream_dlq_total
+
+        ndvi_stream_dlq_total.labels(consumer=self.consumer_name).inc()
         client.xadd(
             dlq_name,
             dlq_payload,  # type: ignore[arg-type]

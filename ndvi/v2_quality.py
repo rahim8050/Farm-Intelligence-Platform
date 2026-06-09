@@ -15,6 +15,7 @@ from django.conf import settings
 from django.db import transaction
 
 from ndvi.metrics import (
+    ndvi_v2_confidence_bucket,
     ndvi_v2_low_confidence_total,
     ndvi_v2_null_output_total,
     ndvi_v2_observation_total,
@@ -504,6 +505,9 @@ def build_v2_observation(
         null_reason=null_reason,
     )
 
+    ndvi_v2_confidence_bucket.labels(engine=engine, source=engine).observe(
+        confidence
+    )
     ndvi_v2_observation_total.labels(engine=engine, is_null=str(is_null)).inc()
     if is_null:
         ndvi_v2_null_output_total.labels(

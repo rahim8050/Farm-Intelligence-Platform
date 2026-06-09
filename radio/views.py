@@ -758,6 +758,7 @@ class ProviderListView(APIView):
         description="Returns all active radio providers.",
         operation_id="v1_radio_providers_list",
     )
+    @timed("providers.list")
     def get(self, request: Request) -> Response:
         """Get all active providers.
 
@@ -810,6 +811,7 @@ class FavoriteListCreateView(APIView):
         ),
         operation_id="v1_radio_favorites_list",
     )
+    @timed("favorites.list")
     def get(self, request: Request) -> Response:
         """Return the user's favorites, newest first.
 
@@ -848,6 +850,7 @@ class FavoriteListCreateView(APIView):
         ),
         operation_id="v1_radio_favorites_create",
     )
+    @timed("favorites.create")
     def post(self, request: Request) -> Response:
         """Add a station to the user's favorites (idempotent).
 
@@ -901,6 +904,7 @@ class FavoriteDeleteView(APIView):
         ),
         operation_id="v1_radio_favorites_delete",
     )
+    @timed("favorites.delete")
     def delete(self, request: Request, station_id: str) -> Response:
         """Remove the favorite matching (user, station_id).
 
@@ -946,6 +950,7 @@ class ListeningHistoryListView(APIView):
         ),
         operation_id="v1_radio_history_list",
     )
+    @timed("history.list")
     def get(self, request: Request) -> Response:
         """Return the user's listening history, newest first.
 
@@ -1003,6 +1008,7 @@ class ListeningHistoryRecentView(APIView):
         ),
         operation_id="v1_radio_history_recent",
     )
+    @timed("history.recent")
     def get(self, request: Request) -> Response:
         """Return the user's most recent history rows.
 
@@ -1082,6 +1088,7 @@ class ListeningSessionStopView(APIView):
         ),
         operation_id="v1_radio_history_stop",
     )
+    @timed("history.stop")
     def post(self, request: Request, session_id: int) -> Response:
         """Stop a listening session.
 
@@ -1235,6 +1242,7 @@ class EmergencyCreateView(APIView):
         ),
         operation_id="v1_radio_emergency_create",
     )
+    @timed("emergency.create")
     def post(self, request: Request) -> Response:
         """Validate input and create an ``EmergencyBroadcast`` row."""
         serializer = EmergencyBroadcastCreateSerializer(data=request.data)
@@ -1284,6 +1292,7 @@ class EmergencyDetailView(APIView):
         summary="Update an emergency broadcast (admin)",
         operation_id="v1_radio_emergency_update",
     )
+    @timed("emergency.update")
     def patch(self, request: Request, pk: int) -> Response:
         """Apply a partial update to one ``EmergencyBroadcast`` row."""
         broadcast = self._get_object(pk)
@@ -1309,6 +1318,7 @@ class EmergencyDetailView(APIView):
         description="Idempotent: returns 200 whether or not the row existed.",
         operation_id="v1_radio_emergency_delete",
     )
+    @timed("emergency.delete")
     def delete(self, request: Request, pk: int) -> Response:
         """Delete one ``EmergencyBroadcast`` row. Idempotent."""
         broadcast = EmergencyBroadcast.objects.filter(pk=pk).first()

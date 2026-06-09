@@ -24,6 +24,7 @@ from datetime import date
 from ndvi.metrics import (
     ndvi_fallback_usage_total,
     ndvi_source_disagreement_total,
+    ndvi_v2_suppressed_observations_total,
 )
 from ndvi.models import NdviDerivedObservation, NdviObservation
 from ndvi.sentinel1_context import (
@@ -361,6 +362,12 @@ def _select_by_decision_tree(
             quality_flags=_build_result_flags(selected, False, s1_context),
         )
 
+    discarded = len(candidates) - len(primary_candidates)
+    if discarded > 0:
+        ndvi_v2_suppressed_observations_total.labels(
+            reason="passed_over_primary"
+        ).inc(discarded)
+
     ls_threshold = _get_source_threshold("landsat")
     ls_qualified = [
         c for c in landsat_candidates if c.confidence >= ls_threshold
@@ -372,10 +379,14 @@ def _select_by_decision_tree(
         ndvi_fallback_usage_total.labels(
             engine_selected="landsat", engine_primary="sentinel-2"
         ).inc()
+        discarded = len(candidates) - 1
+        ndvi_v2_suppressed_observations_total.labels(
+            reason="passed_over_fallback"
+        ).inc(discarded)
         return FusionResult(
             selected=selected,
             candidates_evaluated=len(candidates),
-            candidates_discarded=len(candidates) - 1,
+            candidates_discarded=discarded,
             decision_reason="landsat_selected",
             quality_flags=_build_result_flags(selected, False, s1_context),
         )
@@ -391,10 +402,14 @@ def _select_by_decision_tree(
         ndvi_fallback_usage_total.labels(
             engine_selected="modis", engine_primary="sentinel-2"
         ).inc()
+        discarded = len(candidates) - 1
+        ndvi_v2_suppressed_observations_total.labels(
+            reason="passed_over_fallback"
+        ).inc(discarded)
         return FusionResult(
             selected=selected,
             candidates_evaluated=len(candidates),
-            candidates_discarded=len(candidates) - 1,
+            candidates_discarded=discarded,
             decision_reason="modis_selected",
             quality_flags=_build_result_flags(selected, False, s1_context),
         )
@@ -417,10 +432,16 @@ def _select_by_decision_tree(
     ):
         selected.selection_reason = "tiebreak_source_priority"
 
+    discarded = len(candidates) - 1
+    if discarded > 0:
+        ndvi_v2_suppressed_observations_total.labels(
+            reason="passed_over_confidence"
+        ).inc(discarded)
+
     return FusionResult(
         selected=selected,
         candidates_evaluated=len(candidates),
-        candidates_discarded=len(candidates) - 1,
+        candidates_discarded=discarded,
         decision_reason=selected.selection_reason,
         quality_flags=_build_result_flags(selected, False, s1_context),
     )

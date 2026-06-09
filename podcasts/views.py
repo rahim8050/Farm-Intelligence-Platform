@@ -251,9 +251,6 @@ def _guess_format_from_url(url: str) -> str:
     return "audio/mpeg"
 
 
-@extend_schema(
-    auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
-)
 class PodcastRefreshView(APIView):
     """Manually trigger an ingestion pass for a single podcast.
 
@@ -268,6 +265,8 @@ class PodcastRefreshView(APIView):
     throttle_scope = "podcasts_refresh"
 
     @extend_schema(
+        auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+        request=None,
         responses={
             200: RefreshReportEnvelope,
             401: podcasts_error_envelope,
