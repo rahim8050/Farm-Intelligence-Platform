@@ -654,7 +654,7 @@ class TestServicesCoverage(TestCase):
             self.assertIsNone(result)
 
     def test_reschedule_cron_no_expression(self) -> None:
-        """Test reschedule returns early when cron_expression missing."""
+        """Test reschedule returns None when cron_expression missing."""
         from activities.services import reschedule_recurring
 
         activity = Activity.objects.create(
@@ -666,12 +666,12 @@ class TestServicesCoverage(TestCase):
             cron_expression=None,
             scheduled_at=timezone.now() + timedelta(days=1),
         )
-        # Should not raise and return the activity unchanged
+        # Should not raise and return None (no new row created)
         updated = reschedule_recurring(activity)
-        self.assertEqual(updated.status, Activity.Status.SUCCESS)
+        self.assertIsNone(updated)
 
     def test_reschedule_interval(self) -> None:
-        """Test reschedule_recurring with interval recurrence."""
+        """Test reschedule_recurring spawns a new occurrence for interval."""
         from activities.services import reschedule_recurring
 
         activity = Activity.objects.create(
@@ -684,11 +684,13 @@ class TestServicesCoverage(TestCase):
             scheduled_at=timezone.now() + timedelta(days=1),
         )
         updated = reschedule_recurring(activity)
+        self.assertIsNotNone(updated)
+        self.assertNotEqual(updated.id, activity.id)
         self.assertEqual(updated.status, Activity.Status.PENDING)
         self.assertIsNotNone(updated.next_due_at)
 
     def test_reschedule_interval_no_days(self) -> None:
-        """Test reschedule returns early when interval_days missing."""
+        """Test reschedule returns None when interval_days missing."""
         from activities.services import reschedule_recurring
 
         activity = Activity.objects.create(
@@ -701,7 +703,7 @@ class TestServicesCoverage(TestCase):
             scheduled_at=timezone.now() + timedelta(days=1),
         )
         updated = reschedule_recurring(activity)
-        self.assertEqual(updated.status, Activity.Status.SUCCESS)
+        self.assertIsNone(updated)
 
 
 # Tasks Tests - cover uncovered paths
@@ -1230,7 +1232,7 @@ class TestActivityServices(TestCase):
         self.assertEqual(recovered.retry_count, 1)
 
     def test_reschedule_cron_recurring(self) -> None:
-        """Test reschedule_recurring resets to PENDING with next due."""
+        """Test reschedule_recurring spawns a new occurrence for cron."""
         from activities.services import reschedule_recurring
 
         scheduled = timezone.make_aware(datetime(2026, 6, 1, 8, 0, 0))
@@ -1246,11 +1248,13 @@ class TestActivityServices(TestCase):
         )
 
         updated = reschedule_recurring(activity)
+        self.assertIsNotNone(updated)
+        self.assertNotEqual(updated.id, activity.id)
         self.assertEqual(updated.status, Activity.Status.PENDING)
         self.assertGreater(updated.next_due_at, scheduled)
 
-    def test_reschedule_none_does_nothing(self) -> None:
-        """Test reschedule_recurring skips non-recurring activities."""
+    def test_reschedule_none_returns_none(self) -> None:
+        """Test reschedule_recurring returns None for non-recurring."""
         from activities.services import reschedule_recurring
 
         activity = Activity.objects.create(
@@ -1263,7 +1267,7 @@ class TestActivityServices(TestCase):
         )
 
         updated = reschedule_recurring(activity)
-        self.assertEqual(updated.status, Activity.Status.SUCCESS)
+        self.assertIsNone(updated)
 
     def test_state_machine_valid_transition(self) -> None:
         self.assertTrue(

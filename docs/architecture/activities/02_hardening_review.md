@@ -374,16 +374,20 @@ Worker B: UPDATE status=RUNNING → also succeeds (same value!)
 14. **Tests** — 17 new tests covering ack handler, replay, confirm_delivery
     service, and delivery_attempts tracking.
 
-## Remaining Open Items
+### Ephemeral Recurrence (2026-06-09)
 
-1. Recurring activities still create persisted rows for future occurrences.
+15. **Recurrence is now ephemeral** — ``reschedule_recurring()`` no longer
+    mutates the same row in place. Instead, the current activity is left
+    in ``SUCCESS`` (terminal, eligible for cleanup after retention) and a
+    **new** ``Activity`` row is created in ``PENDING`` status with the
+    computed ``next_due_at``. Each occurrence has a finite lifetime and
+    no activity row lives forever.
 
 ## Verdict: COMPLETE ✅
 
 All P0–P5 items, all hardening items from the technical design doc,
-and the WebSocket acknowledgment protocol are now implemented. The
-remaining item (recurrence persistence) is an architectural choice
-that can be revisited when needed.
+the WebSocket acknowledgment protocol, and ephemeral recurrence are
+now implemented. No remaining open items.
 
 ---
 
@@ -395,6 +399,7 @@ that can be revisited when needed.
 | 1.1 | May 9, 2026 | opencode | Updated with implementation status |
 | 1.2 | May 12, 2026 | opencode | Phase 5 complete - cleanup, lock, correlation IDs |
 | 1.3 | Jun 9, 2026 | opencode | WebSocket ack protocol + replay on reconnect |
+| 1.4 | Jun 9, 2026 | opencode | Ephemeral recurrence — spawn new row per occurrence |
 
 ---
 

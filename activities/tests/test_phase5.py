@@ -13,9 +13,11 @@ Covers:
 from __future__ import annotations
 
 import secrets
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
+from django.utils import timezone
 
 from activities.circuit_breaker import (
     can_try_half_open,
@@ -183,11 +185,11 @@ class DeadLetterTestCase(TestCase):
 class ConditionalRecurrenceTestCase(TestCase):
     """Conditional recurrence: handler result gates reschedule."""
 
-    def test_normal_reschedule_proceeds(self) -> None:
+    def test_normal_reschedule_non_recurring_returns_none(self) -> None:
         activity = MagicMock()
         activity.recurrence_type = "none"
         result = reschedule_recurring(activity)
-        self.assertEqual(result, activity)
+        self.assertIsNone(result)
 
     def test_conditional_skip_blocks_reschedule(self) -> None:
         activity = MagicMock()
@@ -197,15 +199,35 @@ class ConditionalRecurrenceTestCase(TestCase):
         result = reschedule_recurring(
             activity, handler_result_metadata={"conditional_skip": True}
         )
-        self.assertEqual(result, activity)
+        self.assertIsNone(result)
 
-    def test_interval_reschedules_normally(self) -> None:
-        activity = MagicMock()
-        activity.recurrence_type = "interval"
-        activity.interval_days = 7
-        activity.status = "success"
+    def test_interval_reschedules_creates_new_activity(self) -> None:
+        from django.contrib.auth import get_user_model
+
+        user = get_user_model().objects.create_user(
+            username="rec_interval",
+            password=secrets.token_urlsafe(12),
+        )
+        from farms.models import Farm
+
+        farm = Farm.objects.create(
+            owner=user, name="Rec Farm", centroid_lat=0.0, centroid_lon=0.0
+        )
+        from activities.models import Activity
+
+        activity = Activity.objects.create(
+            owner=user,
+            farm=farm,
+            type=Activity.Type.IRRIGATION,
+            status=Activity.Status.SUCCESS,
+            recurrence_type=Activity.RecurrenceType.INTERVAL,
+            interval_days=7,
+            scheduled_at=timezone.now() + timedelta(days=7),
+        )
         result = reschedule_recurring(activity)
-        self.assertEqual(result, activity)
+        self.assertIsNotNone(result)
+        self.assertNotEqual(result.id, activity.id)
+        self.assertEqual(result.status, Activity.Status.PENDING)
 
 
 class ActivityChainingTestCase(TestCase):

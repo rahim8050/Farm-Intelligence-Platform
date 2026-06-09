@@ -320,24 +320,26 @@ def reschedule_recurring(
     activity: Activity,
     *,
     handler_result_metadata: dict | None = None,
-) -> Activity:
-    """Reschedule a recurring activity after successful execution.
+) -> Activity | None:
+    """Reschedule a recurring activity by spawning the next occurrence.
 
-    For cron-recurring activities, computes the next due time and
-    transitions the activity back to PENDING so the scheduler picks it up.
-    For interval-recurring activities, does the same using interval_days.
+    The current activity is left in SUCCESS (terminal, eligible for
+    cleanup after the retention window). A **new** Activity row is
+    created in PENDING status with the computed ``next_due_at``, so
+    each occurrence has a finite lifetime (ephemeral recurrence).
 
     When ``handler_result_metadata`` contains a ``conditional_skip`` key
-    with value ``True``, the reschedule is skipped (conditional recurrence
+    with value ``True``, no new row is created (conditional recurrence
     gates on handler output).
 
     Returns:
-        The updated activity, or the original if not recurring.
+        The newly created Activity, or ``None`` if not recurring or
+        conditionally skipped.
     """
     from activities.models import Activity as ActivityModel
 
     if activity.recurrence_type == ActivityModel.RecurrenceType.NONE:
-        return activity
+        return None
 
     result = handler_result_metadata or {}
 
@@ -348,41 +350,44 @@ def reschedule_recurring(
             activity.id,
             activity.type,
         )
-        return activity
+        return None
 
     if activity.recurrence_type == ActivityModel.RecurrenceType.CRON:
         if not activity.cron_expression:
-            return activity
+            return None
         next_due = activity.__class__._compute_cron_next(
             activity.cron_expression, timezone.now()
         )
-        activity.next_due_at = next_due
-        activity.status = ActivityModel.Status.PENDING
-        activity.save(update_fields=["status", "next_due_at", "updated_at"])
-        logger.info(
-            "rescheduled_cron activity_id=%d next_due_at=%s",
-            activity.id,
-            next_due,
-        )
-        return activity
 
-    if activity.recurrence_type == ActivityModel.RecurrenceType.INTERVAL:
+    elif activity.recurrence_type == ActivityModel.RecurrenceType.INTERVAL:
         if not activity.interval_days:
-            return activity
+            return None
         next_due = timezone.now() + timezone.timedelta(
             days=activity.interval_days
         )
-        activity.next_due_at = next_due
-        activity.status = ActivityModel.Status.PENDING
-        activity.save(update_fields=["status", "next_due_at", "updated_at"])
-        logger.info(
-            "rescheduled_interval activity_id=%d next_due_at=%s",
-            activity.id,
-            next_due,
-        )
-        return activity
 
-    return activity
+    else:
+        return None
+
+    next_activity = ActivityModel.objects.create(
+        owner=activity.owner,
+        farm=activity.farm,
+        type=activity.type,
+        status=ActivityModel.Status.PENDING,
+        scheduled_at=next_due,
+        next_due_at=next_due,
+        recurrence_type=activity.recurrence_type,
+        interval_days=activity.interval_days,
+        cron_expression=activity.cron_expression,
+        metadata=activity.metadata,
+    )
+    logger.info(
+        "reschedule_spawned activity_id=%d next_activity_id=%d next_due_at=%s",
+        activity.id,
+        next_activity.id,
+        next_due,
+    )
+    return next_activity
 
 
 def chain_activity(
