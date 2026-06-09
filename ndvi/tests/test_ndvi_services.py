@@ -91,6 +91,21 @@ def test_get_engine_stac_returns_engine(
     assert engine is not None
 
 
+def test_get_engine_landsat_returns_engine() -> None:
+    engine = get_engine("landsat")
+    assert engine is not None
+
+
+def test_get_engine_modis_returns_engine() -> None:
+    engine = get_engine("modis")
+    assert engine is not None
+
+
+def test_get_engine_gee_returns_engine() -> None:
+    engine = get_engine("gee")
+    assert engine is not None
+
+
 def test_resolve_ndvi_engine_name_reads_settings_at_call_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

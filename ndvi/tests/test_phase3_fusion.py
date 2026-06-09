@@ -10,14 +10,20 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
+from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 from ndvi.engines.base import BBox
 from ndvi.engines.landsat import LandsatEngine
-from ndvi.engines.modis import ModisEngine
+from ndvi.engines.modis import (
+    ModisEngine,
+    _compute_band_stats,
+    _is_remote_href,
+)
 from ndvi.fusion import (
     FusionCandidate,
     _apply_confidence_degradation,
@@ -29,6 +35,7 @@ from ndvi.fusion import (
     _select_by_decision_tree,
     fuse_observations,
 )
+from ndvi.stac_client import NdviStats, StacItem
 from ndvi.v2_quality import ConfidenceComponents, V2Result
 
 
@@ -374,6 +381,270 @@ class TestLandsatEngine:
         )
         assert result is None
 
+    def test_iter_buckets(self) -> None:
+        engine = LandsatEngine(client=_MockStacClient())  # type: ignore[arg-type]
+        buckets = engine._iter_buckets(date(2025, 1, 1), date(2025, 1, 10), 3)
+        assert buckets == [
+            date(2025, 1, 1),
+            date(2025, 1, 4),
+            date(2025, 1, 7),
+            date(2025, 1, 10),
+        ]
+
+    def test_compute_stats_happy_path(self) -> None:
+        engine = LandsatEngine(client=_MockStacClient())  # type: ignore[arg-type]
+        item = StacItem(
+            id="ls_test",
+            datetime=datetime(2025, 1, 5),
+            assets={"B4": "r.tif", "B5": "n.tif"},
+            cloud_cover=10.0,
+        )
+        fake_array = np.array([0.2, 0.6])
+        fake_stats = NdviStats(mean=0.4, min=0.2, max=0.6, sample_count=2)
+        with (
+            patch(
+                "ndvi.engines.landsat.load_ndvi_array", return_value=fake_array
+            ),
+            patch(
+                "ndvi.engines.landsat.compute_ndvi_stats",
+                return_value=fake_stats,
+            ),
+        ):
+            stats = engine._compute_stats(
+                item,
+                BBox(
+                    south=Decimal("1"),
+                    west=Decimal("1"),
+                    north=Decimal("2"),
+                    east=Decimal("2"),
+                ),
+            )
+        assert stats is not None
+        assert stats.mean == 0.4
+        assert stats.sample_count == 2
+
+    def test_compute_stats_missing_assets(self) -> None:
+        engine = LandsatEngine(client=_MockStacClient())  # type: ignore[arg-type]
+        item = StacItem(
+            id="ls_missing",
+            datetime=datetime(2025, 1, 5),
+            assets={"WRONG": "x.tif"},
+            cloud_cover=10.0,
+        )
+        stats = engine._compute_stats(
+            item,
+            BBox(
+                south=Decimal("1"),
+                west=Decimal("1"),
+                north=Decimal("2"),
+                east=Decimal("2"),
+            ),
+        )
+        assert stats is None
+
+    def test_compute_stats_null_ndvi(self) -> None:
+        engine = LandsatEngine(client=_MockStacClient())  # type: ignore[arg-type]
+        item = StacItem(
+            id="ls_null",
+            datetime=datetime(2025, 1, 5),
+            assets={"B4": "r.tif", "B5": "n.tif"},
+            cloud_cover=10.0,
+        )
+        with (
+            patch(
+                "ndvi.engines.landsat.load_ndvi_array",
+                return_value=np.array([]),
+            ),
+            patch(
+                "ndvi.engines.landsat.compute_ndvi_stats", return_value=None
+            ),
+        ):
+            stats = engine._compute_stats(
+                item,
+                BBox(
+                    south=Decimal("1"),
+                    west=Decimal("1"),
+                    north=Decimal("2"),
+                    east=Decimal("2"),
+                ),
+            )
+        assert stats is None
+
+    def test_timeseries_with_items(self) -> None:
+        engine = LandsatEngine(
+            client=_MockStacClientWithItems(collection="landsat-8-c2-l2"),  # type: ignore[arg-type]
+        )
+        fake_array = np.array([0.3, 0.7])
+        fake_stats = NdviStats(mean=0.5, min=0.3, max=0.7, sample_count=2)
+        with (
+            patch(
+                "ndvi.engines.landsat.load_ndvi_array", return_value=fake_array
+            ),
+            patch(
+                "ndvi.engines.landsat.compute_ndvi_stats",
+                return_value=fake_stats,
+            ),
+        ):
+            result = engine.get_timeseries(
+                bbox=BBox(
+                    south=Decimal("1"),
+                    west=Decimal("1"),
+                    north=Decimal("2"),
+                    east=Decimal("2"),
+                ),
+                start=date(2025, 1, 12),
+                end=date(2025, 1, 20),
+                step_days=7,
+                max_cloud=30,
+            )
+        assert len(result) == 2
+        for p in result:
+            assert p.mean == 0.5
+
+    def test_latest_with_items(self) -> None:
+        engine = LandsatEngine(
+            client=_MockStacClientWithItems(collection="landsat-8-c2-l2"),  # type: ignore[arg-type]
+        )
+        fake_array = np.array([0.4, 0.8])
+        fake_stats = NdviStats(mean=0.6, min=0.4, max=0.8, sample_count=2)
+        with (
+            patch(
+                "ndvi.engines.landsat.load_ndvi_array", return_value=fake_array
+            ),
+            patch(
+                "ndvi.engines.landsat.compute_ndvi_stats",
+                return_value=fake_stats,
+            ),
+            patch("ndvi.engines.landsat.date", wraps=date) as mock_date,
+        ):
+            mock_date.today.return_value = _FAKE_TODAY
+            result = engine.get_latest(
+                bbox=BBox(
+                    south=Decimal("1"),
+                    west=Decimal("1"),
+                    north=Decimal("2"),
+                    east=Decimal("2"),
+                ),
+                lookback_days=30,
+                max_cloud=30,
+            )
+        assert result is not None
+        assert result.mean == 0.6
+        assert result.cloud_fraction == 10.0
+
+    def test_latest_returns_none_when_compute_fails(self) -> None:
+        engine = LandsatEngine(
+            client=_MockStacClientWithItems(collection="landsat-8-c2-l2"),  # type: ignore[arg-type]
+        )
+        with (
+            patch(
+                "ndvi.engines.landsat.load_ndvi_array",
+                return_value=np.array([]),
+            ),
+            patch(
+                "ndvi.engines.landsat.compute_ndvi_stats", return_value=None
+            ),
+            patch("ndvi.engines.landsat.date", wraps=date) as mock_date,
+        ):
+            mock_date.today.return_value = _FAKE_TODAY
+            result = engine.get_latest(
+                bbox=BBox(
+                    south=Decimal("1"),
+                    west=Decimal("1"),
+                    north=Decimal("2"),
+                    east=Decimal("2"),
+                ),
+                lookback_days=30,
+                max_cloud=30,
+            )
+        assert result is None
+
+    def test_default_constructor(self) -> None:
+        engine = LandsatEngine(
+            client=_MockStacClient(collection="landsat-8-c2-l2"),  # type: ignore[arg-type]
+        )
+        assert engine.asset_red == "B4"
+        assert engine.asset_nir == "B5"
+
+    def test_custom_constructor(self) -> None:
+        engine = LandsatEngine(
+            asset_red="B4",
+            asset_nir="B5",
+            timeout_seconds=15.0,
+            date_window_days=3,
+            client=_MockStacClient(collection="landsat-8-c2-l2"),  # type: ignore[arg-type]
+        )
+        assert engine.timeout_seconds == 15.0
+        assert engine.date_window_days == 3
+
+    def test_timeseries_skips_when_stats_none(self) -> None:
+        engine = LandsatEngine(
+            client=_MockStacClientWithItems(collection="landsat-8-c2-l2"),  # type: ignore[arg-type]
+            date_window_days=15,
+        )
+        with (
+            patch(
+                "ndvi.engines.landsat.load_ndvi_array",
+                return_value=np.array([]),
+            ),
+            patch(
+                "ndvi.engines.landsat.compute_ndvi_stats", return_value=None
+            ),
+        ):
+            result = engine.get_timeseries(
+                bbox=BBox(
+                    south=Decimal("1"),
+                    west=Decimal("1"),
+                    north=Decimal("2"),
+                    east=Decimal("2"),
+                ),
+                start=date(2025, 1, 12),
+                end=date(2025, 1, 20),
+                step_days=7,
+                max_cloud=30,
+            )
+        assert result == []
+
+
+_FAKE_TODAY = date(2025, 1, 20)
+
+
+class _MockStacClientWithModisItems:
+    """Mock STAC client returning a MODIS-like test item."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.collection = str(kwargs.get("collection", ""))
+
+    def search(self, *args: object, **kwargs: object) -> list[StacItem]:
+        return [
+            StacItem(
+                id="modis_test_item",
+                datetime=datetime(2025, 1, 15, 10, 0, 0),
+                assets={"NDVI": "n.tif", "DetailedQA": "q.tif"},
+                cloud_cover=None,
+            ),
+        ]
+
+
+class _MockStacClientWithItems:
+    """Mock STAC client that returns a single test item."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.collection = str(kwargs.get("collection", ""))
+
+    def search(self, *args: object, **kwargs: object) -> list[StacItem]:
+        return [
+            StacItem(
+                id="ls_test_item",
+                datetime=datetime(2025, 1, 15, 10, 0, 0),
+                assets={
+                    "B4": "https://example.com/red.tif",
+                    "B5": "https://example.com/nir.tif",
+                },
+                cloud_cover=10.0,
+            ),
+        ]
+
 
 class TestModisEngine:
     def test_stub_empty_timeseries(self) -> None:
@@ -405,3 +676,492 @@ class TestModisEngine:
             max_cloud=30,
         )
         assert result is None
+
+    def test_is_remote_href(self) -> None:
+        assert _is_remote_href("https://example.com/file.tif") is True
+        assert _is_remote_href("http://example.com/file.tif") is True
+        assert _is_remote_href("/local/file.tif") is False
+        assert _is_remote_href("s3://bucket/key") is False
+
+    def test_compute_band_stats_normal(self) -> None:
+        arr = np.array([0.1, 0.5, 0.9, np.nan])
+        stats = _compute_band_stats(arr)
+        assert stats["mean"] == pytest.approx(0.5)
+        assert stats["min"] == pytest.approx(0.1)
+        assert stats["max"] == pytest.approx(0.9)
+        assert stats["sample_count"] == 3
+
+    def test_compute_band_stats_all_nan(self) -> None:
+        arr = np.array([np.nan, np.nan])
+        stats = _compute_band_stats(arr)
+        assert stats["mean"] is None
+        assert stats["sample_count"] == 0
+
+    def test_compute_band_stats_empty(self) -> None:
+        arr = np.array([])
+        stats = _compute_band_stats(arr)
+        assert stats["mean"] is None
+        assert stats["sample_count"] == 0
+
+    def test_iter_buckets(self) -> None:
+        engine = ModisEngine(client=_MockStacClient())  # type: ignore[arg-type]
+        buckets = engine._iter_buckets(date(2025, 1, 1), date(2025, 1, 10), 3)
+        assert buckets == [
+            date(2025, 1, 1),
+            date(2025, 1, 4),
+            date(2025, 1, 7),
+            date(2025, 1, 10),
+        ]
+
+    def test_process_item_missing_ndvi(self) -> None:
+        engine = ModisEngine(client=_MockStacClient())  # type: ignore[arg-type]
+        item = StacItem(
+            id="modis_missing",
+            datetime=datetime(2025, 1, 5),
+            assets={"WRONG_BAND": "x.tif"},
+            cloud_cover=None,
+        )
+        result = engine._process_item(
+            item,
+            BBox(
+                south=Decimal("1"),
+                west=Decimal("1"),
+                north=Decimal("2"),
+                east=Decimal("2"),
+            ),
+            date(2025, 1, 5),
+        )
+        assert result is None
+
+    def test_process_item_empty_array(self) -> None:
+        engine = ModisEngine(client=_MockStacClient())  # type: ignore[arg-type]
+        item = StacItem(
+            id="modis_empty",
+            datetime=datetime(2025, 1, 5),
+            assets={"NDVI": "n.tif", "DetailedQA": "q.tif"},
+            cloud_cover=None,
+        )
+        with patch(
+            "ndvi.engines.modis._load_single_band",
+            return_value=np.array([]),
+        ):
+            result = engine._process_item(
+                item,
+                BBox(
+                    south=Decimal("1"),
+                    west=Decimal("1"),
+                    north=Decimal("2"),
+                    east=Decimal("2"),
+                ),
+                date(2025, 1, 5),
+            )
+        assert result is None
+
+    def test_process_item_all_nan(self) -> None:
+        """When loaded band is all NaN, stats mean is None -> return None."""
+        engine = ModisEngine(client=_MockStacClient())  # type: ignore[arg-type]
+        item = StacItem(
+            id="modis_nan",
+            datetime=datetime(2025, 1, 5),
+            assets={"NDVI": "n.tif", "DetailedQA": "q.tif"},
+            cloud_cover=None,
+        )
+        with patch(
+            "ndvi.engines.modis._load_single_band",
+            return_value=np.array([np.nan, np.nan]),
+        ):
+            result = engine._process_item(
+                item,
+                BBox(
+                    south=Decimal("1"),
+                    west=Decimal("1"),
+                    north=Decimal("2"),
+                    east=Decimal("2"),
+                ),
+                date(2025, 1, 5),
+            )
+        assert result is None
+
+    def test_process_item_happy_path(self) -> None:
+        engine = ModisEngine(client=_MockStacClient())  # type: ignore[arg-type]
+        item = StacItem(
+            id="modis_ok",
+            datetime=datetime(2025, 1, 5),
+            assets={"NDVI": "n.tif", "DetailedQA": "q.tif"},
+            cloud_cover=None,
+        )
+        with patch(
+            "ndvi.engines.modis._load_single_band",
+            return_value=np.array([0.1, 0.5, 0.9]),
+        ):
+            result = engine._process_item(
+                item,
+                BBox(
+                    south=Decimal("1"),
+                    west=Decimal("1"),
+                    north=Decimal("2"),
+                    east=Decimal("2"),
+                ),
+                date(2025, 1, 5),
+            )
+        assert result is not None
+        assert result.mean == pytest.approx(0.5)
+        assert result.min == pytest.approx(0.1)
+        assert result.max == pytest.approx(0.9)
+        assert result.sample_count == 3
+        assert result.quality_flags == {
+            "modis": True,
+            "pre_computed_ndvi": True,
+        }
+
+    def test_timeseries_with_items(self) -> None:
+        engine = ModisEngine(
+            client=_MockStacClientWithModisItems(),  # type: ignore[arg-type]
+            date_window_days=15,
+        )
+        with patch(
+            "ndvi.engines.modis._load_single_band",
+            return_value=np.array([0.1, 0.5, 0.9]),
+        ):
+            result = engine.get_timeseries(
+                bbox=BBox(
+                    south=Decimal("1"),
+                    west=Decimal("1"),
+                    north=Decimal("2"),
+                    east=Decimal("2"),
+                ),
+                start=date(2025, 1, 12),
+                end=date(2025, 1, 20),
+                step_days=7,
+                max_cloud=30,
+            )
+        assert len(result) == 2
+        for p in result:
+            assert p.mean == pytest.approx(0.5)
+
+    def test_latest_with_items(self) -> None:
+        engine = ModisEngine(
+            client=_MockStacClientWithModisItems(),  # type: ignore[arg-type]
+        )
+        with (
+            patch(
+                "ndvi.engines.modis._load_single_band",
+                return_value=np.array([0.2, 0.6, 0.8]),
+            ),
+            patch("ndvi.engines.modis.date", wraps=date) as mock_date,
+        ):
+            mock_date.today.return_value = _FAKE_TODAY
+            result = engine.get_latest(
+                bbox=BBox(
+                    south=Decimal("1"),
+                    west=Decimal("1"),
+                    north=Decimal("2"),
+                    east=Decimal("2"),
+                ),
+                lookback_days=30,
+                max_cloud=30,
+            )
+        assert result is not None
+        assert result.mean == pytest.approx((0.2 + 0.6 + 0.8) / 3)
+
+    def test_download_asset_local(self) -> None:
+        """Local files are returned unchanged by _download_asset."""
+        import os
+        import tempfile
+
+        from ndvi.engines.modis import _download_asset
+
+        with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
+            f.write(b"fake_cog_content")
+            local_path = f.name
+        try:
+            result = _download_asset(local_path, tempfile.gettempdir(), 10.0)
+            assert result == local_path
+        finally:
+            os.unlink(local_path)
+
+    def test_load_single_band_local_tif(self) -> None:
+        """_load_single_band reads a local GeoTIFF correctly."""
+        import os
+        import tempfile
+
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        from ndvi.engines.modis import _load_single_band
+
+        width, height = 20, 20
+        data = np.ones((height, width), dtype=np.float32) * 0.5
+        data[5, 5] = np.nan
+        transform = from_bounds(0, 0, 1, 1, width, height)
+        profile = {
+            "driver": "GTiff",
+            "width": width,
+            "height": height,
+            "count": 1,
+            "dtype": data.dtype,
+            "crs": "EPSG:4326",
+            "transform": transform,
+        }
+        tmp = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
+        tmp.close()
+        try:
+            with rasterio.open(tmp.name, "w", **profile) as dst:
+                dst.write(data, 1)
+            bbox_ = BBox(
+                south=Decimal("0.1"),
+                west=Decimal("0.1"),
+                north=Decimal("0.9"),
+                east=Decimal("0.9"),
+            )
+            arr = _load_single_band(
+                tmp.name,
+                bbox=bbox_,
+                size=20,
+                timeout_seconds=10.0,
+            )
+            assert arr.size > 0
+            assert not np.isnan(arr).all()
+            assert np.nanmean(arr) == pytest.approx(0.5, abs=0.05)
+        finally:
+            os.unlink(tmp.name)
+
+    def test_load_single_band_with_scale_factor(self) -> None:
+        """Scale factor multiplies the loaded band data."""
+        import os
+        import tempfile
+
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        from ndvi.engines.modis import _load_single_band
+
+        width, height = 10, 10
+        data = np.ones((height, width), dtype=np.float32) * 1000
+        transform = from_bounds(0, 0, 1, 1, width, height)
+        profile = {
+            "driver": "GTiff",
+            "width": width,
+            "height": height,
+            "count": 1,
+            "dtype": data.dtype,
+            "crs": "EPSG:4326",
+            "transform": transform,
+        }
+        tmp = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
+        tmp.close()
+        try:
+            with rasterio.open(tmp.name, "w", **profile) as dst:
+                dst.write(data, 1)
+            bbox_ = BBox(
+                south=Decimal("0.1"),
+                west=Decimal("0.1"),
+                north=Decimal("0.9"),
+                east=Decimal("0.9"),
+            )
+            arr = _load_single_band(
+                tmp.name,
+                bbox=bbox_,
+                size=10,
+                timeout_seconds=10.0,
+                scale_factor=0.0001,
+            )
+            assert arr.size > 0
+            assert np.nanmean(arr) == pytest.approx(0.1, abs=0.01)
+        finally:
+            os.unlink(tmp.name)
+
+    def test_load_single_band_with_qa(self) -> None:
+        """QA band is applied to mask out pixels."""
+        import os
+        import tempfile
+
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        from ndvi.engines.modis import _load_single_band
+
+        width, height = 10, 10
+        ndvi_data = np.full((height, width), 0.5, dtype=np.float32)
+        qa_data = np.zeros((height, width), dtype=np.uint16)
+        qa_data[3:6, 3:6] = 1
+        transform = from_bounds(0, 0, 1, 1, width, height)
+        profile = {
+            "driver": "GTiff",
+            "width": width,
+            "height": height,
+            "count": 1,
+            "dtype": np.float32,
+            "crs": "EPSG:4326",
+            "transform": transform,
+        }
+        qa_profile = {**profile, "dtype": np.uint16}
+        tmp_ndvi = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
+        tmp_qa = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
+        tmp_ndvi.close()
+        tmp_qa.close()
+        try:
+            with rasterio.open(tmp_ndvi.name, "w", **profile) as dst:
+                dst.write(ndvi_data, 1)
+            with rasterio.open(tmp_qa.name, "w", **qa_profile) as dst:
+                dst.write(qa_data, 1)
+            bbox_ = BBox(
+                south=Decimal("0.1"),
+                west=Decimal("0.1"),
+                north=Decimal("0.9"),
+                east=Decimal("0.9"),
+            )
+            arr = _load_single_band(
+                tmp_ndvi.name,
+                bbox=bbox_,
+                size=10,
+                timeout_seconds=10.0,
+                qa_href=tmp_qa.name,
+            )
+            assert arr.size > 0
+            assert bool(np.isnan(arr).any())
+        finally:
+            os.unlink(tmp_ndvi.name)
+            os.unlink(tmp_qa.name)
+
+    def test_load_single_band_no_crs_returns_empty(self) -> None:
+        """A GeoTIFF without CRS returns an empty array."""
+        import os
+        import tempfile
+
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        from ndvi.engines.modis import _load_single_band
+
+        width, height = 10, 10
+        data = np.ones((height, width), dtype=np.float32)
+        transform = from_bounds(0, 0, 1, 1, width, height)
+        profile = {
+            "driver": "GTiff",
+            "width": width,
+            "height": height,
+            "count": 1,
+            "dtype": data.dtype,
+            "crs": None,
+            "transform": transform,
+        }
+        tmp = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
+        tmp.close()
+        try:
+            with rasterio.open(tmp.name, "w", **profile) as dst:
+                dst.write(data, 1)
+            bbox_ = BBox(
+                south=Decimal("0.1"),
+                west=Decimal("0.1"),
+                north=Decimal("0.9"),
+                east=Decimal("0.9"),
+            )
+            arr = _load_single_band(
+                tmp.name,
+                bbox=bbox_,
+                size=10,
+                timeout_seconds=10.0,
+            )
+            assert arr.size == 0
+        finally:
+            os.unlink(tmp.name)
+
+    def test_load_single_band_qa_download_failure_logs_warning(
+        self,
+    ) -> None:
+        """QA download failure is logged and processing continues."""
+        import os
+        import tempfile
+
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        from ndvi.engines.modis import _load_single_band
+
+        width, height = 10, 10
+        data = np.full((height, width), 0.5, dtype=np.float32)
+        transform = from_bounds(0, 0, 1, 1, width, height)
+        profile = {
+            "driver": "GTiff",
+            "width": width,
+            "height": height,
+            "count": 1,
+            "dtype": data.dtype,
+            "crs": "EPSG:4326",
+            "transform": transform,
+        }
+        tmp = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
+        tmp.close()
+        try:
+            with rasterio.open(tmp.name, "w", **profile) as dst:
+                dst.write(data, 1)
+            bbox_ = BBox(
+                south=Decimal("0.1"),
+                west=Decimal("0.1"),
+                north=Decimal("0.9"),
+                east=Decimal("0.9"),
+            )
+            with patch(
+                "ndvi.engines.modis.httpx.Client.get",
+                side_effect=Exception("connection refused"),
+            ):
+                arr = _load_single_band(
+                    tmp.name,
+                    bbox=bbox_,
+                    size=10,
+                    timeout_seconds=10.0,
+                    qa_href="https://example.com/qa.tif",
+                )
+            assert arr.size > 0
+        finally:
+            os.unlink(tmp.name)
+
+    def test_download_asset_via_mock_http(self) -> None:
+        """_download_asset downloads remote files via httpx."""
+        import os
+        import tempfile
+
+        import httpx
+
+        from ndvi.engines.modis import _download_asset
+
+        class _FakeResponse:
+            def raise_for_status(self) -> None:
+                pass
+
+            content: bytes = b"fake_binary_content"
+
+        with patch.object(httpx.Client, "get", return_value=_FakeResponse()):
+            result = _download_asset(
+                "https://example.com/test.tif",
+                tempfile.gettempdir(),
+                10.0,
+            )
+        assert os.path.exists(result)
+        with open(result, "rb") as f:
+            assert f.read() == b"fake_binary_content"
+        os.unlink(result)
+
+    def test_default_constructor(self) -> None:
+        engine = ModisEngine(
+            client=_MockStacClient(collection="modis-13q1-061"),  # type: ignore[arg-type]
+        )
+        assert engine.ndvi_band == "NDVI"
+        assert engine.qa_band == "DetailedQA"
+
+    def test_custom_constructor(self) -> None:
+        engine = ModisEngine(
+            ndvi_band="custom_ndvi",
+            qa_band="custom_qa",
+            timeout_seconds=20.0,
+            client=_MockStacClient(collection="modis-13q1-061"),  # type: ignore[arg-type]
+        )
+        assert engine.ndvi_band == "custom_ndvi"
+        assert engine.qa_band == "custom_qa"
+        assert engine.timeout_seconds == 20.0
