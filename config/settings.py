@@ -1134,7 +1134,7 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": SCHEMA_CACHE_WARM_INTERVAL_SECONDS,
     },
     "radio-health-check": {
-        "task": "radio.tasks.check_all_stations_health",
+        "task": "radio.health.check_all_stations",
         "schedule": RADIO_HEALTH_CHECK_INTERVAL_SECONDS,
     },
     "podcasts-refresh-feeds": {
@@ -1166,15 +1166,15 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=5, minute=45),
     },
     "radio-rollup-station-analytics": {
-        "task": "radio.tasks.rollup_station_analytics_task",
+        "task": "radio.tasks.rollup_station_analytics",
         "schedule": crontab(hour=0, minute=15),
     },
     "radio-rollup-station-analytics-noon": {
-        "task": "radio.tasks.rollup_station_analytics_task",
+        "task": "radio.tasks.rollup_station_analytics",
         "schedule": crontab(hour=12, minute=0),
     },
     "radio-refresh-now-playing": {
-        "task": "radio.tasks.refresh_now_playing_task",
+        "task": "radio.tasks.refresh_now_playing",
         "schedule": RADIO_NOW_PLAYING_REFRESH_INTERVAL_SECONDS,
     },
 }
