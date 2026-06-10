@@ -129,7 +129,7 @@ def scan_low_ndvi_observations() -> dict[str, int]:
         latest = (
             NdviObservation.objects.valid()
             .filter(farm=farm)
-            .order_by("-observation_date")
+            .order_by("-acquired_at")
             .first()
         )
         if latest is None or latest.mean is None:
