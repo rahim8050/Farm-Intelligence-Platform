@@ -23,7 +23,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any
+from decimal import Decimal
+from typing import Any, cast
 
 import httpx
 from django.conf import settings
@@ -104,15 +105,11 @@ def _get_farm_bbox(farm_id: int) -> tuple[float, float, float, float] | None:
         logger.debug("s1_context.farm_no_bbox farm_id=%s", farm_id)
         return None
 
-    assert farm.bbox_west is not None
-    assert farm.bbox_south is not None
-    assert farm.bbox_east is not None
-    assert farm.bbox_north is not None
     return (
-        float(farm.bbox_west),
-        float(farm.bbox_south),
-        float(farm.bbox_east),
-        float(farm.bbox_north),
+        float(cast(Decimal, farm.bbox_west)),
+        float(cast(Decimal, farm.bbox_south)),
+        float(cast(Decimal, farm.bbox_east)),
+        float(cast(Decimal, farm.bbox_north)),
     )
 
 
