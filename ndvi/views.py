@@ -1391,7 +1391,7 @@ class NdwiFarmStateView(BaseFarmView):
         self._enforce_integration_scope(request, write=False)
         farm = self._get_farm_for_request(request, farm_id)
         result = compute_ndwi_farm_state(farm=farm)
-        payload = {
+        payload: dict[str, JSONValue] = {
             "farm_id": result.farm_id,
             "mean_ndwi": result.mean_ndwi,
             "max_ndwi": result.max_ndwi,
