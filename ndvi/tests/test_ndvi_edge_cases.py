@@ -21,6 +21,7 @@ from django.core.cache import caches
 from rest_framework.exceptions import ValidationError
 
 from farms.models import Farm
+from ndvi.engines.base import BBox
 from ndvi.engines.sentinelhub import SentinelHubAuthError
 from ndvi.farm_state import (
     _acquire_coverage_lock,
@@ -667,7 +668,7 @@ class TestSafeErrorMessage:
         assert _safe_error_message(error) == "waf_blocked"
 
     def test_auth_error(self) -> None:
-        error = SentinelHubAuthError("auth failed")
+        error = SentinelHubAuthError(None)
         assert _safe_error_message(error) == "auth_failed"
 
 
@@ -747,7 +748,12 @@ class TestRenderNdwiPng:
 
         content, content_hash = render_ndwi_png(
             farm=farm,
-            bbox=(0.0, 0.0, 0.2, 0.2),
+            bbox=BBox(
+                south=Decimal("0.0"),
+                west=Decimal("0.0"),
+                north=Decimal("0.2"),
+                east=Decimal("0.2"),
+            ),
             day=date(2024, 6, 1),
             size=256,
             max_cloud=30,
