@@ -29,6 +29,7 @@ class RasterRequest:
     engine: str
     job_id: int | None = None
     farm_id: int | None = None
+    index_type: str = "NDVI"
     colormap_normalization: ColormapNormalization = (
         ColormapNormalization.HISTOGRAM
     )

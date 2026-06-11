@@ -23,6 +23,7 @@ from ndvi.stac_client import (
     build_asset_candidates,
     compute_ndvi_stats,
     load_ndvi_array,
+    load_ndwi_array,
     resolve_asset_href_candidates,
     select_best_item,
 )
@@ -32,7 +33,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_SECONDS: Final[float] = 30.0
 DEFAULT_DATE_WINDOW_DAYS: Final[int] = 5
 DEFAULT_MAX_CLOUD: Final[int] = 30
+DEFAULT_INDEX_TYPE: Final[str] = "NDVI"
 DEFAULT_ASSET_RED: Final[str] = "B4"
+DEFAULT_ASSET_GREEN: Final[str] = "B3"
 DEFAULT_ASSET_NIR: Final[str] = "B5"
 
 
@@ -63,9 +66,12 @@ class LandsatEngine(NDVIEngine):
         client: StacClient | None = None,
         timeout_seconds: float | None = None,
         date_window_days: int | None = None,
+        index_type: str = "NDVI",
         asset_red: str | None = None,
+        asset_green: str | None = None,
         asset_nir: str | None = None,
     ) -> None:
+        self.index_type = index_type
         self.timeout_seconds = timeout_seconds or _float_setting(
             "TIMEOUT_SECS", DEFAULT_TIMEOUT_SECONDS
         )
@@ -74,6 +80,9 @@ class LandsatEngine(NDVIEngine):
         )
         self.asset_red = asset_red or _str_setting(
             "ASSET_RED", DEFAULT_ASSET_RED
+        )
+        self.asset_green = asset_green or _str_setting(
+            "ASSET_GREEN", DEFAULT_ASSET_GREEN
         )
         self.asset_nir = asset_nir or _str_setting(
             "ASSET_NIR", DEFAULT_ASSET_NIR
@@ -187,22 +196,39 @@ class LandsatEngine(NDVIEngine):
         return buckets
 
     def _compute_stats(self, item: Any, bbox: BBox) -> NdviStats | None:
-        red_assets = build_asset_candidates(self.asset_red)
         nir_assets = build_asset_candidates(self.asset_nir)
-        red_href = resolve_asset_href_candidates(item, red_assets)
         nir_href = resolve_asset_href_candidates(item, nir_assets)
-        if not red_href or not nir_href:
-            logger.warning(
-                "landsat.item.missing_assets item_id=%s",
-                getattr(item, "id", "-"),
-            )
-            return None
 
-        ndvi = load_ndvi_array(
-            red_href=red_href,
-            nir_href=nir_href,
-            bbox=bbox,
-            size=DEFAULT_STATS_SAMPLE_SIZE,
-            timeout_seconds=self.timeout_seconds,
-        )
-        return compute_ndvi_stats(ndvi)
+        if self.index_type == "NDWI":
+            green_assets = build_asset_candidates(self.asset_green)
+            green_href = resolve_asset_href_candidates(item, green_assets)
+            if not green_href or not nir_href:
+                logger.warning(
+                    "landsat.item.missing_assets item_id=%s",
+                    getattr(item, "id", "-"),
+                )
+                return None
+            index_array = load_ndwi_array(
+                green_href=green_href,
+                nir_href=nir_href,
+                bbox=bbox,
+                size=DEFAULT_STATS_SAMPLE_SIZE,
+                timeout_seconds=self.timeout_seconds,
+            )
+        else:
+            red_assets = build_asset_candidates(self.asset_red)
+            red_href = resolve_asset_href_candidates(item, red_assets)
+            if not red_href or not nir_href:
+                logger.warning(
+                    "landsat.item.missing_assets item_id=%s",
+                    getattr(item, "id", "-"),
+                )
+                return None
+            index_array = load_ndvi_array(
+                red_href=red_href,
+                nir_href=nir_href,
+                bbox=bbox,
+                size=DEFAULT_STATS_SAMPLE_SIZE,
+                timeout_seconds=self.timeout_seconds,
+            )
+        return compute_ndvi_stats(index_array)

@@ -1,15 +1,17 @@
-"""Deterministic helpers for converting NDVI rasters into PNG previews.
+"""Deterministic helpers for converting spectral index rasters into PNG
+previews.
 
-The NDVI raster endpoint already bounds raster dimensions at the request layer.
-These helpers validate array shape and dtype, normalize values to the expected
-range, apply the canonical red-yellow-green colormap, and encode a binary PNG.
+NDVI uses the RdYlGn (Red-Yellow-Green) colormap — green indicates high
+vegetation. NDWI uses the BrBG (Brown-Blue-Green) diverging colormap —
+blue/cyan indicates high water content (positive NDWI), brown/tan indicates
+dry/low water (negative NDWI).
 
 Colormap Normalization Modes
 -----------------------------
 - histogram: Per-image min-max stretching. Shows maximum detail within each
-  image by utilizing the full colormap spectrum for the actual NDVI range.
+  image by utilizing the full colormap spectrum for the actual index range.
 - fixed: Fixed NDVI range mapping [-1.0, 1.0] → [0.0, 1.0]. Provides consistent
-  colors across different images (e.g., 0.5 always maps to yellow).
+  colors across different images (e.g., 0.5 always maps to yellow for NDVI).
 """
 
 from __future__ import annotations
@@ -50,6 +52,24 @@ RDYL_GN_CONTROL_POINTS: Final[np.ndarray] = np.array(
     dtype=np.float32,
 )
 
+NDWI_COLORMAP_NAME: Final[str] = "BrBG"
+BRBG_CONTROL_POINTS: Final[np.ndarray] = np.array(
+    [
+        [84, 48, 5],
+        [140, 81, 10],
+        [191, 129, 45],
+        [223, 194, 125],
+        [246, 232, 195],
+        [245, 245, 245],
+        [199, 234, 229],
+        [128, 205, 193],
+        [53, 151, 143],
+        [1, 102, 94],
+        [0, 60, 48],
+    ],
+    dtype=np.float32,
+)
+
 
 def _validated_ndvi(ndvi: np.ndarray) -> np.ndarray:
     """Return a writable 2D float32 NDVI array after validating the input."""
@@ -86,6 +106,33 @@ def _fallback_rdylgn_bytes(normalized: np.ndarray) -> np.ndarray:
         normalized,
         positions,
         RDYL_GN_CONTROL_POINTS[:, 2],
+    )
+    return np.stack([red, green, blue], axis=-1).round().astype(np.uint8)
+
+
+def _fallback_brbg_bytes(normalized: np.ndarray) -> np.ndarray:
+    """Approximate matplotlib's BrBG colormap using fixed control points."""
+
+    positions = np.linspace(
+        0.0,
+        1.0,
+        num=BRBG_CONTROL_POINTS.shape[0],
+        dtype=np.float32,
+    )
+    red = np.interp(
+        normalized,
+        positions,
+        BRBG_CONTROL_POINTS[:, 0],
+    )
+    green = np.interp(
+        normalized,
+        positions,
+        BRBG_CONTROL_POINTS[:, 1],
+    )
+    blue = np.interp(
+        normalized,
+        positions,
+        BRBG_CONTROL_POINTS[:, 2],
     )
     return np.stack([red, green, blue], axis=-1).round().astype(np.uint8)
 
@@ -199,4 +246,66 @@ def ndvi_to_png_bytes(
     """
     return rgb_to_png_bytes(
         ndvi_to_rgb(ndvi, colormap_normalization=colormap_normalization)
+    )
+
+
+def ndwi_to_rgb(
+    ndwi: np.ndarray,
+    colormap_normalization: ColormapNormalization = (
+        ColormapNormalization.HISTOGRAM
+    ),
+) -> np.ndarray:
+    """Map a 2D NDWI array into an RGB uint8 image using BrBG colormap.
+
+    BrBG (Brown-Blue-Green) diverging colormap shows water (positive NDWI)
+    as blue/cyan and dry/low water (negative NDWI) as brown/tan. This is the
+    inverse visual mapping from the RdYlGn used for NDVI.
+
+    Args:
+        ndwi: 2D NDWI array with float32/float64 dtype.
+        colormap_normalization: Strategy for mapping NDWI to colormap.
+
+    Returns:
+        RGB uint8 array with shape (H, W, 3).
+    """
+    ndwi_float = _validated_ndvi(ndwi)
+    np.nan_to_num(
+        ndwi_float,
+        copy=False,
+        nan=0.0,
+        posinf=1.0,
+        neginf=-1.0,
+    )
+    np.clip(ndwi_float, -1.0, 1.0, out=ndwi_float)
+    normalized = _normalize_ndvi(ndwi_float, colormap_normalization)
+
+    try:
+        colormaps = _load_matplotlib_colormaps()
+    except ImportError:
+        rgb = _fallback_brbg_bytes(normalized)
+    else:
+        colored = colormaps[NDWI_COLORMAP_NAME](normalized, bytes=True)
+        rgb = np.ascontiguousarray(colored[:, :, :3])
+    if rgb.dtype != np.uint8 or rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise TypeError("Colormap output must be an RGB uint8 image.")
+    return rgb
+
+
+def ndwi_to_png_bytes(
+    ndwi: np.ndarray,
+    colormap_normalization: ColormapNormalization = (
+        ColormapNormalization.HISTOGRAM
+    ),
+) -> bytes:
+    """Convert a validated NDWI array into deterministic PNG bytes.
+
+    Args:
+        ndwi: 2D NDWI array with float32/float64 dtype.
+        colormap_normalization: Strategy for mapping NDWI to colormap.
+
+    Returns:
+        Binary PNG bytes.
+    """
+    return rgb_to_png_bytes(
+        ndwi_to_rgb(ndwi, colormap_normalization=colormap_normalization)
     )

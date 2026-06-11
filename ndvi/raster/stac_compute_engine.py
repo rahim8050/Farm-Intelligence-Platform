@@ -21,7 +21,7 @@ from ndvi.stac_client import (
 )
 
 from .base import ColormapNormalization, NdviRasterEngine, RasterRequest
-from .png import ndvi_to_png_bytes
+from .png import ndvi_to_png_bytes, ndwi_to_png_bytes
 
 DEFAULT_TIMEOUT_SECONDS: Final[float] = 30.0
 DEFAULT_DATE_WINDOW_DAYS: Final[int] = 3
@@ -272,7 +272,11 @@ class StacComputeRasterEngine(NdviRasterEngine):
                 continue
 
             self._log_ndvi_distribution(ndvi)
-            return self._encode_png(ndvi, request.colormap_normalization)
+            return self._encode_png(
+                ndvi,
+                request.colormap_normalization,
+                index_type=request.index_type,
+            )
 
         if processing_failures:
             summary = _summarize_processing_failures(processing_failures)
@@ -322,16 +326,21 @@ class StacComputeRasterEngine(NdviRasterEngine):
 
     def _encode_png(
         self,
-        ndvi: np.ndarray,
+        index_array: np.ndarray,
         colormap_normalization: ColormapNormalization,
+        *,
+        index_type: str = "NDVI",
     ) -> bytes:
-        """Encode NDVI array to PNG bytes with specified normalization.
+        """Encode index array to PNG bytes with specified normalization.
 
         Args:
-            ndvi: 2D NDVI array.
+            index_array: 2D NDVI or NDWI array.
             colormap_normalization: Normalization strategy.
+            index_type: "NDVI" or "NDWI" — selects the colormap.
 
         Returns:
             PNG binary bytes.
         """
-        return ndvi_to_png_bytes(ndvi, colormap_normalization)
+        if index_type == "NDWI":
+            return ndwi_to_png_bytes(index_array, colormap_normalization)
+        return ndvi_to_png_bytes(index_array, colormap_normalization)

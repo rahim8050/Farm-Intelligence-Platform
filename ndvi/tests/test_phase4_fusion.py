@@ -2,7 +2,8 @@
 
 Covers:
 - Sentinel1Context dataclass and to_flags()
-- fetch_sentinel1_context() stub
+- _classify_s1_items() for various item combinations
+- fetch_sentinel1_context() with mocked farm bbox and STAC response
 - merge_s1_context_flags()
 - detect_anomaly() for flooding, wet soil, urban artifact, no anomaly
 - FusionResult quality_flags propagation (source_disagreement, fallback_used)
@@ -11,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 from datetime import date
+from unittest.mock import patch
 
 from ndvi.fusion import (
     FusionCandidate,
@@ -20,6 +22,7 @@ from ndvi.fusion import (
 from ndvi.sentinel1_context import (
     S1_CONTEXT_FLAG_FIELDS,
     Sentinel1Context,
+    _classify_s1_items,
     detect_anomaly,
     fetch_sentinel1_context,
     merge_s1_context_flags,
@@ -107,11 +110,102 @@ class TestSentinel1Context:
         assert ctx.has_any_signal() is True
 
 
-class TestFetchSentinel1Context:
-    def test_stub_returns_default(self) -> None:
-        ctx = fetch_sentinel1_context(1, date(2025, 6, 1))
-        assert isinstance(ctx, Sentinel1Context)
+class TestClassifyS1Items:
+    def test_empty_items(self) -> None:
+        ctx = _classify_s1_items([])
         assert ctx.has_any_signal() is False
+
+    def test_few_items_no_flags(self) -> None:
+        items = [{"properties": {"sar:polarizations": ["VV"]}}] * 2
+        ctx = _classify_s1_items(items)
+        assert ctx.has_any_signal() is False
+
+    def test_dual_pol_with_both_orbits_sets_rough(self) -> None:
+        items = [
+            {
+                "properties": {
+                    "sar:polarizations": ["VV", "VH"],
+                    "sat:orbit_state": "ascending",
+                }
+            }
+        ] * 3
+        items.append(
+            {
+                "properties": {
+                    "sar:polarizations": ["VV", "VH"],
+                    "sat:orbit_state": "descending",
+                }
+            }
+        )
+        ctx = _classify_s1_items(items)
+        assert ctx.rough_surface is True
+        assert ctx.wet_soil is False
+        assert ctx.flooding is False
+
+    def test_eight_items_sets_wet_soil(self) -> None:
+        items: list[dict[str, object]] = [{"properties": {}}] * 8
+        ctx = _classify_s1_items(items)
+        assert ctx.wet_soil is True
+        assert ctx.flooding is False
+
+    def test_twelve_items_sets_flooding(self) -> None:
+        items = [{"properties": {"sar:polarizations": ["VV"]}}] * 12
+        ctx = _classify_s1_items(items)
+        assert ctx.wet_soil is True
+        assert ctx.flooding is True
+
+
+class TestFetchSentinel1Context:
+    def test_no_bbox_returns_empty(self) -> None:
+        with patch(
+            "ndvi.sentinel1_context._get_farm_bbox",
+            return_value=None,
+        ):
+            ctx = fetch_sentinel1_context(1, date(2025, 6, 1))
+            assert isinstance(ctx, Sentinel1Context)
+            assert ctx.has_any_signal() is False
+
+    def test_no_s1_items_returns_empty(self) -> None:
+        with patch(
+            "ndvi.sentinel1_context._get_farm_bbox",
+            return_value=(0.0, 0.0, 1.0, 1.0),
+        ):
+            with patch(
+                "ndvi.sentinel1_context._search_s1_items",
+                return_value=[],
+            ):
+                ctx = fetch_sentinel1_context(1, date(2025, 6, 1))
+                assert ctx.has_any_signal() is False
+
+    def test_s1_items_detected(self) -> None:
+        items = [
+            {
+                "properties": {
+                    "sar:polarizations": ["VV", "VH"],
+                    "sat:orbit_state": "ascending",
+                }
+            }
+        ] * 3 + [
+            {
+                "properties": {
+                    "sar:polarizations": ["VV", "VH"],
+                    "sat:orbit_state": "descending",
+                }
+            }
+        ]
+        with patch(
+            "ndvi.sentinel1_context._get_farm_bbox",
+            return_value=(0.0, 0.0, 1.0, 1.0),
+        ):
+            with patch(
+                "ndvi.sentinel1_context._search_s1_items",
+                return_value=items,
+            ):
+                ctx = fetch_sentinel1_context(1, date(2025, 6, 1))
+                # 4 items with dual-pol + both orbits
+                assert ctx.rough_surface is True
+                # 4 items < 8, so no wet_soil
+                assert ctx.wet_soil is False
 
 
 class TestMergeS1ContextFlags:

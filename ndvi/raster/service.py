@@ -61,6 +61,52 @@ def render_ndvi_png(
         engine=resolved_engine,
         job_id=job_id,
         farm_id=farm.id,
+        index_type="NDVI",
+        colormap_normalization=colormap_normalization,
+    )
+    engine = get_engine(resolved_engine)
+    content = engine.render_png(request)
+    return content, _hash_png(content)
+
+
+def render_ndwi_png(
+    *,
+    farm: Farm,
+    bbox: BBox,
+    day: date,
+    size: int,
+    max_cloud: int,
+    engine_name: str | None = None,
+    job_id: int | None = None,
+    colormap_normalization: ColormapNormalization = (
+        ColormapNormalization.HISTOGRAM
+    ),
+) -> tuple[bytes, str]:
+    """Render a NDWI raster PNG and return content + hash.
+
+    Args:
+        farm: Farm instance for the raster.
+        bbox: Bounding box for the raster.
+        day: Date for the raster.
+        size: Raster dimensions (width/height).
+        max_cloud: Maximum cloud cover percentage.
+        engine_name: Rendering engine ('stac' or 'sentinelhub').
+        job_id: Optional job ID for tracking.
+        colormap_normalization: Normalization strategy for the colormap.
+
+    Returns:
+        Tuple of (PNG bytes, SHA256 hash).
+    """
+    resolved_engine = resolve_raster_engine_name(engine_name)
+    request = RasterRequest(
+        bbox=bbox,
+        date=day,
+        size=size,
+        max_cloud=max_cloud,
+        engine=resolved_engine,
+        job_id=job_id,
+        farm_id=farm.id,
+        index_type="NDWI",
         colormap_normalization=colormap_normalization,
     )
     engine = get_engine(resolved_engine)

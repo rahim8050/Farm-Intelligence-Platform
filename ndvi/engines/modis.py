@@ -33,6 +33,11 @@ from ndvi.stac_client import (
     select_best_item,
 )
 
+
+class UnsupportedIndexError(ValueError):
+    """Raised when the engine does not support the requested index type."""
+
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_SECONDS: Final[float] = 30.0
@@ -185,9 +190,17 @@ class ModisEngine(NDVIEngine):
         client: StacClient | None = None,
         timeout_seconds: float | None = None,
         date_window_days: int | None = None,
+        index_type: str = "NDVI",
         ndvi_band: str | None = None,
         qa_band: str | None = None,
     ) -> None:
+        if index_type != "NDVI":
+            raise UnsupportedIndexError(
+                f"MODIS engine only supports NDVI, not {index_type}. "
+                "MODIS provides pre-computed NDVI (MOD13Q1) and does not "
+                "have the Green band needed for NDWI computation."
+            )
+        self.index_type = index_type
         self.timeout_seconds = timeout_seconds or _float_setting(
             "TIMEOUT_SECS", DEFAULT_TIMEOUT_SECONDS
         )

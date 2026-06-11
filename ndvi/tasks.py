@@ -37,9 +37,12 @@ from .metrics import (
     ndvi_backfill_rows_total,
     ndvi_jobs_total,
     ndvi_task_runtime_seconds,
+    ndwi_backfill_rows_total,
+    ndwi_jobs_total,
+    ndwi_task_runtime_seconds,
 )
 from .models import NdviJob, NdviRasterArtifact
-from .raster.service import render_ndvi_png
+from .raster.service import render_ndvi_png, render_ndwi_png
 from .services import (
     acquire_lock,
     dispatch_farm_state_coverage,
@@ -168,6 +171,12 @@ def _handle_retryable_task_failure(
                 type=job.job_type,
                 engine=job.engine,
             ).inc()
+            if job.index_type == "NDWI":
+                ndwi_jobs_total.labels(
+                    status=NdviJob.JobStatus.FAILED,
+                    type=job.job_type,
+                    engine=job.engine,
+                ).inc()
             return "invalid"
     _mark_job_failed(job, exc)
     ndvi_jobs_total.labels(
@@ -175,6 +184,12 @@ def _handle_retryable_task_failure(
         type=job.job_type,
         engine=job.engine,
     ).inc()
+    if job.index_type == "NDWI":
+        ndwi_jobs_total.labels(
+            status=NdviJob.JobStatus.FAILED,
+            type=job.job_type,
+            engine=job.engine,
+        ).inc()
     return "invalid"
 
 
@@ -215,7 +230,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             )
 
         if job.job_type == NdviJob.JobType.REFRESH_LATEST:
-            engine = get_engine(job.engine)
+            engine = get_engine(job.engine, index_type=job.index_type)
             task_engine = job.engine
             latest_params = normalize_latest_params(
                 lookback_days=job.lookback_days or get_default_lookback_days(),
@@ -250,7 +265,12 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 raise ValidationError("Raster size exceeds pixel limit.")
             max_cloud = job.max_cloud or get_default_max_cloud()
             colormap_norm = get_default_colormap_normalization()
-            content, content_hash = render_ndvi_png(
+            render_func = (
+                render_ndwi_png
+                if job.index_type == "NDWI"
+                else render_ndvi_png
+            )
+            content, content_hash = render_func(
                 farm=job.farm,
                 bbox=bbox,
                 day=raster_date,
@@ -287,7 +307,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             )
             _with_fresh_connection(lambda: artifact.save())
         else:
-            engine = get_engine(job.engine)
+            engine = get_engine(job.engine, index_type=job.index_type)
             task_engine = job.engine
             timeseries_params = normalize_timeseries_params(
                 start=job.start
@@ -316,6 +336,10 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                     ndvi_backfill_rows_total.labels(
                         engine=job.engine, status="success"
                     ).inc(len(points))
+                    if job.index_type == "NDWI":
+                        ndwi_backfill_rows_total.labels(
+                            engine=job.engine, status="success"
+                        ).inc(len(points))
         _with_fresh_connection(
             lambda: job.mark_finished(NdviJob.JobStatus.SUCCESS)
         )
@@ -328,6 +352,12 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             type=job.job_type,
             engine=job.engine,
         ).inc()
+        if job.index_type == "NDWI":
+            ndwi_jobs_total.labels(
+                status=NdviJob.JobStatus.SUCCESS,
+                type=job.job_type,
+                engine=job.engine,
+            ).inc()
         return "ok"
     except SentinelHubAuthError as exc:
         logger.warning("ndvi.job.auth_failed job_id=%s err=%s", job.id, exc)
@@ -339,6 +369,12 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             type=job.job_type,
             engine=job.engine,
         ).inc()
+        if job.index_type == "NDWI":
+            ndwi_jobs_total.labels(
+                status=NdviJob.JobStatus.FAILED,
+                type=job.job_type,
+                engine=job.engine,
+            ).inc()
         return "invalid"
     except StacWafBlockedError as exc:
         logger.error(
@@ -412,6 +448,12 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             type=job.job_type,
             engine=job.engine,
         ).inc()
+        if job.index_type == "NDWI":
+            ndwi_jobs_total.labels(
+                status=NdviJob.JobStatus.FAILED,
+                type=job.job_type,
+                engine=job.engine,
+            ).inc()
         raise
     finally:
         if lock_token:
@@ -424,6 +466,15 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             task="run_ndvi_job",
             engine=job.engine,
         ).observe(max(time.monotonic() - started_at, 0.0))
+        if job.index_type == "NDWI":
+            ndwi_task_runtime_seconds.labels(
+                task="run_ndvi_job",
+                engine=task_engine,
+            ).observe(max(time.monotonic() - started_at, 0.0))
+            ndwi_task_runtime_seconds.labels(
+                task="run_ndvi_job",
+                engine=job.engine,
+            ).observe(max(time.monotonic() - started_at, 0.0))
 
 
 @shared_task
@@ -446,6 +497,33 @@ def enqueue_daily_refresh() -> int:
                 "lookback_days": get_default_lookback_days(),
                 "max_cloud": get_default_max_cloud(),
             },
+        )
+        dispatch_ndvi_job(job)
+        count += 1
+    return count
+
+
+@shared_task
+def enqueue_daily_ndwi_refresh() -> int:
+    count = 0
+    for farm in Farm.objects.filter(is_active=True):
+        if (
+            farm.bbox_south is None
+            or farm.bbox_west is None
+            or farm.bbox_north is None
+            or farm.bbox_east is None
+        ):
+            continue
+        job = enqueue_job(
+            owner_id=farm.owner_id,
+            farm=farm,
+            engine_name=None,
+            job_type=NdviJob.JobType.REFRESH_LATEST,
+            params={
+                "lookback_days": get_default_lookback_days(),
+                "max_cloud": get_default_max_cloud(),
+            },
+            index_type="NDWI",
         )
         dispatch_ndvi_job(job)
         count += 1

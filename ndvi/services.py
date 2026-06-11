@@ -972,6 +972,41 @@ ENGINE_FACTORIES: dict[str, Callable[[], NDVIEngine]] = {
 }
 
 
+def get_engine(
+    engine_name: str | None = None, *, index_type: str = "NDVI"
+) -> NDVIEngine:
+    if index_type == "NDWI":
+        engine = resolve_ndvi_engine_name(engine_name)
+        if engine == "modis":
+            from .engines.modis import ModisEngine
+
+            return ModisEngine(index_type=index_type)
+        if engine == "sentinelhub":
+            return SentinelHubEngine(index_type=index_type)
+        if engine == "stac":
+            from .engines.stac import StacEngine
+
+            return StacEngine(index_type=index_type)
+        if engine == "gee":
+            from .engines.gee import GeeEngine
+
+            return GeeEngine(index_type=index_type)
+        if engine == "landsat":
+            from .engines.landsat import LandsatEngine
+
+            return LandsatEngine(index_type=index_type)
+        raise ValueError(f"Unsupported NDWI engine: {engine}")
+
+    engine = resolve_ndvi_engine_name(engine_name)
+    factory = ENGINE_FACTORIES.get(engine)
+    if not factory:
+        raise ValueError(f"Unsupported NDVI engine: {engine}")
+    from ndvi.metrics import ndvi_source_usage_total
+
+    ndvi_source_usage_total.labels(source=engine, endpoint="get_engine").inc()
+    return factory()
+
+
 @dataclass(frozen=True)
 class TimeseriesParams:
     start: date
@@ -1000,17 +1035,6 @@ def resolve_ndvi_engine_name(
     if engine not in SUPPORTED_ENGINES:
         raise ValueError(f"Unsupported NDVI engine: {engine}")
     return engine
-
-
-def get_engine(engine_name: str | None = None) -> NDVIEngine:
-    engine = resolve_ndvi_engine_name(engine_name)
-    factory = ENGINE_FACTORIES.get(engine)
-    if not factory:
-        raise ValueError(f"Unsupported NDVI engine: {engine}")
-    from ndvi.metrics import ndvi_source_usage_total
-
-    ndvi_source_usage_total.labels(source=engine, endpoint="get_engine").inc()
-    return factory()
 
 
 def normalize_bbox(farm: Farm) -> BBox:
@@ -1244,6 +1268,72 @@ def get_cached_latest_response(
     cached = cache.get(key)
     if cached:
         ndvi_cache_hit_total.labels(layer="latest").inc()
+    return cached
+
+
+def cache_ndwi_timeseries_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: TimeseriesParams,
+    payload: dict[str, Any],
+) -> None:
+    cache = caches["default"]
+    key = (
+        f"ndwi:cache:v{NDVI_TIMESERIES_CACHE_VERSION}:ts:{owner_id}:"
+        f"{farm_id}:{engine}:{params.start}:{params.end}:"
+        f"{params.step_days}:{params.max_cloud}"
+    )
+    cache.set(key, payload, get_cache_ttl_timeseries())
+
+
+def get_cached_ndwi_timeseries_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: TimeseriesParams,
+) -> dict[str, Any] | None:
+    cache = caches["default"]
+    key = (
+        f"ndwi:cache:v{NDVI_TIMESERIES_CACHE_VERSION}:ts:{owner_id}:"
+        f"{farm_id}:{engine}:{params.start}:{params.end}:"
+        f"{params.step_days}:{params.max_cloud}"
+    )
+    cached = cache.get(key)
+    if cached:
+        ndvi_cache_hit_total.labels(layer="ndwi_timeseries").inc()
+    return cached
+
+
+def cache_ndwi_latest_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: LatestParams,
+    payload: dict[str, Any],
+) -> None:
+    cache = caches["default"]
+    key = (
+        f"ndwi:cache:v{NDVI_LATEST_CACHE_VERSION}:latest:{owner_id}:"
+        f"{farm_id}:{engine}:{params.lookback_days}:{params.max_cloud}"
+    )
+    cache.set(key, payload, get_cache_ttl_latest())
+
+
+def get_cached_ndwi_latest_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: LatestParams,
+) -> dict[str, Any] | None:
+    cache = caches["default"]
+    key = (
+        f"ndwi:cache:v{NDVI_LATEST_CACHE_VERSION}:latest:{owner_id}:"
+        f"{farm_id}:{engine}:{params.lookback_days}:{params.max_cloud}"
+    )
+    cached = cache.get(key)
+    if cached:
+        ndvi_cache_hit_total.labels(layer="ndwi_latest").inc()
     return cached
 
 
@@ -1682,6 +1772,7 @@ def enqueue_job(
     engine_name: str | None = None,
     job_type: str,
     params: dict[str, Any],
+    index_type: str = "NDVI",
 ) -> NdviJob:
     if job_type == NdviJob.JobType.RASTER_PNG:
         metrics_engine = resolve_ndvi_engine_name(None)
@@ -1720,6 +1811,7 @@ def enqueue_job(
         step_days=params.get("step_days"),
         max_cloud=params.get("max_cloud"),
         lookback_days=params.get("lookback_days"),
+        index_type=index_type,
     )
     ndvi_jobs_total.labels(
         status=job.status, type=job_type, engine=resolved_engine

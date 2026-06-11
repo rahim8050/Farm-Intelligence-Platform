@@ -290,7 +290,7 @@ Worker B: UPDATE status=RUNNING → also succeeds (same value!)
 | MEDIUM | Check-then-act race | 1.2 | ✅ FIXED | Atomic UPDATE prevents race |
 | MEDIUM | Multiple schedulers | 1.3 | ⚠️ NOT ADDRESSED | No leader election for multiple Celery Beat instances |
 | MEDIUM | Tracing correlation | 6.1 | ✅ FIXED | Correlation IDs are logged across scheduler→worker→WebSocket |
-| MEDIUM | Handler exceptions | 8.4 | ⚠️ NOT IMPLEMENTED | No exception hierarchy (TemporaryError/PermanentError) |
+| MEDIUM | Handler exceptions | 8.4 | ✅ FIXED | `TemporaryHandlerError` / `PermanentHandlerError` in `activities/handlers/base.py`, handled in `activities/tasks.py` |
 
 ## Implementation Notes
 

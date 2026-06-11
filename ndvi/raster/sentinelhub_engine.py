@@ -79,6 +79,33 @@ function evaluatePixel(sample) {
 }
 """
 
+NDWI_RASTER_EVALSCRIPT: Final[str] = """
+//VERSION=3
+function setup() {
+  return {
+    input: [{bands: ["B03", "B08", "dataMask"]}],
+    output: { id: "default", bands: 4 }
+  };
+}
+
+function evaluatePixel(sample) {
+  const ndwi = (sample.B03 - sample.B08) / (sample.B03 + sample.B08);
+  const val = isFinite(ndwi) ? ndwi : -0.2;
+  // Brown-Blue-Green diverging colormap for NDWI
+  const rgb = colorBlend(val,
+    [-1.0, -0.5, 0.0, 0.5, 1.0],
+    [
+      [0.33, 0.19, 0.02],
+      [0.75, 0.51, 0.18],
+      [0.96, 0.96, 0.96],
+      [0.50, 0.80, 0.76],
+      [0.00, 0.24, 0.19],
+    ]
+  );
+  return [rgb[0], rgb[1], rgb[2], sample.dataMask];
+}
+"""
+
 
 class SentinelHubRasterEngine(NdviRasterEngine):
     """Render NDVI rasters via Sentinel Hub Process API."""
@@ -136,11 +163,17 @@ class SentinelHubRasterEngine(NdviRasterEngine):
         return cb
 
     def render_png(self, request: RasterRequest) -> bytes:
-        payload = self._build_payload(request)
+        evalscript = (
+            NDWI_RASTER_EVALSCRIPT
+            if request.index_type == "NDWI"
+            else RASTER_EVALSCRIPT
+        )
+        payload = self._build_payload(request, evalscript=evalscript)
         logger.debug(
-            "ndvi.raster.payload keys=%s evalscript_len=%s",
+            "ndvi.raster.payload keys=%s evalscript_len=%s index_type=%s",
             sorted(payload.keys()),
-            len(RASTER_EVALSCRIPT),
+            len(evalscript),
+            request.index_type,
         )
         token = self._stats._get_access_token()  # pylint: disable=protected-access
         headers = {
@@ -155,7 +188,21 @@ class SentinelHubRasterEngine(NdviRasterEngine):
         )
         return response.content
 
-    def _build_payload(self, request: RasterRequest) -> dict[str, Any]:
+    def _build_payload(
+        self,
+        request: RasterRequest,
+        *,
+        evalscript: str | None = None,
+    ) -> dict[str, Any]:
+        resolved = (
+            evalscript
+            if evalscript is not None
+            else (
+                NDWI_RASTER_EVALSCRIPT
+                if request.index_type == "NDWI"
+                else RASTER_EVALSCRIPT
+            )
+        )
         bounds = [
             float(request.bbox.west),
             float(request.bbox.south),
@@ -165,7 +212,7 @@ class SentinelHubRasterEngine(NdviRasterEngine):
         day_start = datetime.combine(request.date, datetime.min.time())
         day_end = datetime.combine(request.date, datetime.max.time())
         return {
-            "evalscript": RASTER_EVALSCRIPT,
+            "evalscript": resolved,
             "input": {
                 "bounds": {
                     "bbox": bounds,

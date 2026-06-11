@@ -89,6 +89,31 @@ function evaluatePixel(sample) {
 }
 """
 
+NDWI_EVALSCRIPT: Final[str] = """
+//VERSION=3
+function setup() {
+  return {
+    input: [{bands: ["B03", "B08", "SCL"]}],
+    output: [
+      { id: "ndwi", bands: 1, sampleType: "FLOAT32", statistics: true },
+      { id: "dataMask", bands: 1, sampleType: "UINT8", statistics: true }
+    ]
+  };
+}
+
+const MASKED_SCL = [0, 1, 2, 3, 8, 9, 10, 11];
+
+function isClear(sceneClass) {
+  return MASKED_SCL.indexOf(sceneClass) === -1;
+}
+
+function evaluatePixel(sample) {
+  const ndwi = (sample.B03 - sample.B08) / (sample.B03 + sample.B08);
+  const mask = isFinite(ndwi) && isClear(sample.SCL) ? 1 : 0;
+  return { ndwi: [ndwi], dataMask: [mask] };
+}
+"""
+
 
 class SentinelHubAuthError(UpstreamFailureError):
     """Signals Sentinel Hub authentication/authorization failures."""
@@ -136,7 +161,9 @@ class SentinelHubEngine(NDVIEngine):
         cache_alias: str = "default",
         timeout_seconds: float | None = None,
         base_url: str | None = None,
+        index_type: str = "NDVI",
     ) -> None:
+        self.index_type = index_type
         self.client_id = client_id or os.getenv("SENTINELHUB_CLIENT_ID")
         self.client_secret = client_secret or os.getenv(
             "SENTINELHUB_CLIENT_SECRET"
@@ -361,6 +388,9 @@ class SentinelHubEngine(NDVIEngine):
             float(bbox.east),
             float(bbox.north),
         ]
+        evalscript = (
+            NDWI_EVALSCRIPT if self.index_type == "NDWI" else NDVI_EVALSCRIPT
+        )
         payload: dict[str, Any] = {
             "input": {
                 "bounds": {"bbox": bounds},
@@ -385,7 +415,7 @@ class SentinelHubEngine(NDVIEngine):
                     + "Z",
                 },
                 "aggregationInterval": {"of": f"P{int(step_days)}D"},
-                "evalscript": NDVI_EVALSCRIPT,
+                "evalscript": evalscript,
             },
             "calculations": {"default": {}},
         }
@@ -407,7 +437,10 @@ class SentinelHubEngine(NDVIEngine):
                 continue
 
             outputs = item.get("outputs", {})
-            ndvi_output = outputs.get("ndvi", outputs.get("default", {}))
+            index_output_id = "ndwi" if self.index_type == "NDWI" else "ndvi"
+            ndvi_output = outputs.get(
+                index_output_id, outputs.get("default", {})
+            )
             data_mask_output = outputs.get(
                 "dataMask", outputs.get("dataMask", {})
             )
@@ -418,13 +451,16 @@ class SentinelHubEngine(NDVIEngine):
             if not ndvi_stats:
                 ndvi_stats = ndvi_output
 
-            # Handle nested "statistics.ndvi.stats" structure
-            if not ndvi_stats.get("mean") and "ndvi" in ndvi_stats:
-                ndvi_stats = ndvi_stats["ndvi"].get("stats", {})
-            # Handle "bands.NDVI.stats" structure
+            band_key = "NDWI" if self.index_type == "NDWI" else "NDVI"
+            # Handle nested "statistics.{index}.stats" structure
+            if not ndvi_stats.get("mean") and index_output_id in ndvi_stats:
+                ndvi_stats = ndvi_stats[index_output_id].get("stats", {})
+            # Handle "bands.{INDEX}.stats" structure
             if not ndvi_stats.get("mean") and "bands" in ndvi_output:
                 bands = ndvi_output["bands"]
-                ndvi_band = bands.get("NDVI") or bands.get("ndvi") or {}
+                ndvi_band = (
+                    bands.get(band_key) or bands.get(band_key.lower()) or {}
+                )
                 ndvi_stats = ndvi_band.get("stats", {})
 
             mean_val = ndvi_stats.get("mean")

@@ -599,6 +599,134 @@ def load_ndvi_array(
     return ndvi.astype(np.float32)
 
 
+def load_ndwi_array(
+    *,
+    green_href: str,
+    nir_href: str,
+    bbox: BBox,
+    size: int | None,
+    timeout_seconds: float,
+    scl_href: str | None = None,
+    mask_water: bool = False,
+) -> np.ndarray:
+    """Load NDWI values for the given bbox.
+
+    NDWI = (Green - NIR) / (Green + NIR)
+    Uses Green band (B03) instead of Red (B04) used by NDVI.
+    Downloads remote assets to temp files first to avoid
+    OpenJPEG streaming decode errors, then processes locally.
+    Returns NaN for invalid pixels.
+    """
+
+    (
+        rasterio,
+        resampling_enum,
+        rasterio_error,
+        transform_bounds,
+        from_bounds,
+    ) = _require_rasterio()
+    gdal_env = {
+        "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+        "GDAL_HTTP_TIMEOUT": int(timeout_seconds),
+        "GDAL_HTTP_CONNECTTIMEOUT": int(timeout_seconds),
+        "GDAL_HTTP_MAX_RETRY": 5,
+        "GDAL_HTTP_RETRY_DELAY": 2,
+        "CPL_CURL_VERBOSE": False,
+        "GDAL_NUM_THREADS": "ALL_CPUS",
+        "GDAL_CACHEMAX": 256,
+    }
+    try:
+        with _local_asset_context(green_href, nir_href) as (
+            local_green,
+            local_nir,
+        ):
+            with rasterio.Env(**gdal_env):
+                with (
+                    rasterio.open(local_green) as green_ds,
+                    rasterio.open(local_nir) as nir_ds,
+                ):
+                    if green_ds.crs is None or nir_ds.crs is None:
+                        raise StacProcessingError(
+                            "Raster assets missing CRS metadata."
+                        )
+                    bounds = transform_bounds(
+                        "EPSG:4326",
+                        green_ds.crs,
+                        float(bbox.west),
+                        float(bbox.south),
+                        float(bbox.east),
+                        float(bbox.north),
+                        densify_pts=21,
+                    )
+                    window = from_bounds(
+                        *bounds,
+                        transform=green_ds.transform,
+                    )
+                    out_shape: tuple[int, int] | None = None
+                    if size:
+                        out_shape = (size, size)
+                    resampling = resampling_enum.bilinear
+                    green = green_ds.read(
+                        1,
+                        window=window,
+                        out_shape=out_shape,
+                        resampling=resampling,
+                        masked=True,
+                    )
+                    nir = nir_ds.read(
+                        1,
+                        window=window,
+                        out_shape=out_shape,
+                        resampling=resampling,
+                        masked=True,
+                    )
+
+                    if scl_href is not None:
+                        with _local_asset_context(scl_href, scl_href) as (
+                            local_scl,
+                            _,
+                        ):
+                            with rasterio.open(local_scl) as scl_ds:
+                                scl = scl_ds.read(
+                                    1,
+                                    window=window,
+                                    out_shape=out_shape,
+                                    resampling=resampling_enum.nearest,
+                                )
+    except rasterio_error as exc:
+        raise StacProcessingError(f"Raster processing failed: {exc}") from exc
+    except Exception as exc:
+        raise StacProcessingError(f"Raster processing failed: {exc}") from exc
+
+    green_data = green.filled(np.nan).astype(np.float32)
+    nir_data = nir.filled(np.nan).astype(np.float32)
+    logger.info("GREEN shape=%s", green_data.shape)
+    logger.info("NIR shape=%s", nir_data.shape)
+    logger.info("GREEN sample row=%s", np.round(green_data[0, :10], 6))
+    logger.info("NIR sample row=%s", np.round(nir_data[0, :10], 6))
+    _validate_band_variation(nir_data, "NIR")
+    _validate_band_variation(green_data, "GREEN")
+    logger.info(
+        "Bands | NIR min=%s max=%s | GREEN min=%s max=%s",
+        float(np.nanmin(nir_data)),
+        float(np.nanmax(nir_data)),
+        float(np.nanmin(green_data)),
+        float(np.nanmax(green_data)),
+    )
+    denom = green_data + nir_data
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ndwi = np.where(
+            denom != 0,
+            (green_data - nir_data) / denom,
+            np.nan,
+        )
+
+    if scl_href is not None:
+        ndwi, _, _ = apply_scl_mask(ndwi, scl, mask_water=mask_water)
+
+    return ndwi.astype(np.float32)
+
+
 def _validate_band_variation(data: np.ndarray, band_name: str) -> None:
     """Ensure each band has spatial variation."""
 

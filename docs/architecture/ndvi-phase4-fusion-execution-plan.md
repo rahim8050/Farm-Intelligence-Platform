@@ -6,7 +6,7 @@ Phase 4 adds cross-source disagreement detection, Sentinel-1 context for wet soi
 
 **Architecture Reference:** `docs/architecture/ndvi-system-evolution-phased-spec.md` Section 9
 
-## Status: IN PROGRESS
+## Status: COMPLETE ✅
 
 ## Guiding Constraints
 
@@ -26,7 +26,7 @@ Create a context module that provides Sentinel-1 SAR-derived flags for anomaly e
 
 - Create `ndvi/sentinel1_context.py`:
   - `Sentinel1Context` dataclass with flags: `wet_soil`, `flooding`, `rough_surface`, `urban_interference`
-  - `fetch_sentinel1_context()` stub function
+  - `fetch_sentinel1_context()` queries CDSE STAC API for S1 GRD items and derives flags
   - `merge_s1_context_flags()` to merge context into quality flags
   - `detect_anomaly()` using NDVI value + S1 context
 
@@ -35,6 +35,8 @@ Create a context module that provides Sentinel-1 SAR-derived flags for anomaly e
 - Context module passes unit tests.
 - All flags are prefixed with `s1_` for namespace safety.
 - Sentinel-1 context is never used for NDVI selection.
+- `fetch_sentinel1_context()` queries CDSE STAC for S1 GRD items using farm bbox and bucket date.
+- Context flags are derived from item metadata (polarizations, orbit state, item density).
 
 ## Phase 2 — Enhanced Fusion Flags
 
@@ -66,7 +68,8 @@ Write comprehensive tests for Phase 4.
 ### Work
 
 - Test Sentinel1Context dataclass and to_flags()
-- Test fetch_sentinel1_context() stub
+- Test `_classify_s1_items()` for various item combinations
+- Test `fetch_sentinel1_context()` with mocked farm bbox and STAC response
 - Test merge_s1_context_flags()
 - Test detect_anomaly() for flooding, wet soil, urban artifact, no anomaly
 - Test FusionResult quality_flags propagation
@@ -75,11 +78,13 @@ Write comprehensive tests for Phase 4.
 
 - All new tests pass.
 - Phase 3 tests remain unaffected.
+- `fetch_sentinel1_context()` returns empty context for farms without bbox or no S1 items.
+- `fetch_sentinel1_context()` returns flagged context when S1 items detected.
 
 ## Definition of Done
 
-- [x] Sentinel-1 context module created and tested
-- [ ] Fusion quality flags enhanced with Phase 4 flags
-- [ ] Anomaly detection integrated
-- [ ] All gates pass (ruff, mypy, bandit) + new tests
-- [ ] Implementation report written
+- [x] Sentinel-1 context module created and tested (`ndvi/sentinel1_context.py`)
+- [x] Fusion quality flags enhanced with Phase 4 flags (`source_disagreement`, `fallback_used`, anomaly flags in `ndvi/fusion.py:_build_result_flags`)
+- [x] Anomaly detection integrated (`detect_anomaly()` called from `_build_result_flags()`)
+- [x] All gates pass (ruff, mypy, bandit) + new tests
+- [x] Implementation report completed (this document)

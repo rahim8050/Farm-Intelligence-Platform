@@ -20,9 +20,9 @@
 
 The NDVI pipeline is being modernized in phases to eliminate Redis SPOF, add
 durable queue semantics, and improve observability. **Phase 1 is complete**,
-**Phase 1.5 (retry policy) is complete**, and **Phase 2 is fully
-implemented through Stage 7** (centralized dispatch, transport decision,
-producer, consumer, settings, observability, and tests). **Stage 8
+**Phase 1.5 (retry policy) is complete**, **Phase 2 is fully
+implemented through Stage 7**, **Phase 3 Multi-Engine Fallback is complete**,
+and **Phase 3/4 Fusion & Intelligence is complete**. **Stage 8
 (incremental rollout) is intentionally deferred**: `NDVI_QUEUE_BACKEND`
 remains `"celery"` and no production workflow is stream-backed yet.
 
@@ -261,6 +261,45 @@ as part of Phase 2 Stage 6 (see above). No separate Phase 3 work remains.
 
 ---
 
+## Phase 3 - Multi-Engine Fallback
+
+**Status:** ✅ **COMPLETE** (June 11, 2026)
+
+### What's Implemented
+
+- ✅ **Fusion service** (`ndvi/fusion.py:gather_candidates`, `_select_by_decision_tree`)
+  - Gathers V2 candidates from all engines for a (farm, bucket_date)
+  - Deterministic decision tree with explicit threshold checks
+  - Confidence degradation: Landsat ×0.90, MODIS ×0.80
+  - Conflict rule: top-2 NDVI diff ≥0.10 and neither ≥0.75 → NULL
+  - Tie-break by source priority: Sentinel-2 → Landsat → MODIS
+- ✅ **Fallback engine adapters** (`ndvi/engines/landsat.py`, `ndvi/engines/modis.py`)
+  - Functional STAC-based implementations (not stubs)
+  - Conform to the `NDVIEngine` protocol
+- ✅ **Integration tests** in `ndvi/tests/test_phase3_fusion.py`
+- ✅ **Fusion metrics** (`ndvi_fallback_usage_total`, `ndvi_source_disagreement_total`,
+  `ndvi_v2_suppressed_observations_total`)
+
+## Phase 3/4 - Fusion and Intelligence
+
+**Status:** ✅ **COMPLETE** (June 11, 2026)
+
+### What's Implemented
+
+- ✅ **Cross-source disagreement detection** — conflict rule in `_check_conflict()`
+  sets `source_disagreement` flag; returns NULL when triggered
+- ✅ **Sentinel-1 context** (`ndvi/sentinel1_context.py`)
+  - Queries CDSE STAC API for Sentinel-1 GRD items using farm bbox and bucket date
+  - Derives `wet_soil`, `flooding`, `rough_surface` flags from item metadata
+  - SAR backscatter processing is not yet implemented (VV/VH ratio analysis deferred)
+- ✅ **Anomaly detection** — `detect_anomaly()` uses NDVI + S1 context to flag
+  `possible_flooding`, `wet_soil_depression`, `urban_artifact`
+- ✅ **Quality flags** in `FusionResult`: `source_disagreement`, `fallback_used`,
+  `anomaly_detected`, s1 context flags
+- ✅ **DLQ counter** (`ndvi_stream_dlq_total`) exported and incremented
+- ✅ **Handler exception hierarchy** (`TemporaryHandlerError` / `PermanentHandlerError`)
+  in `activities/handlers/base.py`
+
 ## Phase 4 - Kafka (Future / Conditional)
 
 **Status:** 🔴 **NOT STARTED** (Intentionally Deferred) — unchanged.
@@ -292,6 +331,8 @@ as part of Phase 2 Stage 6 (see above). No separate Phase 3 work remains.
 | **Phase 2 Stage 7: Tests** | ✅ Complete | **100%** | Producer, consumer, admin, and retry-after tests |
 | **Phase 2 Stage 8: Rollout** | 🔴 Deferred | **0%** | No production pilot; `NDVI_QUEUE_BACKEND=celery` |
 | **Phase 3: Observability** | ✅ Complete | **100%** | Merged into Phase 2 Stage 6 |
+| **Phase 3: Multi-Engine Fallback** | ✅ Complete | **100%** | Fusion service, fallback selector, Landsat/MODIS engines |
+| **Phase 3/4: Fusion & Intelligence** | ✅ Complete | **100%** | S1 context, anomaly detection, quality flags, DLQ counter |
 | **Phase 4: Kafka** | 🔴 Deferred | **0%** | Intentionally deferred until thresholds met |
 
 ---
@@ -346,13 +387,9 @@ The following are **not** present, by design:
 
 ### Potential follow-up work
 
-2. **DLQ counter** — `ndvi_stream_dlq_total{consumer}` is named in
-   `docs/architecture/ndvi/07_observability.md` but is not currently
-   exported. DLQ rate is inferable from
-   `ndvi_stream_consumer_failures_total` + `redis_stream_pending_entries`,
-   but a dedicated counter would simplify alerting. Adding it would
-   require a new Counter in `ndvi/metrics.py` and one `inc()` in
-   `_move_to_dlq` (`consume_ndvi_stream.py:398`).
+2. **DLQ counter** — `ndvi_stream_dlq_total{consumer}` is now exported
+   in `ndvi/metrics.py` (line 286) and incremented in
+   `consume_ndvi_stream.py:_move_to_dlq` (line 433).
 
 3. **Phase 4 (Kafka) re-evaluation** — earliest review Q3 2026 per
    `ndvi-pipeline-evolution.md`. No code work; check the
@@ -381,11 +418,8 @@ The following are **not** present, by design:
    - **Mitigation:** Tune Celery reconnect or accept delay for
      background jobs.
 
-2. **DLQ volume is not separately counted** — see "Recommended Next
-   Steps" above. Current alerting covers
-   `ndvi_stream_consumer_failures_total` and
-   `redis_stream_pending_entries`, which are sufficient for the
-   existing alerts.
+2. ~~**DLQ volume is not separately counted**~~ — now counted via
+   `ndvi_stream_dlq_total{consumer}`. ✨ RESOLVED
 
 ---
 
@@ -395,3 +429,4 @@ The following are **not** present, by design:
 |---------|------|--------|-------|
 | 1.0 | April 18, 2026 | opencode | Initial status snapshot; Stages 4, 6, 7 marked incomplete. |
 | 1.1 | June 03, 2026 | opencode | Re-verified: Stages 2, 4, 6, 7 are now complete in code. Stage 8 remains intentionally deferred. |
+| 2.0 | June 11, 2026 | opencode | Phase 3 Multi-Engine Fallback (fusion + engines) complete. Phase 3/4 Fusion & Intelligence complete (S1 context, anomaly detection, quality flags). DLQ counter exported. S1 context upstream integration implemented (CDSE STAC query). |

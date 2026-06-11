@@ -142,6 +142,7 @@ app.conf.update(
         "ndvi.tasks.run_ndvi_job": {"queue": "ndvi_ingestion"},
         "ndvi.tasks.compute_farm_state_coverage": {"queue": "ndvi_analysis"},
         "ndvi.tasks.enqueue_daily_refresh": {"queue": "ndvi_ingestion"},
+        "ndvi.tasks.enqueue_daily_ndwi_refresh": {"queue": "ndvi_ingestion"},
         "ndvi.tasks.enqueue_weekly_gap_fill": {"queue": "ndvi_recompute"},
         "ndvi.tasks.enqueue_daily_farm_state_coverage": {
             "queue": "ndvi_analysis"

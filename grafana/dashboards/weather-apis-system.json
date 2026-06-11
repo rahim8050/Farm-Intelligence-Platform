@@ -39,7 +39,7 @@
     "list": [
       {
         "type": "datasource",
-        "name": "DS_PROMETHEUS",
+        "name": "prometheus",
         "label": "Prometheus",
         "query": "prometheus",
         "current": {

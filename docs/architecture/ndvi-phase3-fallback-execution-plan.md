@@ -6,7 +6,7 @@ Phase 3 implements the multi-engine fallback system defined in the master archit
 
 **Note:** The existing `ndvi-phase3-execution-plan.md` covers "Data Lifecycle & Batch Processing" (versioning, append-only storage, recompute). That document has been renamed to `ndvi-data-lifecycle-plan.md` to avoid the naming conflict.
 
-## Status: IN PROGRESS
+## Status: COMPLETE ✅
 
 ### Architecture Spec Reference
 
@@ -123,13 +123,12 @@ Resolve the Phase 3 naming conflict and update architecture docs.
 
 ## Definition of Done
 
-- [ ] Fusion service implemented and tested
-- [ ] Fallback selector implemented and tested
-- [ ] Landsat and MODIS engine stubs created
-- [ ] Integration tests pass
-- [ ] Documentation updated and naming conflict resolved
-- [ ] Pre-commit hooks pass
-- [ ] Pushed to main
+- [x] Fusion service implemented and tested (`ndvi/fusion.py`, `tests/test_phase3_fusion.py`)
+- [x] Fallback selector implemented and tested (`_select_by_decision_tree` in `ndvi/fusion.py`)
+- [x] Landsat and MODIS engine adapters created (`ndvi/engines/landsat.py`, `ndvi/engines/modis.py`)
+- [x] Integration tests pass
+- [x] Documentation updated and naming conflict resolved
+- [x] Pre-commit hooks pass
 
 ## Next: Phase 4 — Fusion and Intelligence
 

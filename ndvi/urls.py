@@ -13,6 +13,12 @@ from .views import (
     NdviRasterQueueView,
     NdviRefreshView,
     NdviTimeseriesView,
+    NdwiFarmStateView,
+    NdwiLatestView,
+    NdwiRasterPngView,
+    NdwiRasterQueueView,
+    NdwiRefreshView,
+    NdwiTimeseriesView,
     UpstreamHealthView,
 )
 
@@ -71,5 +77,36 @@ urlpatterns = [
         "ndvi/health/upstream/",
         UpstreamHealthView.as_view(),
         name="ndvi-health-upstream",
+    ),
+    # ── NDWI endpoints ─────────────────────────────────────────
+    path(
+        "farms/<int:farm_id>/ndwi/timeseries/",
+        NdwiTimeseriesView.as_view(),
+        name="ndwi-timeseries",
+    ),
+    path(
+        "farms/<int:farm_id>/ndwi/latest/",
+        NdwiLatestView.as_view(),
+        name="ndwi-latest",
+    ),
+    path(
+        "farms/<int:farm_id>/ndwi/refresh/",
+        NdwiRefreshView.as_view(),
+        name="ndwi-refresh",
+    ),
+    path(
+        "farms/<int:farm_id>/ndwi/raster.png",
+        NdwiRasterPngView.as_view(),
+        name="ndwi-raster",
+    ),
+    path(
+        "farms/<int:farm_id>/ndwi/raster/queue",
+        NdwiRasterQueueView.as_view(),
+        name="ndwi-raster-queue",
+    ),
+    path(
+        "farms/<int:farm_id>/ndwi/farm-state/",
+        NdwiFarmStateView.as_view(),
+        name="ndwi-farm-state",
     ),
 ]

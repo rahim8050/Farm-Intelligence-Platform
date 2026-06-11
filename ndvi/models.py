@@ -114,6 +114,14 @@ class NdviObservation(models.Model):
         ObservationState.REJECTED: [],
     }
 
+    index_type = models.CharField(
+        max_length=16,
+        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI")],
+        default="NDVI",
+        db_index=True,
+        help_text="Spectral index discriminator (NDVI, NDWI, etc.)",
+    )
+
     farm = models.ForeignKey(
         Farm, on_delete=models.CASCADE, related_name="ndvi_observations"
     )
@@ -214,8 +222,9 @@ class NdviObservation(models.Model):
 
     def __str__(self) -> str:
         return (
-            f"NDVI {self.bucket_date} farm={self.farm_id} engine={self.engine}"
-            f" v={self.version} state={self.state} latest={self.is_latest}"
+            f"{self.index_type} {self.bucket_date} farm={self.farm_id}"
+            f" engine={self.engine} v={self.version} state={self.state}"
+            f" latest={self.is_latest}"
         )
 
     def can_transition_to(self, new_state: str) -> bool:
@@ -239,7 +248,7 @@ class NdviObservation(models.Model):
 
 
 class NdviJob(models.Model):
-    """Idempotent NDVI job record tracked for Celery tasks."""
+    """Idempotent NDVI/NDWI job record tracked for Celery tasks."""
 
     class JobType(models.TextChoices):
         REFRESH_LATEST = "refresh_latest", "Refresh latest"
@@ -262,6 +271,12 @@ class NdviJob(models.Model):
         Farm,
         on_delete=models.CASCADE,
         related_name="ndvi_jobs",
+    )
+    index_type = models.CharField(
+        max_length=16,
+        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI")],
+        default="NDVI",
+        help_text="Spectral index discriminator (NDVI, NDWI, etc.)",
     )
     engine = models.CharField(max_length=64)
     job_type = models.CharField(max_length=32, choices=JobType.choices)
@@ -329,6 +344,12 @@ class NdviRasterArtifact(models.Model):
         related_name="ndvi_rasters",
     )
     owner_id = models.IntegerField(db_index=True)
+    index_type = models.CharField(
+        max_length=16,
+        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI")],
+        default="NDVI",
+        help_text="Spectral index discriminator (NDVI, NDWI, etc.)",
+    )
     engine = models.CharField(max_length=64)
     date = models.DateField()
     size = models.PositiveSmallIntegerField()
@@ -374,6 +395,12 @@ class NdviDerivedObservation(models.Model):
         NdviObservation,
         on_delete=models.CASCADE,
         related_name="v2_observation",
+    )
+    index_type = models.CharField(
+        max_length=16,
+        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI")],
+        default="NDVI",
+        help_text="Spectral index discriminator (NDVI, NDWI, etc.)",
     )
     engine = models.CharField(max_length=64)
     bucket_date = models.DateField()

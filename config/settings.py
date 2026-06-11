@@ -983,6 +983,20 @@ NDVI_GEE_ASSET_NIR = env("NDVI_GEE_ASSET_NIR", default="B08_10m")
 NDVI_GEE_ASSET_SCL = env("NDVI_GEE_ASSET_SCL", default="SCL")
 NDVI_GEE_MASK_WATER = env.bool("NDVI_GEE_MASK_WATER", default=False)
 
+# Sentinel-1 context settings (SAR-derived context flags)
+NDVI_S1_STAC_API_URL = env(
+    "NDVI_S1_STAC_API_URL",
+    default="https://stac.dataspace.copernicus.eu/v1/",
+)
+NDVI_S1_STAC_COLLECTION = env(
+    "NDVI_S1_STAC_COLLECTION",
+    default="sentinel-1-grd",
+)
+NDVI_S1_TIMEOUT_SECS = env.float("NDVI_S1_TIMEOUT_SECS", default=30.0)
+NDVI_S1_LOOKBACK_DAYS = env.int("NDVI_S1_LOOKBACK_DAYS", default=7)
+NDVI_S1_LOOKAHEAD_DAYS = env.int("NDVI_S1_LOOKAHEAD_DAYS", default=7)
+NDVI_S1_MAX_ITEMS = env.int("NDVI_S1_MAX_ITEMS", default=50)
+
 NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS = env.int(
     "NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS",
     default=900,
@@ -1109,6 +1123,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ndvi.tasks.enqueue_daily_refresh",
         "schedule": crontab(hour=3, minute=15),
     },
+    "ndwi-daily-refresh": {
+        "task": "ndvi.tasks.enqueue_daily_ndwi_refresh",
+        "schedule": crontab(hour=3, minute=20),
+    },
     "farm-state-daily-coverage": {
         "task": "ndvi.tasks.enqueue_daily_farm_state_coverage",
         "schedule": crontab(hour=3, minute=45),
@@ -1134,7 +1152,7 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": SCHEMA_CACHE_WARM_INTERVAL_SECONDS,
     },
     "radio-health-check": {
-        "task": "radio.health.check_all_stations",
+        "task": "radio.tasks.check_all_stations_health",
         "schedule": RADIO_HEALTH_CHECK_INTERVAL_SECONDS,
     },
     "podcasts-refresh-feeds": {
@@ -1166,15 +1184,15 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=5, minute=45),
     },
     "radio-rollup-station-analytics": {
-        "task": "radio.tasks.rollup_station_analytics",
+        "task": "radio.tasks.rollup_station_analytics_task",
         "schedule": crontab(hour=0, minute=15),
     },
     "radio-rollup-station-analytics-noon": {
-        "task": "radio.tasks.rollup_station_analytics",
+        "task": "radio.tasks.rollup_station_analytics_task",
         "schedule": crontab(hour=12, minute=0),
     },
     "radio-refresh-now-playing": {
-        "task": "radio.tasks.refresh_now_playing",
+        "task": "radio.tasks.refresh_now_playing_task",
         "schedule": RADIO_NOW_PLAYING_REFRESH_INTERVAL_SECONDS,
     },
 }
