@@ -1,23 +1,25 @@
-"""Tests for NDWI: colormap, farm state, and API."""
+"""Tests for NDWI: colormap, farm state, quality engine, and fusion."""
 
 from __future__ import annotations
 
 import secrets
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 from io import BytesIO
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.cache import caches
+from django.test import override_settings
 from PIL import Image
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from farms.models import Farm
 from ndvi.farm_state_ndwi import (
+    STATE_DECLINING,
     STATE_DRY,
     STATE_MOIST,
     STATE_SATURATED,
@@ -29,10 +31,13 @@ from ndvi.farm_state_ndwi import (
     _get_water_threshold,
     compute_ndwi_farm_state,
 )
+from ndvi.fusion_ndwi import run_ndwi_fusion
 from ndvi.models import NdviObservation
+from ndvi.quality_ndwi import build_ndwi_v2_observation
 from ndvi.raster import png as png_module
 from ndvi.raster.base import ColormapNormalization
 from ndvi.raster.png import ndwi_to_png_bytes, ndwi_to_rgb
+from ndvi.v2_quality import ConfidenceComponents, V2Result
 
 # ── Colormap Tests ─────────────────────────────────────────────
 
@@ -159,6 +164,13 @@ class TestClassifyNdwiState:
         mid = (dry + sat) / 2
         state, _, _ = _classify_ndwi_state(mid, 0.0)
         assert state == STATE_MOIST
+
+    def test_declining_state(self) -> None:
+        sat = _get_saturated_threshold()
+        dry = _get_dry_threshold()
+        mid = (dry + sat) / 2
+        state, _, _ = _classify_ndwi_state(mid, -0.02)
+        assert state == STATE_DECLINING
 
     def test_unknown_when_none(self) -> None:
         state, _, _ = _classify_ndwi_state(None, None)
@@ -301,3 +313,286 @@ class ComputeNdwiFarmStateTests(APITestCase):
         )
         result = compute_ndwi_farm_state(farm=self.farm)
         assert result.mean_ndwi is None
+
+
+# ── Quality Engine Tests ────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestBuildNdwiV2Observation:
+    """Tests for ndvi.quality_ndwi.build_ndwi_v2_observation."""
+
+    def _make_observation(
+        self,
+        farm: Farm,
+        mean: float = 0.3,
+        cloud_fraction: float = 0.1,
+        valid_pixel_fraction: float = 0.8,
+        engine: str = "stac",
+    ) -> NdviObservation:
+        from datetime import datetime as dt
+
+        return NdviObservation.objects.create(
+            farm=farm,
+            engine=engine,
+            bucket_date=date(2025, 1, 1),
+            mean=mean,
+            min=mean - 0.1,
+            max=mean + 0.1,
+            sample_count=100,
+            cloud_fraction=cloud_fraction,
+            valid_pixel_fraction=valid_pixel_fraction,
+            index_type="NDWI",
+            acquired_at=dt(2025, 1, 1, tzinfo=UTC),
+            state=NdviObservation.ObservationState.FINAL,
+        )
+
+    def test_happy_path(self) -> None:
+        pw = secrets.token_urlsafe(12)
+        user = get_user_model().objects.create_user(
+            username="ndwi-quality", password=pw, email="q@example.com"
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI Quality",
+            slug="ndwi-quality",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        v1 = self._make_observation(farm=farm, mean=0.35)
+        result = build_ndwi_v2_observation(
+            v1,
+            prior_v2_values=[0.3, 0.32, 0.34],
+        )
+        assert result.is_null is False
+        assert result.selected_ndvi == 0.35
+        assert result.confidence > 0.5
+        assert result.confidence <= 1.0
+
+    def test_insufficient_context_caps_confidence(
+        self,
+    ) -> None:
+        pw = secrets.token_urlsafe(12)
+        user = get_user_model().objects.create_user(
+            username="ndwi-context", password=pw, email="ctx@example.com"
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI Context",
+            slug="ndwi-context",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        v1 = self._make_observation(farm=farm, mean=0.35)
+        result = build_ndwi_v2_observation(v1, prior_v2_values=[])
+        max_no_context = 0.49
+        assert result.confidence <= max_no_context
+
+    @override_settings(NDWI_MIN_ROLLING_CONTEXT=0)
+    def test_with_sufficient_context(self) -> None:
+        pw = secrets.token_urlsafe(12)
+        user = get_user_model().objects.create_user(
+            username="ndwi-suff", password=pw, email="suff@example.com"
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI Suff",
+            slug="ndwi-suff",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        from datetime import datetime as dt
+
+        NdviObservation.objects.create(
+            farm=farm,
+            engine="stac",
+            bucket_date=date(2025, 1, 2),
+            mean=0.3,
+            min=0.2,
+            max=0.4,
+            sample_count=100,
+            cloud_fraction=0.05,
+            index_type="NDWI",
+            acquired_at=dt(2025, 1, 2, tzinfo=UTC),
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        v1 = self._make_observation(farm=farm, mean=0.35)
+        result = build_ndwi_v2_observation(v1)
+        assert result.is_null is False
+        assert result.confidence > 0.0
+
+    def test_null_on_low_valid_pixels(self) -> None:
+        pw = secrets.token_urlsafe(12)
+        user = get_user_model().objects.create_user(
+            username="ndwi-null", password=pw, email="null@example.com"
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI Null",
+            slug="ndwi-null",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        v1 = self._make_observation(
+            farm=farm,
+            mean=0.35,
+            valid_pixel_fraction=0.05,
+        )
+        result = build_ndwi_v2_observation(v1)
+        assert result.is_null is True
+        assert result.null_reason is not None
+
+
+# ── Fusion Tests ────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestRunNdwiFusion:
+    """Tests for ndvi.fusion_ndwi.run_ndwi_fusion."""
+
+    def _make_observation(
+        self,
+        farm: Farm,
+        mean: float = 0.3,
+        engine: str = "stac",
+        cloud_fraction: float = 0.1,
+    ) -> NdviObservation:
+        from datetime import datetime as dt
+
+        return NdviObservation.objects.create(
+            farm=farm,
+            engine=engine,
+            bucket_date=date(2025, 1, 1),
+            mean=mean,
+            min=mean - 0.1,
+            max=mean + 0.1,
+            sample_count=100,
+            cloud_fraction=cloud_fraction,
+            valid_pixel_fraction=0.8,
+            index_type="NDWI",
+            acquired_at=dt(2025, 1, 1, tzinfo=UTC),
+            is_latest=True,
+            state=NdviObservation.ObservationState.FINAL,
+        )
+
+    def test_no_observations(self) -> None:
+        result = run_ndwi_fusion(farm_id=99999, bucket_date=date(2025, 1, 1))
+        assert result.selected is None
+        assert result.candidates_evaluated == 0
+        assert "No NDWI" in result.decision_reason
+
+    def test_all_candidates_discarded(self) -> None:
+        pw = secrets.token_urlsafe(12)
+        user = get_user_model().objects.create_user(
+            username="ndwi-discard", password=pw, email="discard@example.com"
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI Discard",
+            slug="ndwi-discard",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        self._make_observation(farm=farm, mean=0.3)
+        result = run_ndwi_fusion(farm_id=farm.id, bucket_date=date(2025, 1, 1))
+        assert result.selected is None
+        assert result.candidates_evaluated >= 1
+        assert result.candidates_discarded >= 1
+
+    @patch("ndvi.fusion_ndwi.build_ndwi_v2_observation")
+    def test_successful_fusion(
+        self,
+        mock_build: MagicMock,
+        django_db_blocker: object,
+    ) -> None:
+        pw = secrets.token_urlsafe(12)
+        user = get_user_model().objects.create_user(
+            username="ndwi-fuse", password=pw, email="fuse@example.com"
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI Fuse",
+            slug="ndwi-fuse",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        self._make_observation(farm=farm, mean=0.35, engine="sentinelhub")
+        mock_build.return_value = V2Result(
+            selected_ndvi=0.35,
+            smoothed_ndvi=0.35,
+            confidence=0.85,
+            confidence_components=ConfidenceComponents(
+                source_weight=1.0,
+                cloud_weight=0.9,
+                valid_pixel_weight=0.8,
+                recency_weight=1.0,
+                temporal_consistency_weight=0.9,
+            ),
+            quality_flags={},
+            is_null=False,
+            null_reason=None,
+        )
+        result = run_ndwi_fusion(farm_id=farm.id, bucket_date=date(2025, 1, 1))
+        assert result.selected is not None
+        assert result.selected.source == "sentinelhub"
+        assert "selected" in result.decision_reason.lower()
+
+    @patch("ndvi.fusion_ndwi.build_ndwi_v2_observation")
+    def test_discards_null_candidates(
+        self,
+        mock_build: MagicMock,
+        django_db_blocker: object,
+    ) -> None:
+        pw = secrets.token_urlsafe(12)
+        user = get_user_model().objects.create_user(
+            username="ndwi-null-fuse",
+            password=pw,
+            email="nullfuse@example.com",
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI Null Fuse",
+            slug="ndwi-null-fuse",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        self._make_observation(farm=farm, mean=0.3)
+        mock_build.return_value = V2Result(
+            selected_ndvi=None,
+            smoothed_ndvi=None,
+            confidence=0.0,
+            confidence_components=ConfidenceComponents(
+                source_weight=0.0,
+                cloud_weight=0.0,
+                valid_pixel_weight=0.0,
+                recency_weight=0.0,
+                temporal_consistency_weight=0.0,
+            ),
+            quality_flags={},
+            is_null=True,
+            null_reason="low_valid_pixels",
+        )
+        result = run_ndwi_fusion(farm_id=farm.id, bucket_date=date(2025, 1, 1))
+        assert result.selected is None
+        assert result.candidates_discarded >= 1
