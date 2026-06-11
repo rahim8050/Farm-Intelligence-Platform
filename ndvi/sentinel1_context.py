@@ -104,6 +104,10 @@ def _get_farm_bbox(farm_id: int) -> tuple[float, float, float, float] | None:
         logger.debug("s1_context.farm_no_bbox farm_id=%s", farm_id)
         return None
 
+    assert farm.bbox_west is not None
+    assert farm.bbox_south is not None
+    assert farm.bbox_east is not None
+    assert farm.bbox_north is not None
     return (
         float(farm.bbox_west),
         float(farm.bbox_south),
