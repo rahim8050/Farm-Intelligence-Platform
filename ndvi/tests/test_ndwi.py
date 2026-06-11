@@ -1,10 +1,4 @@
-"""Tests for NDWI functionality: colormap, farm state, and API.
-
-Covers:
-- ndwi_to_rgb / ndwi_to_png_bytes
-- compute_ndwi_farm_state
-- NdwiFarmStateView
-"""
+"""Tests for NDWI: colormap, farm state, and API."""
 
 from __future__ import annotations
 

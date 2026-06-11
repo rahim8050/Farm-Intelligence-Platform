@@ -24,6 +24,7 @@ from ndvi.stac_client import StacProcessingError, StacUpstreamError
 from ndvi.tasks import (
     compute_farm_state_coverage,
     enqueue_daily_farm_state_coverage,
+    enqueue_daily_ndwi_refresh,
     enqueue_daily_refresh,
     enqueue_weekly_gap_fill,
     run_ndvi_job,
@@ -64,7 +65,7 @@ def test_run_ndvi_job_refresh_latest_creates_observation(
         date=date(2025, 1, 1), mean=0.3
     )
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
-    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: dummy_engine)
+    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_, **__: dummy_engine)
 
     result = run_ndvi_job.apply(args=[job.id]).get()
     assert result == "ok"
@@ -105,7 +106,7 @@ def test_run_ndvi_job_timeseries_skips_empty_points(
     dummy_engine = MagicMock()
     dummy_engine.get_timeseries.return_value = []
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
-    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: dummy_engine)
+    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_, **__: dummy_engine)
     upsert = MagicMock()
     monkeypatch.setattr("ndvi.tasks.upsert_observations", upsert)
 
@@ -159,7 +160,7 @@ def test_run_ndvi_job_timeseries_skips_cloudy_points(
         ),
     ]
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
-    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: dummy_engine)
+    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_, **__: dummy_engine)
 
     result = run_ndvi_job.apply(args=[job.id]).get()
 
@@ -492,7 +493,9 @@ def test_run_ndvi_job_refresh_latest_auth_error_returns_invalid(
             raise SentinelHubAuthError(401)
 
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
-    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: FailingEngine())
+    monkeypatch.setattr(
+        "ndvi.tasks.get_engine", lambda *_, **__: FailingEngine()
+    )
 
     result = run_ndvi_job.apply(args=[job.id]).get()
 
@@ -541,7 +544,9 @@ def test_run_ndvi_job_stac_upstream_non_retryable_returns_invalid(
             raise StacUpstreamError("upstream failed", retryable=False)
 
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
-    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: FailingEngine())
+    monkeypatch.setattr(
+        "ndvi.tasks.get_engine", lambda *_, **__: FailingEngine()
+    )
 
     result = run_ndvi_job.apply(args=[job.id]).get()
 
@@ -589,7 +594,9 @@ def test_run_ndvi_job_stac_upstream_retryable_retries(
             raise StacUpstreamError("retry me", retryable=True)
 
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
-    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: FailingEngine())
+    monkeypatch.setattr(
+        "ndvi.tasks.get_engine", lambda *_, **__: FailingEngine()
+    )
 
     with patch.object(
         run_ndvi_job, "retry", side_effect=RuntimeError("retry")
@@ -669,7 +676,9 @@ def test_run_ndvi_job_stac_circuit_breaker_persists_across_retries(
     failing_engine = FailingEngine(stac_engine.client)  # type: ignore[attr-defined]
 
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
-    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: failing_engine)
+    monkeypatch.setattr(
+        "ndvi.tasks.get_engine", lambda *_, **__: failing_engine
+    )
 
     with patch.object(
         run_ndvi_job, "retry", side_effect=RuntimeError("retry")
@@ -723,7 +732,9 @@ def test_run_ndvi_job_max_retries_exceeded_marks_job_failed(
             raise StacUpstreamError("retry me", retryable=True)
 
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
-    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: FailingEngine())
+    monkeypatch.setattr(
+        "ndvi.tasks.get_engine", lambda *_, **__: FailingEngine()
+    )
 
     # Make retry raise MaxRetriesExceededError immediately
     def mock_retry(
@@ -784,7 +795,9 @@ def test_run_ndvi_job_exception_fails_fast(
             return None
 
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
-    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_: DummyEngine())
+    monkeypatch.setattr(
+        "ndvi.tasks.get_engine", lambda *_, **__: DummyEngine()
+    )
 
     with pytest.raises(RuntimeError, match="boom"):
         run_ndvi_job.apply(args=[job.id]).get()
@@ -1088,3 +1101,77 @@ def test_enqueue_weekly_gap_fill_only_bbox_farms() -> None:
         NdviJob.objects.filter(job_type=NdviJob.JobType.GAP_FILL).count() == 1
     )
     mock_delay.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_enqueue_daily_ndwi_refresh_only_bbox_farms() -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="queue-ndwi",
+        email="queue-ndwi@example.com",
+        password=password,
+    )
+    Farm.objects.create(
+        owner=user,
+        name="Active NDWI",
+        slug="active-ndwi",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    Farm.objects.create(owner=user, name="No bbox NDWI", slug="nobbox-ndwi")
+    with patch("ndvi.tasks.dispatch_ndvi_job") as mock_delay:
+        count = enqueue_daily_ndwi_refresh()
+    assert count == 1
+    assert (
+        NdviJob.objects.filter(job_type=NdviJob.JobType.REFRESH_LATEST).count()
+        == 1
+    )
+    job = NdviJob.objects.first()
+    assert job is not None
+    assert job.index_type == "NDWI"
+    mock_delay.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_run_ndvi_job_ndwi_refresh_latest_creates_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="ndwi-refresh",
+        email="ndwi-refresh@example.com",
+        password=password,
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="NDWI Farm",
+        slug="ndwi-farm",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    job = NdviJob.objects.create(
+        owner=user,
+        farm=farm,
+        engine="sentinelhub",
+        job_type=NdviJob.JobType.REFRESH_LATEST,
+        lookback_days=7,
+        max_cloud=20,
+        request_hash="ndwi-refresh-hash",
+        index_type="NDWI",
+    )
+    dummy_engine = MagicMock()
+    dummy_engine.get_latest.return_value = NdviPoint(
+        date=date(2025, 1, 1), mean=0.3
+    )
+    monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
+    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_, **__: dummy_engine)
+
+    result = run_ndvi_job.apply(args=[job.id]).get()
+    assert result == "ok"
+    assert NdviObservation.objects.filter(farm=farm).count() == 1
