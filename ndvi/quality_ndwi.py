@@ -16,7 +16,7 @@ from ndvi.metrics import (
     ndvi_v2_null_output_total,
     ndvi_v2_observation_total,
 )
-from ndvi.models import NdviObservation
+from ndvi.models import NdviDerivedObservation, NdviObservation
 from ndvi.v2_quality import (
     ConfidenceComponents,
     V2Result,
@@ -32,6 +32,7 @@ from ndvi.v2_quality import (
     _get_source_weight,
     _median,
     get_prior_v2_values,
+    persist_v2_observation,
 )
 
 NDWI_SOURCE_WEIGHTS: dict[str, float] = {
@@ -183,3 +184,30 @@ def build_ndwi_v2_observation(
         is_null=is_null,
         null_reason=null_reason,
     )
+
+
+def process_ndwi_v1_to_v2(
+    v1_observation: NdviObservation,
+    *,
+    persist: bool = True,
+) -> tuple[V2Result, NdviDerivedObservation | None]:
+    """Full NDWI V2 pipeline: build V2 from V1 and optionally persist.
+
+    Args:
+        v1_observation: The V1 observation to process.
+        persist: Whether to persist the V2 result.
+
+    Returns:
+        Tuple of (V2Result, persisted NdviDerivedObservation or None).
+    """
+    v2_result = build_ndwi_v2_observation(v1_observation)
+
+    persisted = None
+    if persist:
+        persisted = persist_v2_observation(
+            v1_observation,
+            v2_result,
+            index_type="NDWI",
+        )
+
+    return v2_result, persisted

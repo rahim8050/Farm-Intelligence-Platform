@@ -25,6 +25,7 @@ from ndvi.farm_state import (
     get_coverage_threshold,
     invalidate_farm_state_cache,
 )
+from ndvi.fusion_ndwi import run_ndwi_fusion
 from ndvi.raster.sentinelhub_engine import SentinelHubRasterError
 from ndvi.retry_policy import RetryDecision, should_retry
 from ndvi.stac_client import (
@@ -41,7 +42,8 @@ from .metrics import (
     ndwi_jobs_total,
     ndwi_task_runtime_seconds,
 )
-from .models import NdviJob, NdviRasterArtifact
+from .models import NdviJob, NdviObservation, NdviRasterArtifact
+from .quality_ndwi import process_ndwi_v1_to_v2
 from .raster.service import render_ndvi_png, render_ndwi_png
 from .services import (
     acquire_lock,
@@ -121,6 +123,45 @@ def _parse_date(raw: str | None) -> date | None:
         return date.fromisoformat(str(raw))
     except ValueError:
         return None
+
+
+def _run_ndwi_v2_pipeline(
+    observations: list[NdviObservation],
+    job: NdviJob,
+) -> None:
+    """Run NDWI V2 quality + fusion for observations from a completed job.
+
+    Called after upsert_observations when index_type == "NDWI".
+    Processes each observation through the V2 quality engine and persists
+    the result, then runs fusion for each unique bucket date.
+    """
+    if job.index_type != "NDWI":
+        return
+    if not observations:
+        return
+
+    bucket_dates: set[date] = set()
+    for obs in observations:
+        if obs.bucket_date:
+            bucket_dates.add(obs.bucket_date)
+        try:
+            process_ndwi_v1_to_v2(obs, persist=True)
+        except Exception:
+            logger.exception(
+                "ndwi.v2.failed farm_id=%s obs_id=%s",
+                job.farm_id,
+                obs.id,
+            )
+
+    for bucket_date in bucket_dates:
+        try:
+            run_ndwi_fusion(job.farm_id, bucket_date)
+        except Exception:
+            logger.exception(
+                "ndwi.fusion.failed farm_id=%s date=%s",
+                job.farm_id,
+                bucket_date,
+            )
 
 
 def _mark_job_failed(job: NdviJob, status_error: Exception | str) -> None:
@@ -242,7 +283,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 max_cloud=latest_params.max_cloud,
             )
             if point:
-                _with_fresh_connection(
+                v1_observations = _with_fresh_connection(
                     lambda: upsert_observations(
                         farm=job.farm,
                         engine=job.engine,
@@ -250,6 +291,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                         points=[point],
                     )
                 )
+                _run_ndwi_v2_pipeline(v1_observations, job)
         elif job.job_type == NdviJob.JobType.RASTER_PNG:
             raster_date = job.start or job.end or date.today()
             default_size = int(
@@ -324,7 +366,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 max_cloud=timeseries_params.max_cloud,
             )
             if points:
-                _with_fresh_connection(
+                v1_observations = _with_fresh_connection(
                     lambda: upsert_observations(
                         farm=job.farm,
                         engine=job.engine,
@@ -332,6 +374,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                         points=points,
                     )
                 )
+                _run_ndwi_v2_pipeline(v1_observations, job)
                 if job.job_type == NdviJob.JobType.BACKFILL:
                     ndvi_backfill_rows_total.labels(
                         engine=job.engine, status="success"

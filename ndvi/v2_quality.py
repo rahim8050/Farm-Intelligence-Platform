@@ -530,6 +530,8 @@ def build_v2_observation(
 def persist_v2_observation(
     v1_observation: NdviObservation,
     v2_result: V2Result,
+    *,
+    index_type: str = "NDVI",
 ) -> NdviDerivedObservation:
     """Persist a V2 observation derived from a V1 observation.
 
@@ -550,6 +552,7 @@ def persist_v2_observation(
                 "engine": v1_observation.engine,
                 "bucket_date": v1_observation.bucket_date,
                 "source": v1_observation.engine,
+                "index_type": index_type,
                 "selected_ndvi": v2_result.selected_ndvi,
                 "smoothed_ndvi": v2_result.smoothed_ndvi,
                 "confidence": v2_result.confidence,
