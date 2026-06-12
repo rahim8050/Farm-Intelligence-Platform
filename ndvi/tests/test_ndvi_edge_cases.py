@@ -33,7 +33,9 @@ from ndvi.farm_state import (
     get_cached_coverage_for_farm,
 )
 from ndvi.fusion import FusionCandidate, gather_candidates
-from ndvi.models import NdviObservation
+from ndvi.fusion_ndwi import run_ndwi_fusion
+from ndvi.models import NdviJob, NdviObservation
+from ndvi.quality_ndwi import build_ndwi_v2_observation
 from ndvi.raster.base import ColormapNormalization
 from ndvi.raster.service import render_ndwi_png
 from ndvi.services import (
@@ -56,7 +58,7 @@ from ndvi.services import (
     release_lock,
 )
 from ndvi.stac_client import StacWafBlockedError
-from ndvi.tasks import _parse_date, _safe_error_message
+from ndvi.tasks import _parse_date, _run_ndwi_v2_pipeline, _safe_error_message
 from ndvi.v2_quality import build_v2_observation
 
 PASSWORD = secrets.token_urlsafe(12)
@@ -1016,3 +1018,205 @@ class TestEnforceQuota:
         bbox = normalize_bbox(farm)
         with pytest.raises(ValidationError, match="NDVI_MAX_AREA_KM2"):
             enforce_quota(farm, bbox)
+
+
+# ---------------------------------------------------------------------------
+# ndvi/tasks.py -- _run_ndwi_v2_pipeline (lines 138-163)
+# ---------------------------------------------------------------------------
+
+
+class TestRunNdwiV2Pipeline:
+    """Cover edge-case branches in _run_ndwi_v2_pipeline."""
+
+    @pytest.mark.django_db
+    def test_empty_observations_returns_early(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        user = django_user_model.objects.create_user(
+            username="ndwi-empty",
+            email="ndwi-empty@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI Empty",
+            slug="ndwi-empty",
+        )
+        job = NdviJob(
+            id=9999,
+            owner=user,
+            farm=farm,
+            engine="stac",
+            job_type=NdviJob.JobType.REFRESH_LATEST,
+            index_type="NDWI",
+        )
+        _run_ndwi_v2_pipeline([], job)
+
+    @pytest.mark.django_db
+    def test_v2_processing_exception_is_logged(
+        self,
+        django_user_model: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        user = django_user_model.objects.create_user(
+            username="ndwi-v2fail",
+            email="ndwi-v2fail@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI V2 Fail",
+            slug="ndwi-v2fail",
+        )
+        job = NdviJob(
+            owner=user,
+            farm=farm,
+            engine="stac",
+            job_type=NdviJob.JobType.REFRESH_LATEST,
+            index_type="NDWI",
+        )
+        obs = NdviObservation(
+            farm=farm,
+            engine="stac",
+            bucket_date=date(2025, 1, 1),
+            mean=0.5,
+        )
+        monkeypatch.setattr(
+            "ndvi.tasks.process_ndwi_v1_to_v2",
+            lambda *_, **__: (_ for _ in ()).throw(ValueError("boom")),
+        )
+        _run_ndwi_v2_pipeline([obs], job)
+
+    @pytest.mark.django_db
+    def test_fusion_exception_is_logged(
+        self,
+        django_user_model: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        user = django_user_model.objects.create_user(
+            username="ndwi-fusfail",
+            email="ndwi-fusfail@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI Fusion Fail",
+            slug="ndwi-fusfail",
+        )
+        job = NdviJob(
+            owner=user,
+            farm=farm,
+            engine="stac",
+            job_type=NdviJob.JobType.REFRESH_LATEST,
+            index_type="NDWI",
+        )
+        obs = NdviObservation(
+            farm=farm,
+            engine="stac",
+            bucket_date=date(2025, 1, 1),
+            mean=0.5,
+        )
+        monkeypatch.setattr(
+            "ndvi.tasks.process_ndwi_v1_to_v2",
+            lambda *_, **__: (MagicMock(), MagicMock()),
+        )
+        monkeypatch.setattr(
+            "ndvi.tasks.run_ndwi_fusion",
+            lambda *_, **__: (_ for _ in ()).throw(
+                RuntimeError("fusion fail")
+            ),
+        )
+        _run_ndwi_v2_pipeline([obs], job)
+
+
+# ---------------------------------------------------------------------------
+# ndvi/quality_ndwi.py -- build_ndwi_v2_observation low-confidence metric
+# (line 176)
+# ---------------------------------------------------------------------------
+
+
+class TestNdwiV2LowConfidence:
+    """Cover the low-confidence metric emission in quality_ndwi.py line 176."""
+
+    @pytest.mark.django_db
+    @override_settings(
+        NDWI_MAX_CONFIDENCE_WITHOUT_CONTEXT=0.40,
+        NDWI_MIN_ROLLING_CONTEXT=3,
+    )
+    def test_low_confidence_triggers_metric(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        user = django_user_model.objects.create_user(
+            username="ndwi-lowconf",
+            email="ndwi-lowconf@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI Low Conf",
+            slug="ndwi-lowconf",
+        )
+        obs = NdviObservation(
+            farm=farm,
+            engine="modis",
+            bucket_date=date(2025, 1, 1),
+            mean=0.1,
+            cloud_fraction=0.0,
+            valid_pixel_fraction=0.50,
+            acquired_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
+        )
+        result = build_ndwi_v2_observation(obs)
+        assert result.confidence < 0.45
+
+
+# ---------------------------------------------------------------------------
+# ndvi/fusion_ndwi.py -- run_ndwi_fusion candidate loop (lines 62-70, 86)
+# ---------------------------------------------------------------------------
+
+
+class TestRunNdwiFusion:
+    """Cover run_ndwi_fusion with candidates that pass quality screening."""
+
+    @pytest.mark.django_db
+    @override_settings(
+        NDWI_MIN_ROLLING_CONTEXT=0,
+        NDWI_MAX_CONFIDENCE_WITHOUT_CONTEXT=0.80,
+    )
+    def test_fusion_selects_best_candidate(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        user = django_user_model.objects.create_user(
+            username="ndwi-fusion",
+            email="ndwi-fusion@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI Fusion",
+            slug="ndwi-fusion",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        NdviObservation.objects.create(
+            farm=farm,
+            engine="sentinel-2",
+            bucket_date=date(2025, 1, 1),
+            mean=0.3,
+            is_latest=True,
+            state="FINAL",
+            cloud_fraction=0.0,
+            valid_pixel_fraction=1.0,
+            acquired_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
+            index_type="NDWI",
+        )
+        result = run_ndwi_fusion(
+            farm_id=farm.id,
+            bucket_date=date(2025, 1, 1),
+        )
+        assert result.selected is not None
