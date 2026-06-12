@@ -31,6 +31,7 @@ from ndvi.tasks import (
     enqueue_daily_ndwi_refresh,
     enqueue_daily_refresh,
     enqueue_weekly_gap_fill,
+    enqueue_weekly_ndwi_gap_fill,
     run_ndvi_job,
 )
 
@@ -1132,6 +1133,39 @@ def test_enqueue_daily_ndwi_refresh_only_bbox_farms() -> None:
     assert (
         NdviJob.objects.filter(job_type=NdviJob.JobType.REFRESH_LATEST).count()
         == 1
+    )
+    job = NdviJob.objects.first()
+    assert job is not None
+    assert job.index_type == "NDWI"
+    mock_delay.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_enqueue_weekly_ndwi_gap_fill_only_bbox_farms() -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="queue-ndwi-gap",
+        email="queue-ndwi-gap@example.com",
+        password=password,
+    )
+    Farm.objects.create(
+        owner=user,
+        name="Active NDWI Gap",
+        slug="active-ndwi-gap",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    Farm.objects.create(
+        owner=user, name="No bbox NDWI Gap", slug="nobbox-ndwi-gap"
+    )
+    with patch("ndvi.tasks.dispatch_ndvi_job") as mock_delay:
+        count = enqueue_weekly_ndwi_gap_fill()
+    assert count == 1
+    assert (
+        NdviJob.objects.filter(job_type=NdviJob.JobType.GAP_FILL).count() == 1
     )
     job = NdviJob.objects.first()
     assert job is not None

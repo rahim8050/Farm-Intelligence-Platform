@@ -719,3 +719,35 @@ def enqueue_weekly_gap_fill() -> int:
         dispatch_ndvi_job(job)
         count += 1
     return count
+
+
+@shared_task
+def enqueue_weekly_ndwi_gap_fill() -> int:
+    """Enqueue GAP_FILL jobs for active farms with bbox (NDWI)."""
+    count = 0
+    end = date.today()
+    start = end - timedelta(days=120)
+    for farm in Farm.objects.filter(is_active=True):
+        if (
+            farm.bbox_south is None
+            or farm.bbox_west is None
+            or farm.bbox_north is None
+            or farm.bbox_east is None
+        ):
+            continue
+        job = enqueue_job(
+            owner_id=farm.owner_id,
+            farm=farm,
+            engine_name=None,
+            job_type=NdviJob.JobType.GAP_FILL,
+            params={
+                "start": start,
+                "end": end,
+                "step_days": 7,
+                "max_cloud": get_default_max_cloud(),
+            },
+            index_type="NDWI",
+        )
+        dispatch_ndvi_job(job)
+        count += 1
+    return count

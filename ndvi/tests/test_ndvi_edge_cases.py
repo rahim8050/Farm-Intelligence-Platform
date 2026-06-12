@@ -37,6 +37,9 @@ from ndvi.fusion_ndwi import run_ndwi_fusion
 from ndvi.models import NdviJob, NdviObservation
 from ndvi.quality_ndwi import build_ndwi_v2_observation
 from ndvi.raster.base import ColormapNormalization
+from ndvi.raster.sentinelhub_engine import (
+    SentinelHubRasterError,
+)
 from ndvi.raster.service import render_ndwi_png
 from ndvi.services import (
     LatestParams,
@@ -57,7 +60,11 @@ from ndvi.services import (
     normalize_bbox,
     release_lock,
 )
-from ndvi.stac_client import StacWafBlockedError
+from ndvi.stac_client import (
+    StacProcessingError,
+    StacUpstreamError,
+    StacWafBlockedError,
+)
 from ndvi.tasks import _parse_date, _run_ndwi_v2_pipeline, _safe_error_message
 from ndvi.v2_quality import build_v2_observation
 
@@ -751,10 +758,25 @@ class TestComputeCoveragePct:
 
 
 class TestSafeErrorMessage:
-    """_safe_error_message edge cases (lines 101-105)."""
+    """_safe_error_message edge cases (lines 88-117)."""
 
     def test_unknown_string_returns_internal_error(self) -> None:
         assert _safe_error_message("unknown_code") == "internal_error"
+
+    def test_known_string_code_passes_through(self) -> None:
+        for code in [
+            "no_items",
+            "no_best_item",
+            "missing_assets",
+            "auth_failed",
+            "waf_blocked",
+            "upstream_error",
+            "processing_error",
+            "raster_error",
+            "validation_error",
+            "max_retries_exceeded",
+        ]:
+            assert _safe_error_message(code) == code
 
     def test_stac_waf_blocked_error(self) -> None:
         error = StacWafBlockedError("WAF blocked", support_id="abc123")
@@ -763,6 +785,26 @@ class TestSafeErrorMessage:
     def test_auth_error(self) -> None:
         error = SentinelHubAuthError(None)
         assert _safe_error_message(error) == "auth_failed"
+
+    def test_stac_upstream_error(self) -> None:
+        error = StacUpstreamError("upstream fail")
+        assert _safe_error_message(error) == "upstream_error"
+
+    def test_stac_processing_error(self) -> None:
+        error = StacProcessingError("processing fail")
+        assert _safe_error_message(error) == "processing_error"
+
+    def test_raster_error(self) -> None:
+        error = SentinelHubRasterError(status_code=400, snippet="raster fail")
+        assert _safe_error_message(error) == "raster_error"
+
+    def test_validation_error(self) -> None:
+        error = ValidationError("invalid")
+        assert _safe_error_message(error) == "validation_error"
+
+    def test_generic_exception_returns_internal_error(self) -> None:
+        error = RuntimeError("generic")
+        assert _safe_error_message(error) == "internal_error"
 
 
 class TestParseDate:
@@ -1220,3 +1262,89 @@ class TestRunNdwiFusion:
             bucket_date=date(2025, 1, 1),
         )
         assert result.selected is not None
+
+
+# ---------------------------------------------------------------------------
+# ndvi/v2_quality.py -- helper function edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestV2QualityHelpers:
+    """Cover simple helper branches in v2_quality.py."""
+
+    def test_median_empty_returns_none(self) -> None:
+        from ndvi.v2_quality import _median
+
+        assert _median([]) is None
+
+    def test_median_even_count(self) -> None:
+        from ndvi.v2_quality import _median
+
+        assert _median([1.0, 3.0]) == 2.0
+
+    def test_median_odd_count(self) -> None:
+        from ndvi.v2_quality import _median
+
+        assert _median([1.0, 3.0, 5.0]) == 3.0
+
+    def test_get_source_weight_unknown_engine(self) -> None:
+        from ndvi.v2_quality import _get_source_weight
+
+        assert _get_source_weight("unknown") == 0.60
+
+    @override_settings(NDVI_V2_ROLLING_WINDOW=10)
+    def test_get_rolling_window_from_settings(self) -> None:
+        from ndvi.v2_quality import get_rolling_window_size
+
+        assert get_rolling_window_size() == 10
+
+    @override_settings(NDVI_V2_OUTLIER_THRESHOLD=0.20)
+    def test_get_outlier_threshold_from_settings(self) -> None:
+        from ndvi.v2_quality import get_outlier_threshold
+
+        assert get_outlier_threshold() == 0.20
+
+    @override_settings(NDVI_V2_ACCEPT_THRESHOLD=0.80)
+    def test_get_accept_threshold_from_settings(self) -> None:
+        from ndvi.v2_quality import get_accept_threshold
+
+        assert get_accept_threshold() == 0.80
+
+    @override_settings(NDVI_V2_LOW_CONFIDENCE_THRESHOLD=0.40)
+    def test_get_low_confidence_threshold_from_settings(self) -> None:
+        from ndvi.v2_quality import get_low_confidence_threshold
+
+        assert get_low_confidence_threshold() == 0.40
+
+    @override_settings(NDVI_V2_VALID_PIXEL_REJECT=0.20)
+    def test_get_valid_pixel_reject_from_settings(self) -> None:
+        from ndvi.v2_quality import get_valid_pixel_reject_threshold
+
+        assert get_valid_pixel_reject_threshold() == 0.20
+
+    def test_compute_cloud_weight_with_value(self) -> None:
+        from ndvi.v2_quality import _compute_cloud_weight
+
+        assert _compute_cloud_weight(0.3) == 0.7
+
+    def test_compute_valid_pixel_weight_with_value(self) -> None:
+        from ndvi.v2_quality import _compute_valid_pixel_weight
+
+        assert _compute_valid_pixel_weight(0.8) == 0.8
+
+    def test_compute_valid_pixel_weight_none(self) -> None:
+        from ndvi.v2_quality import _compute_valid_pixel_weight
+
+        assert _compute_valid_pixel_weight(None) == 0.5
+
+    def test_compute_recency_weight_none_acquisition(self) -> None:
+        from ndvi.v2_quality import _compute_recency_weight
+
+        weight = _compute_recency_weight(None, date(2025, 1, 1))
+        assert weight == 1.0
+
+    def test_compute_temporal_consistency_with_median(self) -> None:
+        from ndvi.v2_quality import _compute_temporal_consistency_weight
+
+        weight = _compute_temporal_consistency_weight(0.5, 0.6)
+        assert weight > 0.0

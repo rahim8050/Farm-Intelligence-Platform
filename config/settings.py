@@ -1147,6 +1147,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ndvi.tasks.enqueue_weekly_gap_fill",
         "schedule": crontab(hour=4, minute=0, day_of_week="sun"),
     },
+    "ndwi-weekly-gap-fill": {
+        "task": "ndvi.tasks.enqueue_weekly_ndwi_gap_fill",
+        "schedule": crontab(hour=4, minute=5, day_of_week="sun"),
+    },
     "schema-cache-warm": {
         "task": "weather.tasks.warm_openapi_schema_cache",
         "schedule": SCHEMA_CACHE_WARM_INTERVAL_SECONDS,
