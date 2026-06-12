@@ -20,7 +20,11 @@ from ndvi.models import NdviJob, NdviObservation, NdviRasterArtifact
 from ndvi.raster.sentinelhub_engine import (
     SentinelHubRasterError,
 )
-from ndvi.stac_client import StacProcessingError, StacUpstreamError
+from ndvi.stac_client import (
+    StacProcessingError,
+    StacUpstreamError,
+    StacWafBlockedError,
+)
 from ndvi.tasks import (
     compute_farm_state_coverage,
     enqueue_daily_farm_state_coverage,
@@ -1175,3 +1179,160 @@ def test_run_ndvi_job_ndwi_refresh_latest_creates_observation(
     result = run_ndvi_job.apply(args=[job.id]).get()
     assert result == "ok"
     assert NdviObservation.objects.filter(farm=farm).count() == 1
+
+
+@pytest.mark.django_db
+def test_run_ndvi_job_ndwi_backfill_records_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="ndwi-backfill",
+        email="ndwi-backfill@example.com",
+        password=password,
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="NDWI Backfill",
+        slug="ndwi-backfill",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    job = NdviJob.objects.create(
+        owner=user,
+        farm=farm,
+        engine="stac",
+        job_type=NdviJob.JobType.BACKFILL,
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 5),
+        step_days=4,
+        max_cloud=30,
+        request_hash="ndwi-backfill-hash",
+        index_type="NDWI",
+    )
+    dummy_engine = MagicMock()
+    dummy_engine.get_timeseries.return_value = [
+        NdviPoint(date=date(2025, 1, 1), mean=0.3),
+        NdviPoint(date=date(2025, 1, 5), mean=0.4),
+    ]
+    monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
+    monkeypatch.setattr("ndvi.tasks.get_engine", lambda *_, **__: dummy_engine)
+
+    result = run_ndvi_job.apply(args=[job.id]).get()
+    assert result == "ok"
+    assert NdviObservation.objects.filter(farm=farm).count() == 2
+
+
+@pytest.mark.django_db
+def test_run_ndvi_job_already_successful() -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="already-ok",
+        email="already-ok@example.com",
+        password=password,
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Already OK",
+        slug="already-ok",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    job = NdviJob.objects.create(
+        owner=user,
+        farm=farm,
+        engine="stac",
+        job_type=NdviJob.JobType.REFRESH_LATEST,
+        lookback_days=7,
+        max_cloud=20,
+        request_hash="already-ok-hash",
+        status=NdviJob.JobStatus.SUCCESS,
+    )
+    result = run_ndvi_job.apply(args=[job.id]).get()
+    assert result == "ok"
+
+
+@pytest.mark.django_db
+def test_run_ndvi_job_ndwi_auth_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="ndwi-auth",
+        email="ndwi-auth@example.com",
+        password=password,
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="NDWI Auth",
+        slug="ndwi-auth",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    job = NdviJob.objects.create(
+        owner=user,
+        farm=farm,
+        engine="sentinelhub",
+        job_type=NdviJob.JobType.REFRESH_LATEST,
+        lookback_days=7,
+        max_cloud=20,
+        request_hash="ndwi-auth-hash",
+        index_type="NDWI",
+    )
+    monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
+    monkeypatch.setattr(
+        "ndvi.tasks.get_engine",
+        lambda *_, **__: (_ for _ in ()).throw(SentinelHubAuthError(None)),
+    )
+    result = run_ndvi_job.apply(args=[job.id]).get()
+    assert result == "invalid"
+
+
+@pytest.mark.django_db
+def test_run_ndvi_job_waf_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="waf-blocked",
+        email="waf-blocked@example.com",
+        password=password,
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="WAF Blocked",
+        slug="waf-blocked",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    job = NdviJob.objects.create(
+        owner=user,
+        farm=farm,
+        engine="stac",
+        job_type=NdviJob.JobType.REFRESH_LATEST,
+        lookback_days=7,
+        max_cloud=20,
+        request_hash="waf-blocked-hash",
+    )
+    monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
+    monkeypatch.setattr(
+        "ndvi.tasks.get_engine",
+        lambda *_, **__: (_ for _ in ()).throw(
+            StacWafBlockedError("WAF blocked", support_id="abc")
+        ),
+    )
+    with patch("ndvi.tasks._handle_retryable_task_failure") as mock_handler:
+        run_ndvi_job.apply(args=[job.id]).get()
+        mock_handler.assert_called_once()

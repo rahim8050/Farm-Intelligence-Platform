@@ -10,7 +10,7 @@ Tests focus on uncovered branches identified by coverage analysis:
 from __future__ import annotations
 
 import secrets
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 from django.core.cache import caches
+from django.test import override_settings
 from rest_framework.exceptions import ValidationError
 
 from farms.models import Farm
@@ -31,7 +32,7 @@ from ndvi.farm_state import (
     compute_coverage_for_farm,
     get_cached_coverage_for_farm,
 )
-from ndvi.fusion import FusionCandidate
+from ndvi.fusion import FusionCandidate, gather_candidates
 from ndvi.models import NdviObservation
 from ndvi.raster.base import ColormapNormalization
 from ndvi.raster.service import render_ndwi_png
@@ -269,7 +270,12 @@ class TestNdwiCacheFunctions:
 class TestGetEngineNdwi:
     """Exercise real get_engine for NDWI index_type."""
 
-    def test_get_engine_ndwi_sentinelhub(self) -> None:
+    def test_get_engine_ndwi_sentinelhub(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("SENTINELHUB_CLIENT_ID", "test-client-id")
+        monkeypatch.setenv("SENTINELHUB_CLIENT_SECRET", "test-client-secret")
         engine = get_engine("sentinelhub", index_type="NDWI")
         assert engine is not None
 
@@ -646,10 +652,95 @@ class TestFarmStateCachePaths:
         cache_key = f"farm_state:{farm.id}:stac"
         lock_key = f"{cache_key}:lock"
         caches["default"].set(lock_key, "1", timeout=30)
-
         result = build_farm_state(farm=farm, engine="stac")
         assert result.farm_id == farm.id
         assert result.state == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# ndvi/farm_state.py -- _compute_trend_slope zero-denominator (lines 337-338)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeTrendSlope:
+    """_compute_trend_slope with zero denominator (same-date obs)."""
+
+    @pytest.mark.django_db
+    def test_zero_denominator_returns_zero(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        from ndvi.farm_state import _compute_trend_slope
+
+        user = django_user_model.objects.create_user(
+            username="trend-zero",
+            email="trend-zero@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="Trend Zero",
+            slug="trend-zero",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        obs = [
+            NdviObservation(
+                farm=farm,
+                engine="stac",
+                bucket_date=date(2024, 6, 15),
+                mean=0.5,
+            ),
+            NdviObservation(
+                farm=farm,
+                engine="stac",
+                bucket_date=date(2024, 6, 15),
+                mean=0.7,
+            ),
+        ]
+        result = _compute_trend_slope(obs)
+        assert result == 0.0
+
+
+# ---------------------------------------------------------------------------
+# ndvi/farm_state.py -- _compute_coverage_pct non-stac engine (line 459)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeCoveragePct:
+    """_compute_coverage_pct with non-stac engine returns None."""
+
+    @pytest.mark.django_db
+    def test_non_stac_engine_returns_none(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        from ndvi.farm_state import _compute_coverage_pct
+
+        user = django_user_model.objects.create_user(
+            username="cov-pct",
+            email="cov-pct@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="Cov Pct",
+            slug="cov-pct",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        result = _compute_coverage_pct(
+            farm=farm,
+            engine="sentinelhub",
+            observations=[],
+        )
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -687,7 +778,8 @@ class TestParseDate:
 
 
 # ---------------------------------------------------------------------------
-# ndvi/fusion.py -- FusionCandidate property
+# ndvi/fusion.py -- FusionCandidate property + gather_candidates
+# (lines 100, 158-206)
 # ---------------------------------------------------------------------------
 
 
@@ -711,8 +803,89 @@ class TestFusionCandidateBucketDate:
         assert candidate.bucket_date == date(2024, 6, 15)
 
 
+class TestGatherCandidates:
+    """gather_candidates DB integration (lines 158-206)."""
+
+    @pytest.mark.django_db
+    @override_settings(NDVI_V2_MIN_ROLLING_CONTEXT=0)
+    def test_gather_candidates_returns_qualified(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        user = django_user_model.objects.create_user(
+            username="gather1",
+            email="gather1@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="Gather Farm",
+            slug="gather-farm",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        NdviObservation.objects.create(
+            farm=farm,
+            engine="sentinel-2",
+            bucket_date=date(2024, 6, 15),
+            mean=0.7,
+            is_latest=True,
+            state="FINAL",
+            cloud_fraction=0.0,
+            valid_pixel_fraction=1.0,
+            acquired_at=datetime(2024, 6, 15, 10, 0, 0, tzinfo=UTC),
+        )
+        candidates = gather_candidates(
+            farm_id=farm.id,
+            bucket_date=date(2024, 6, 15),
+        )
+        assert len(candidates) == 1
+        assert candidates[0].degraded_confidence > 0.0
+
+    @pytest.mark.django_db
+    def test_gather_candidates_skips_low_confidence(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        user = django_user_model.objects.create_user(
+            username="gather2",
+            email="gather2@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="Gather Low",
+            slug="gather-low",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        NdviObservation.objects.create(
+            farm=farm,
+            engine="sentinel-2",
+            bucket_date=date(2024, 6, 15),
+            mean=0.01,
+            is_latest=True,
+            state="FINAL",
+            valid_pixel_fraction=0.001,
+            cloud_fraction=0.0,
+            acquired_at=datetime(2024, 6, 15, 10, 0, 0, tzinfo=UTC),
+        )
+        candidates = gather_candidates(
+            farm_id=farm.id,
+            bucket_date=date(2024, 6, 15),
+        )
+        assert len(candidates) == 0
+
+
 # ---------------------------------------------------------------------------
-# ndvi/raster/service.py -- render_ndwi_png (lines 100-114)
+# ndvi/raster/service.py -- render_ndwi_png + render_ndvi_png
+# (lines 55-69, 100-114)
 # ---------------------------------------------------------------------------
 
 
@@ -729,7 +902,6 @@ class TestRenderNdwiPng:
         mock_engine = MagicMock()
         mock_engine.render_png.return_value = b"fake-png-bytes"
         mock_get_engine.return_value = mock_engine
-
         user = django_user_model.objects.create_user(
             username="png-ndwi",
             email="png-ndwi@example.com",
@@ -745,7 +917,6 @@ class TestRenderNdwiPng:
             bbox_east=0.2,
             is_active=True,
         )
-
         content, content_hash = render_ndwi_png(
             farm=farm,
             bbox=BBox(
@@ -758,8 +929,55 @@ class TestRenderNdwiPng:
             size=256,
             max_cloud=30,
         )
-
         assert content == b"fake-png-bytes"
+        assert isinstance(content_hash, str)
+        assert len(content_hash) == 64
+        mock_get_engine.assert_called_once()
+
+
+class TestRenderNdviPng:
+    """render_ndvi_png exercises the NDVI raster path (lines 55-69)."""
+
+    @pytest.mark.django_db
+    @patch("ndvi.raster.service.get_engine")
+    def test_render_ndvi_png_returns_content_and_hash(
+        self,
+        mock_get_engine: MagicMock,
+        django_user_model: Any,
+    ) -> None:
+        from ndvi.raster.service import render_ndvi_png
+
+        mock_engine = MagicMock()
+        mock_engine.render_png.return_value = b"fake-ndvi-png"
+        mock_get_engine.return_value = mock_engine
+        user = django_user_model.objects.create_user(
+            username="png-ndvi-main",
+            email="png-ndvi-main@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="PNG NDVI",
+            slug="png-ndvi-main",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        content, content_hash = render_ndvi_png(
+            farm=farm,
+            bbox=BBox(
+                south=Decimal("0.0"),
+                west=Decimal("0.0"),
+                north=Decimal("0.2"),
+                east=Decimal("0.2"),
+            ),
+            day=date(2024, 6, 2),
+            size=256,
+            max_cloud=30,
+        )
+        assert content == b"fake-ndvi-png"
         assert isinstance(content_hash, str)
         assert len(content_hash) == 64
         mock_get_engine.assert_called_once()
