@@ -117,6 +117,10 @@ class FusionResult:
       - fallback_used: set when Landsat or MODIS selected
       - s1_wet_soil / s1_flooding / etc.: from Sentinel-1 context
       - anomaly flags when S1 context explains NDVI anomaly
+
+    ndwi_water_class is set post-fusion for NDWI endpoints:
+      - "open_water", "wet_soil", "dry_soil", "vegetation_dominated"
+      - Only populated when index_type=NDWI and a candidate is selected.
     """
 
     selected: FusionCandidate | None
@@ -125,6 +129,7 @@ class FusionResult:
     decision_reason: str
     conflict_detected: bool = False
     quality_flags: dict[str, bool] = field(default_factory=dict)
+    ndwi_water_class: str | None = None
 
 
 def _apply_confidence_degradation(
