@@ -49,32 +49,34 @@ class TestNdwiNullConditions:
     def test_null_when_valid_pixel_below_threshold(
         self, ndwi_obs_kwargs: dict
     ) -> None:
-        obs = self._make_obs(
-            **{**ndwi_obs_kwargs, "valid_pixel_fraction": 0.20}
-        )
+        kwargs = dict(ndwi_obs_kwargs)
+        kwargs["valid_pixel_fraction"] = 0.20
+        obs = self._make_obs(**kwargs)
         result = build_ndwi_v2_observation(obs)
         assert result.is_null
         assert result.null_reason == "low_valid_pixel_fraction"
 
     @pytest.mark.django_db
     @override_settings(
-        NDWI_MIN_ROLLING_CONTEXT=0, NDWI_MAX_CONFIDENCE_WITHOUT_CONTEXT=0.80
+        NDWI_MIN_ROLLING_CONTEXT=3,
+        NDWI_MAX_CONFIDENCE_WITHOUT_CONTEXT=0.30,
     )
     def test_null_when_confidence_below_threshold(
         self, ndwi_obs_kwargs: dict
     ) -> None:
-        obs = self._make_obs(
-            **ndwi_obs_kwargs,
-            valid_pixel_fraction=0.30,
-            cloud_fraction=0.95,
-        )
+        kwargs = dict(ndwi_obs_kwargs)
+        kwargs.update(valid_pixel_fraction=0.30, cloud_fraction=0.95)
+        obs = self._make_obs(**kwargs)
         result = build_ndwi_v2_observation(obs)
         assert result.is_null
+        assert result.null_reason == "low_confidence"
 
     @pytest.mark.django_db
     @override_settings(NDWI_MIN_ROLLING_CONTEXT=0)
     def test_null_when_mean_is_none(self, ndwi_obs_kwargs: dict) -> None:
-        obs = self._make_obs(**{**ndwi_obs_kwargs, "mean": None})
+        kwargs = dict(ndwi_obs_kwargs)
+        kwargs["mean"] = None
+        obs = self._make_obs(**kwargs)
         result = build_ndwi_v2_observation(obs)
         assert result.is_null
         assert result.null_reason == "missing_ndvi_value"
@@ -83,11 +85,7 @@ class TestNdwiNullConditions:
 class TestNdwiConfidenceComponents:
     """Test NDWI-specific confidence component weights."""
 
-    @pytest.mark.django_db
-    @override_settings(NDWI_MIN_ROLLING_CONTEXT=0)
-    def test_source_weight_stac_is_highest(
-        self, ndwi_obs_kwargs: dict
-    ) -> None:
+    def test_source_weight_stac_is_highest(self) -> None:
         from ndvi.v2_quality import _get_source_weight
 
         weight_stac = _get_source_weight("stac")
