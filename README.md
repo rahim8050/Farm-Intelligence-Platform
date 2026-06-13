@@ -56,10 +56,9 @@ See [NDVI Pipeline Evolution](docs/architecture/ndvi-pipeline-evolution.md) for 
 
 ```bash
 uv sync --no-install-project --group dev
-
-# Activate the virtual environment (or prefix commands with `uv run`):
-source .venv/bin/activate
 ```
+
+All subsequent commands use `uv run` to avoid needing an explicit virtual environment activation.
 
 ### Environment
 

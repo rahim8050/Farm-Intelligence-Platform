@@ -468,6 +468,7 @@ class TestRunNdwiFusion:
         mean: float = 0.3,
         engine: str = "stac",
         cloud_fraction: float = 0.1,
+        valid_pixel_fraction: float = 0.8,
     ) -> NdviObservation:
         from datetime import datetime as dt
 
@@ -480,7 +481,7 @@ class TestRunNdwiFusion:
             max=mean + 0.1,
             sample_count=100,
             cloud_fraction=cloud_fraction,
-            valid_pixel_fraction=0.8,
+            valid_pixel_fraction=valid_pixel_fraction,
             index_type="NDWI",
             acquired_at=dt(2025, 1, 1, tzinfo=UTC),
             is_latest=True,
@@ -508,7 +509,9 @@ class TestRunNdwiFusion:
             bbox_east=0.2,
             is_active=True,
         )
-        self._make_observation(farm=farm, mean=0.3)
+        self._make_observation(
+            farm=farm, mean=0.3, cloud_fraction=0.9, valid_pixel_fraction=0.1
+        )
         result = run_ndwi_fusion(farm_id=farm.id, bucket_date=date(2025, 1, 1))
         assert result.selected is None
         assert result.candidates_evaluated >= 1

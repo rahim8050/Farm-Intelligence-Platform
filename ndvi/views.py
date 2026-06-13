@@ -730,6 +730,7 @@ def _inject_v2_observations(
     observations: list[NdviObservation] | None,
     farm: Farm,
     engine: str,
+    index_type: str = "NDVI",
 ) -> None:
     """Add V2 derived observations to a timeseries payload.
 
@@ -746,6 +747,7 @@ def _inject_v2_observations(
     v2_qs = NdviDerivedObservation.objects.filter(
         farm=farm,
         engine=engine,
+        index_type=index_type,
         bucket_date__in=[
             d if isinstance(d, date) else d for d in bucket_dates_raw
         ],
@@ -780,6 +782,7 @@ def _inject_single_v2_observation(
     farm: Farm,
     engine: str,
     obs_date: date | str | None,
+    index_type: str = "NDVI",
 ) -> None:
     """Add a single V2 derived observation to a latest payload.
 
@@ -796,7 +799,10 @@ def _inject_single_v2_observation(
 
     try:
         v2 = NdviDerivedObservation.objects.get(
-            farm=farm, engine=engine, bucket_date=obs_date
+            farm=farm,
+            engine=engine,
+            index_type=index_type,
+            bucket_date=obs_date,
         )
         payload["v2_observation"] = NdviDerivedObservationSerializer(v2).data
     except NdviDerivedObservation.DoesNotExist:
@@ -1278,7 +1284,6 @@ class NdviRefreshView(BaseFarmView):
                 "lookback_days": get_default_lookback_days(),
                 "max_cloud": get_default_max_cloud(),
             },
-            index_type="NDWI",
         )
         dispatch_ndvi_job(job)
 
@@ -1711,7 +1716,7 @@ class NdwiTimeseriesView(BaseFarmView):
         """Return NDWI observations for the requested range.
 
         Query params: start, end, optional step_days, optional max_cloud,
-        optional engine.
+        optional engine, optional representation (v1 or v2).
         Success: envelope containing observations + metadata.
         Side effects: schedules gap-fill job when buckets are missing.
         """
@@ -1723,6 +1728,7 @@ class NdwiTimeseriesView(BaseFarmView):
             engine_name = resolve_ndvi_engine_name(engine_override)
         except ValueError as exc:
             raise ValidationError("Invalid engine parameter.") from exc
+        representation = request.query_params.get("representation", "v1")
         serializer = TimeseriesRequestSerializer(
             data=request.query_params, context={"engine": engine_name}
         )
@@ -1739,6 +1745,14 @@ class NdwiTimeseriesView(BaseFarmView):
             params=params,
         )
         if cached:
+            if representation == "v2":
+                _inject_v2_observations(
+                    cached,
+                    observations=None,
+                    farm=farm,
+                    engine=engine_name,
+                    index_type="NDWI",
+                )
             return success_response(
                 cached, message="NDWI time series (cached)"
             )
@@ -1791,6 +1805,14 @@ class NdwiTimeseriesView(BaseFarmView):
             "is_partial": bool(missing),
             "missing_buckets_count": len(missing),
         }
+        if representation == "v2":
+            _inject_v2_observations(
+                payload,
+                observations=observations,
+                farm=farm,
+                engine=engine_name,
+                index_type="NDWI",
+            )
         cache_ndwi_timeseries_response(
             owner_id=owner_id,
             farm_id=farm.id,
@@ -1816,7 +1838,7 @@ class NdwiLatestView(BaseFarmView):
         """Return the most recent NDWI observation if present.
 
         Query params: lookback_days (optional), max_cloud (optional),
-        engine (optional).
+        engine (optional), representation (optional, v1 or v2).
         Success: envelope with `observation` or null, plus stale flag.
         Side effects: enqueues refresh_latest job when missing/stale.
         """
@@ -1828,6 +1850,7 @@ class NdwiLatestView(BaseFarmView):
             engine_name = resolve_ndvi_engine_name(engine_override)
         except ValueError as exc:
             raise ValidationError("Invalid engine parameter.") from exc
+        representation = request.query_params.get("representation", "v1")
         serializer = LatestRequestSerializer(
             data=request.query_params, context={"engine": engine_name}
         )
@@ -1844,6 +1867,16 @@ class NdwiLatestView(BaseFarmView):
             params=params,
         )
         if cached:
+            if representation == "v2":
+                obs_data = cached.get("observation") or {}
+                obs_date_raw = obs_data.get("bucket_date")
+                _inject_single_v2_observation(
+                    cached,
+                    farm=farm,
+                    engine=engine_name,
+                    obs_date=obs_date_raw,
+                    index_type="NDWI",
+                )
             return success_response(cached, message="NDWI latest (cached)")
 
         observations = filter_observations_by_cloud(
@@ -1891,6 +1924,14 @@ class NdwiLatestView(BaseFarmView):
             "max_cloud": params.max_cloud,
             "stale": stale,
         }
+        if representation == "v2":
+            _inject_single_v2_observation(
+                payload,
+                farm=farm,
+                engine=engine_name,
+                obs_date=observation.bucket_date if observation else None,
+                index_type="NDWI",
+            )
         cache_ndwi_latest_response(
             owner_id=owner_id,
             farm_id=farm.id,
@@ -2124,6 +2165,7 @@ class NdwiRefreshView(BaseFarmView):
                 "lookback_days": get_default_lookback_days(),
                 "max_cloud": get_default_max_cloud(),
             },
+            index_type="NDWI",
         )
         dispatch_ndvi_job(job)
 

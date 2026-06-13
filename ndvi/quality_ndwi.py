@@ -137,6 +137,9 @@ def build_ndwi_v2_observation(
         rolling_median=rolling_median,
         confidence=confidence,
         valid_pixel_fraction=valid_pixel_fraction,
+        outlier_threshold=0.25,
+        accept_threshold=0.70,
+        vpf_threshold=0.60,
     )
 
     is_null, null_reason = _check_null_conditions(
@@ -147,6 +150,9 @@ def build_ndwi_v2_observation(
         engine=engine,
         prior_v2_count=prior_count,
         is_outlier=is_outlier,
+        vpf_reject_threshold=0.25,
+        low_confidence_threshold=0.45,
+        min_rolling_context=4,
     )
 
     selected_ndwi = None if is_null else raw_ndwi

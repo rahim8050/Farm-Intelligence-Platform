@@ -306,14 +306,33 @@ def _check_null_conditions(
     engine: str,
     prior_v2_count: int,
     is_outlier: bool,
+    *,
+    vpf_reject_threshold: float | None = None,
+    low_confidence_threshold: float | None = None,
+    min_rolling_context: int | None = None,
 ) -> tuple[bool, str | None]:
     """Check if any null-return condition is met.
 
+    Thresholds can be overridden for index-specific behavior
+    (e.g. NDWI uses different values than NDVI).
+
     Returns (is_null, null_reason).
     """
-    vpf_reject = get_valid_pixel_reject_threshold()
-    low_conf = get_low_confidence_threshold()
-    min_context = get_min_rolling_context()
+    vpf_reject = (
+        vpf_reject_threshold
+        if vpf_reject_threshold is not None
+        else get_valid_pixel_reject_threshold()
+    )
+    low_conf = (
+        low_confidence_threshold
+        if low_confidence_threshold is not None
+        else get_low_confidence_threshold()
+    )
+    min_context = (
+        min_rolling_context
+        if min_rolling_context is not None
+        else get_min_rolling_context()
+    )
 
     if valid_pixel_fraction is not None and valid_pixel_fraction < vpf_reject:
         return True, "low_valid_pixel_fraction"
@@ -345,17 +364,31 @@ def _check_outlier(
     rolling_median: float | None,
     confidence: float,
     valid_pixel_fraction: float | None,
+    *,
+    outlier_threshold: float | None = None,
+    accept_threshold: float | None = None,
+    vpf_threshold: float | None = None,
 ) -> bool:
     """Check if observation should be rejected as outlier.
 
     All conditions must be true for outlier rejection.
+    Thresholds can be overridden for index-specific behavior
+    (e.g. NDWI uses different values than NDVI).
     """
     if rolling_median is None:
         return False
 
-    outlier_thresh = get_outlier_threshold()
-    accept_thresh = get_accept_threshold()
-    vpf_thresh = 0.70
+    outlier_thresh = (
+        outlier_threshold
+        if outlier_threshold is not None
+        else get_outlier_threshold()
+    )
+    accept_thresh = (
+        accept_threshold
+        if accept_threshold is not None
+        else get_accept_threshold()
+    )
+    vpf_thresh = vpf_threshold if vpf_threshold is not None else 0.70
 
     delta = abs(raw_ndvi - rolling_median)
     if delta < outlier_thresh:
