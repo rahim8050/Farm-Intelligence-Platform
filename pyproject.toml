@@ -1,7 +1,8 @@
 [project]
-name = "weather-apis"
+name = "farm-intelligence-platform"
 version = "0.1.0"
-description = "Backend-only Django/DRF service for Weather APIs (NASA, Meteo, OpenWeather)."
+description = "Backend Django/DRF service for farm intelligence: NDVI/NDWI satellite analysis, weather, farm management, alerts, and integrations."
+license = {text = "MIT"}
 requires-python = ">=3.12"
 dependencies = [
   "Django==5.1.15",
