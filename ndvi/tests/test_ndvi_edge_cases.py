@@ -1348,3 +1348,269 @@ class TestV2QualityHelpers:
 
         weight = _compute_temporal_consistency_weight(0.5, 0.6)
         assert weight > 0.0
+
+
+# ---------------------------------------------------------------------------
+# ndvi/quality_ndwi.py -- uncovered branches
+# ---------------------------------------------------------------------------
+
+
+class TestNdwiQualityEdgeCases:
+    """Cover remaining uncovered branches in quality_ndwi.py."""
+
+    @pytest.mark.django_db
+    @override_settings(
+        NDWI_MIN_ROLLING_CONTEXT=5,
+        NDWI_MAX_CONFIDENCE_WITHOUT_CONTEXT=0.30,
+    )
+    def test_confidence_capped_without_context(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        """Cover line 133: confidence capped when prior_count < min_context."""
+        user = django_user_model.objects.create_user(
+            username="ndwi-cap",
+            email="ndwi-cap@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user, name="NDWI Cap", slug="ndwi-cap"
+        )
+        obs = NdviObservation.objects.create(
+            farm=farm,
+            engine="sentinel-2",
+            bucket_date=date(2025, 1, 1),
+            mean=0.5,
+            is_latest=True,
+            state="FINAL",
+            cloud_fraction=0.0,
+            valid_pixel_fraction=1.0,
+            acquired_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
+            index_type="NDWI",
+        )
+        result = build_ndwi_v2_observation(obs)
+        assert result.confidence <= 0.30
+
+    @pytest.mark.django_db
+    @override_settings(NDWI_MIN_ROLLING_CONTEXT=0)
+    def test_smoothed_null_when_is_null(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        """Cover line 156: smoothed_ndwi = None when is_null."""
+        user = django_user_model.objects.create_user(
+            username="ndwi-smnull",
+            email="ndwi-smnull@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user, name="NDWI SmNull", slug="ndwi-smnull"
+        )
+        obs = NdviObservation.objects.create(
+            farm=farm,
+            engine="sentinel-2",
+            bucket_date=date(2025, 1, 1),
+            mean=0.5,
+            is_latest=True,
+            state="FINAL",
+            cloud_fraction=0.0,
+            valid_pixel_fraction=0.0,
+            acquired_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
+            index_type="NDWI",
+        )
+        result = build_ndwi_v2_observation(obs)
+        assert result.is_null
+        assert result.smoothed_ndvi is None
+
+    @pytest.mark.django_db
+    @override_settings(NDWI_MIN_ROLLING_CONTEXT=0)
+    def test_process_ndwi_v1_to_v2_persists(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        """Cover lines 203-213: process_ndwi_v1_to_v2 with persist=True."""
+        from ndvi.quality_ndwi import process_ndwi_v1_to_v2
+
+        user = django_user_model.objects.create_user(
+            username="ndwi-proc",
+            email="ndwi-proc@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user, name="NDWI Proc", slug="ndwi-proc"
+        )
+        obs = NdviObservation.objects.create(
+            farm=farm,
+            engine="sentinel-2",
+            bucket_date=date(2025, 1, 1),
+            mean=0.5,
+            is_latest=True,
+            state="FINAL",
+            cloud_fraction=0.0,
+            valid_pixel_fraction=1.0,
+            acquired_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
+            index_type="NDWI",
+        )
+        v2_result, persisted = process_ndwi_v1_to_v2(obs, persist=True)
+        assert v2_result is not None
+        assert persisted is not None
+        assert persisted.index_type == "NDWI"
+
+
+# ---------------------------------------------------------------------------
+# ndvi/fusion_ndwi.py -- run_ndwi_fusion null and low-confidence skips
+# (lines 100-103)
+# ---------------------------------------------------------------------------
+
+
+class TestRunNdwiFusionSkipBranches:
+    """Cover skipped-candidate branches in run_ndwi_fusion."""
+
+    @pytest.mark.django_db
+    @override_settings(NDWI_MIN_ROLLING_CONTEXT=0)
+    def test_skips_null_observation_in_fusion(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        """Cover line 101: null observation skipped in candidate loop."""
+        user = django_user_model.objects.create_user(
+            username="ndwi-skipnull",
+            email="ndwi-skipnull@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI SkipNull",
+            slug="ndwi-skipnull",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        NdviObservation.objects.create(
+            farm=farm,
+            engine="sentinel-2",
+            bucket_date=date(2025, 1, 1),
+            mean=0.5,
+            is_latest=True,
+            state="FINAL",
+            cloud_fraction=0.0,
+            valid_pixel_fraction=0.0,
+            acquired_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
+            index_type="NDWI",
+        )
+        result = run_ndwi_fusion(farm_id=farm.id, bucket_date=date(2025, 1, 1))
+        assert result.selected is None
+
+    @pytest.mark.django_db
+    @override_settings(
+        NDWI_MIN_ROLLING_CONTEXT=3,
+        NDWI_LOW_CONFIDENCE_THRESHOLD=0.80,
+        NDWI_MAX_CONFIDENCE_WITHOUT_CONTEXT=0.65,
+    )
+    def test_skips_low_confidence_observation_in_fusion(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        """Cover fusion low-confidence skip (line 103)."""
+        user = django_user_model.objects.create_user(
+            username="ndwi-skiplow",
+            email="ndwi-skiplow@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user,
+            name="NDWI SkipLow",
+            slug="ndwi-skiplow",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        NdviObservation.objects.create(
+            farm=farm,
+            engine="sentinel-2",
+            bucket_date=date(2025, 1, 1),
+            mean=0.5,
+            is_latest=True,
+            state="FINAL",
+            cloud_fraction=0.0,
+            valid_pixel_fraction=1.0,
+            acquired_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
+            index_type="NDWI",
+        )
+        result = run_ndwi_fusion(farm_id=farm.id, bucket_date=date(2025, 1, 1))
+        assert result.selected is None
+
+
+# ---------------------------------------------------------------------------
+# ndvi/serializers.py -- ndwi_water_class field
+# ---------------------------------------------------------------------------
+
+
+class TestNdwiWaterClassSerializer:
+    """Cover ndwi_water_class SerializerMethodField."""
+
+    @pytest.mark.django_db
+    def test_ndwi_water_class_returned_for_ndwi_obs(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        from ndvi.serializers import NdviObservationSerializer
+
+        user = django_user_model.objects.create_user(
+            username="ndwi-ser",
+            email="ndwi-ser@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user, name="NDWI Ser", slug="ndwi-ser"
+        )
+        obs = NdviObservation.objects.create(
+            farm=farm,
+            engine="sentinel-2",
+            bucket_date=date(2025, 1, 1),
+            mean=0.15,
+            is_latest=True,
+            state="FINAL",
+            cloud_fraction=0.0,
+            valid_pixel_fraction=1.0,
+            acquired_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
+            index_type="NDWI",
+        )
+        data = NdviObservationSerializer(obs).data
+        assert "ndwi_water_class" in data
+        assert data["ndwi_water_class"] == "wet_soil"
+
+    @pytest.mark.django_db
+    def test_ndwi_water_class_none_for_ndvi_obs(
+        self,
+        django_user_model: Any,
+    ) -> None:
+        from ndvi.serializers import NdviObservationSerializer
+
+        user = django_user_model.objects.create_user(
+            username="ndvi-ser",
+            email="ndvi-ser@example.com",
+            password=PASSWORD,
+        )
+        farm = Farm.objects.create(
+            owner=user, name="NDVI Ser", slug="ndvi-ser"
+        )
+        obs = NdviObservation.objects.create(
+            farm=farm,
+            engine="sentinel-2",
+            bucket_date=date(2025, 1, 1),
+            mean=0.5,
+            is_latest=True,
+            state="FINAL",
+            cloud_fraction=0.0,
+            valid_pixel_fraction=1.0,
+            acquired_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
+            index_type="NDVI",
+        )
+        data = NdviObservationSerializer(obs).data
+        assert "ndwi_water_class" in data
+        assert data["ndwi_water_class"] is None

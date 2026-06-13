@@ -38,6 +38,8 @@ class FlexibleDateField(serializers.DateField):
 
 
 class NdviObservationSerializer(serializers.ModelSerializer):
+    ndwi_water_class = serializers.SerializerMethodField()
+
     class Meta:
         model = NdviObservation
         fields = [
@@ -47,7 +49,16 @@ class NdviObservationSerializer(serializers.ModelSerializer):
             "max",
             "sample_count",
             "cloud_fraction",
+            "ndwi_water_class",
         ]
+
+    @staticmethod
+    def get_ndwi_water_class(obj: NdviObservation) -> str | None:
+        if getattr(obj, "index_type", None) != "NDWI" or obj.mean is None:
+            return None
+        from ndvi.fusion_ndwi import classify_ndwi
+
+        return classify_ndwi(float(obj.mean))
 
 
 class NdviDerivedObservationSerializer(serializers.ModelSerializer):

@@ -1,0 +1,175 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "NDWI jobs (last 15m)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (status) (increase(ndwi_jobs_total[15m])) or label_replace(vector(0), \"status\", \"none\", \"\", \"\")",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0},
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "single"}
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "NDWI upstream requests (last 15m)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (engine, outcome) (increase(ndwi_upstream_requests_total[15m])) or label_replace(vector(0), \"engine\", \"none\", \"\", \"\")",
+          "legendFormat": "{{engine}} {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0},
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "single"}
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0}
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "NDWI upstream latency P50/P95/P99",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, engine) (rate(ndwi_upstream_latency_seconds_bucket[5m])))",
+          "legendFormat": "P50 {{engine}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, engine) (rate(ndwi_upstream_latency_seconds_bucket[5m])))",
+          "legendFormat": "P95 {{engine}}",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, engine) (rate(ndwi_upstream_latency_seconds_bucket[5m])))",
+          "legendFormat": "P99 {{engine}}",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "s", "decimals": 2},
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "multi"}
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0}
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "NDWI farms stale",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (engine) (ndwi_farms_stale_total)",
+          "legendFormat": "{{engine}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0},
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "single"}
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8}
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "NDWI task runtime P50/P95",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, task, engine) (rate(ndwi_task_runtime_seconds_bucket[5m])))",
+          "legendFormat": "P50 {{task}} {{engine}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, task, engine) (rate(ndwi_task_runtime_seconds_bucket[5m])))",
+          "legendFormat": "P95 {{task}} {{engine}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "s", "decimals": 1},
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "multi"}
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "NDWI backfill rows (last 1h)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (engine, status) (increase(ndwi_backfill_rows_total[1h])) or label_replace(vector(0), \"status\", \"none\", \"\", \"\")",
+          "legendFormat": "{{engine}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0},
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom"},
+        "tooltip": {"mode": "single"}
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8}
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["ndwi", "weather-apis"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Weather APIs — NDWI",
+  "uid": "weather-apis-ndwi",
+  "version": 1,
+  "weekStart": ""
+}

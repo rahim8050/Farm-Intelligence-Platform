@@ -289,6 +289,26 @@ ndvi_stream_dlq_total = Counter(
     labelnames=["consumer"],
 )
 
+# ── Unified Spectral Index Metrics ──────────────────────────────
+# Design review (10-design-review.md #2) recommends using a single
+# metric family with an `index` label instead of per-index duplicates.
+# These are added alongside the existing ndvi_* / ndwi_* metrics for
+# gradual migration. New code SHOULD increment these instead.
+# TODO: Migrate all consumers to spectral_index_* and deprecate the
+# per-index metric families.
+
+spectral_jobs_total = Counter(
+    "spectral_jobs_total",
+    "Jobs processed per spectral index",
+    labelnames=["index", "status", "type", "engine"],
+)
+
+spectral_upstream_requests_total = Counter(
+    "spectral_upstream_requests_total",
+    "Upstream engine requests per spectral index",
+    labelnames=["index", "engine", "outcome"],
+)
+
 # ── NDWI Metrics ────────────────────────────────────────────────
 
 ndwi_jobs_total = Counter(
