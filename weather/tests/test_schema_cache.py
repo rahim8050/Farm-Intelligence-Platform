@@ -31,7 +31,7 @@ def test_cached_schema_view_hits_cache(
         calls += 1
         response = Response({"openapi": "3.0.3"})
         response["Content-Disposition"] = (
-            'inline; filename="Weather APIs.yaml"'
+            'inline; filename="Farm Intelligence Platform.yaml"'
         )
         return response
 

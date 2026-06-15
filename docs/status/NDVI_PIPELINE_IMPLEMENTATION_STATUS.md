@@ -207,7 +207,7 @@ Default remains `celery`; stream mode is opt-in.
 - ✅ **NDVI task runtime histogram** `ndvi_task_runtime_seconds{task,
   engine}` (`ndvi/metrics.py:30`).
 - ✅ **Grafana panels** for stream lag and consumer health added to
-  `grafana/dashboards/weather-apis-ndvi.json` (lines 290, 319, 348, 377).
+  `grafana/dashboards/farm-intelligence-platform-ndvi.json` (lines 290, 319, 348, 377).
 - ✅ **Prometheus alerts** in `monitoring/prometheus/alerts.yml:168-204`:
   - `NDVIStreamLagHigh` (pending > 100 for 10m)
   - `NDVIStreamOldMessage` (age > 3600s)
@@ -362,9 +362,9 @@ The following are present in the repo:
   `ndvi/tests/test_ndvi_retry_policy.py` — test coverage.
 - `monitoring/prometheus/alerts.yml:168-204` — four stream alerts.
 - `monitoring/prometheus/prometheus.yml:20` — consumer scrape job.
-- `grafana/dashboards/weather-apis-ndvi.json` — stream lag, age,
+- `grafana/dashboards/farm-intelligence-platform-ndvi.json` — stream lag, age,
   heartbeat, and failure panels (lines 290, 319, 348, 377).
-- `grafana/dashboards/weather-apis-observability.json` — circuit-breaker
+- `grafana/dashboards/farm-intelligence-platform-observability.json` — circuit-breaker
   state and transition panels (lines 998, 1071, 1144, 1217).
 - `config/settings.py:712-732` — all 15 stream settings; default
   `NDVI_QUEUE_BACKEND=celery`.

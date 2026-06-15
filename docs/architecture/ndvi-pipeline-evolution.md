@@ -1,7 +1,7 @@
 # NDVI Pipeline Evolution: Redis Sentinel + Streams (Phased Approach)
 
 **Date:** March 24, 2026  
-**System summary:** Django + DRF (`weather-apis`) running Celery 5.6.2, backed by a single-node Redis instance used for broker/result/cache, and the separate Rust-based `ndvi-service` proxy (ports 8081/8090) that feeds farm-state coverage data back into Django.
+**System summary:** Django + DRF (`farm-intelligence-platform`) running Celery 5.6.2, backed by a single-node Redis instance used for broker/result/cache, and the separate Rust-based `ndvi-service` proxy (ports 8081/8090) that feeds farm-state coverage data back into Django.
 
 > Historical architecture snapshot captured during the phased rollout design.
 > Current implementation details may have moved ahead of the notes below.

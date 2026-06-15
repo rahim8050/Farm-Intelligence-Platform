@@ -1,4 +1,4 @@
-# Weather APIs
+# Farm Intelligence Platform
 
 Django + DRF service that provides authenticated APIs for user accounts, API key
 lifecycle management, farm resources, activity scheduling, NDVI (Sentinel Hub)
@@ -247,7 +247,7 @@ development server.
 Build the image:
 
 ```bash
-docker build -t weather-apis-dev .
+docker build -t farm-intelligence-platform-dev .
 ```
 
 Run it with a local `.env` file:
@@ -259,7 +259,7 @@ docker run --rm -it \
   --env-file .env \
   -p 8000:8000 \
   -v "$(pwd):/app" \
-  weather-apis-dev
+  farm-intelligence-platform-dev
 ```
 
 The standalone container works with the repo's SQLite default if
@@ -268,10 +268,10 @@ The standalone container works with the repo's SQLite default if
 Useful overrides:
 
 ```bash
-docker run --rm -it --env-file .env weather-apis-dev \
+docker run --rm -it --env-file .env farm-intelligence-platform-dev \
   python manage.py migrate
 
-docker run --rm -it --env-file .env weather-apis-dev \
+docker run --rm -it --env-file .env farm-intelligence-platform-dev \
   celery -A config worker -l info
 ```
 
@@ -393,7 +393,7 @@ Not all endpoints accept both:
 
 ### Nextcloud Integration Security (HMAC)
 
-This repo supports Nextcloud → `weather-apis` server-to-server calls protected
+This repo supports Nextcloud → `farm-intelligence-platform` server-to-server calls protected
 by an *additional* HMAC signing layer (request integrity + replay resistance).
 It does not replace JWT or API keys; it composes with them for endpoints that
 also require a user identity.
@@ -478,7 +478,7 @@ curl -sS "http://localhost:8000/api/v1/integrations/nextcloud/ping/" \
 
 Runbook: [docs/monitoring.md](docs/monitoring.md).
 
-- Grafana dashboard: `monitoring/grafana/dashboards/weather-apis-observability.json`
+- Grafana dashboard: `monitoring/grafana/dashboards/farm-intelligence-platform-observability.json`
 - Prometheus + Grafana + Loki stack: `docker-compose.monitoring.yml`
 
 ## Testing & quality gates

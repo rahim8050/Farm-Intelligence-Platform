@@ -130,7 +130,7 @@ services:
 - **Inside Prometheus container**:
 
   ```bash
-  docker exec -it weather-apis-prometheus-1 sh -c \
+  docker exec -it farm-intelligence-platform-prometheus-1 sh -c \
     "wget -qO- http://host.docker.internal:8000/metrics | head -n 20"
   ```
 - **Simulated request**:

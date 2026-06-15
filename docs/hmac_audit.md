@@ -1,22 +1,22 @@
 # HMAC Audit (Nextcloud <-> DRF)
 
 This audit documents the request-signing contract between the Nextcloud app
-(`apps/weather_apis`) and the DRF backend (`weather-apis`).
+(`apps/farm_intelligence_platform`) and the DRF backend (`farm-intelligence-platform`).
 
-## Nextcloud signing (apps/weather_apis)
+## Nextcloud signing (apps/farm_intelligence_platform)
 
 Source of truth:
-- `apps/weather_apis/lib/Service/TokenSigner.php`
+- `apps/farm_intelligence_platform/lib/Service/TokenSigner.php`
   - `TokenSigner::buildCanonicalString`
   - `TokenSigner::canonicalizeQuery`
   - `TokenSigner::bodySha256Hex`
-- `apps/weather_apis/lib/Service/WeatherApiClient.php`
+- `apps/farm_intelligence_platform/lib/Service/WeatherApiClient.php`
   - `WeatherApiClient::ping`
   - `WeatherApiClient::mintToken`
-- `apps/weather_apis/lib/Service/IntegrationConfig.php`
+- `apps/farm_intelligence_platform/lib/Service/IntegrationConfig.php`
   - `IntegrationConfig::getSecretBytes`
   - `IntegrationConfig::setCredentials`
-- `apps/weather_apis/lib/Controller/AdminConfigController.php`
+- `apps/farm_intelligence_platform/lib/Controller/AdminConfigController.php`
   - `AdminConfigController::generateHmacSecretB64`
 
 ### Headers sent by Nextcloud
@@ -67,7 +67,7 @@ Signature:
 - `INTEGRATION_HMAC_CLIENTS_JSON` is stored encrypted via `ICrypto`.
 - `IntegrationConfig::getSecretBytes` decrypts JSON and `base64_decode(..., true)`.
 
-## DRF verification (weather-apis)
+## DRF verification (farm-intelligence-platform)
 
 Source of truth:
 - `integrations/hmac.py` (canonicalization + verification)
@@ -143,4 +143,4 @@ Signature:
 ## Golden vector tests
 
 - DRF: `tests/test_integrations_nextcloud_hmac.py`
-- Nextcloud: `apps/weather_apis/tests/unit/Service/TokenSignerTest.php`
+- Nextcloud: `apps/farm_intelligence_platform/tests/unit/Service/TokenSignerTest.php`

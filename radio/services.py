@@ -806,7 +806,7 @@ def fetch_icy_metadata(url: str) -> dict[str, str]:
                 url,
                 headers={
                     "Icy-MetaData": "1",
-                    "User-Agent": "weather-apis/1.0",
+                    "User-Agent": "farm-intelligence-platform/1.0",
                 },
             )
     except httpx.HTTPError as exc:
@@ -858,7 +858,7 @@ def _enrich_with_album_artwork(artist: str, title: str) -> dict[str, str]:
             response = client.get(
                 url,
                 params={"q": query, "limit": 1, "output": "json"},
-                headers={"User-Agent": "weather-apis/1.0"},
+                headers={"User-Agent": "farm-intelligence-platform/1.0"},
             )
     except httpx.HTTPError:
         return {}

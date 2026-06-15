@@ -651,7 +651,7 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(
         days=env.int("SIMPLE_JWT_REFRESH_DAYS", default=7)
     ),
-    "ISSUER": env("SIMPLE_JWT_ISSUER", default="weather-apis"),
+    "ISSUER": env("SIMPLE_JWT_ISSUER", default="farm-intelligence-platform"),
     "AUDIENCE": env("SIMPLE_JWT_AUDIENCE", default="nextcloud"),
 }
 
@@ -720,7 +720,7 @@ if API_KEY_AUTH_CACHE_ALIAS not in CACHES:  # pragma: no cover
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Weather APIs",
+    "TITLE": "Farm Intelligence Platform",
     "DESCRIPTION": "REST API for user authentication and "
     "API key lifecycle management.",
     "VERSION": "1.0.0",

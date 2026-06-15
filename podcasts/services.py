@@ -153,7 +153,7 @@ def _do_get(client: httpx.Client, feed_url: str) -> httpx.Response:
             feed_url,
             headers={
                 "User-Agent": (
-                    "weather-apis-podcasts/1.0 (+https://example.test)"
+                    "farm-intelligence-platform-podcasts/1.0 (+https://example.test)"
                 ),
                 "Accept": (
                     "application/rss+xml, application/atom+xml, "

@@ -1,7 +1,7 @@
 # Nextcloud Integration Security (HMAC)
 
 This document defines the HMAC request-signing contract for Nextcloud
-instance → `weather-apis` calls.
+instance → `farm-intelligence-platform` calls.
 
 It provides:
 - Request integrity (method/path/query/body are signed).
@@ -189,7 +189,7 @@ Success response (project envelope):
 
 Environment variables (from code: `config/settings.py`):
 - `INTEGRATION_JWT_ACCESS_MINUTES` (default `5`)
-- `SIMPLE_JWT_ISSUER` (default `weather-apis`)
+- `SIMPLE_JWT_ISSUER` (default `farm-intelligence-platform`)
 - `SIMPLE_JWT_AUDIENCE` (default `nextcloud`)
 
 ## Integration clients (legacy) + rotation strategy

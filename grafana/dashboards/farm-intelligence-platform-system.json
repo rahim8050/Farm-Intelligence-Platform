@@ -1,9 +1,9 @@
 {
   "id": null,
-  "uid": "weather-apis-system",
-  "title": "weather-apis / System",
+  "uid": "farm-intelligence-platform-system",
+  "title": "farm-intelligence-platform / System",
   "tags": [
-    "weather-apis",
+    "farm-intelligence-platform",
     "observability"
   ],
   "timezone": "browser",

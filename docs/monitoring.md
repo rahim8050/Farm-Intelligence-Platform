@@ -334,7 +334,7 @@ docker compose -f docker-compose.monitoring.yml up -d
 Grafana is pinned to `grafana/grafana-oss:10.4.3`, and plugin preinstall is disabled via
 `GF_PLUGINS_PREINSTALL_DISABLED=true` to avoid provisioning failures.
 
-If you see a container-name conflict like `/weather-apis-prometheus-1 is already in use`, use one of the safe resolutions below.
+If you see a container-name conflict like `/farm-intelligence-platform-prometheus-1 is already in use`, use one of the safe resolutions below.
 
 Start Grafana only:
 
@@ -345,7 +345,7 @@ docker compose -f docker-compose.monitoring.yml up -d --no-deps grafana
 Remove the old container if safe, then re-run:
 
 ```bash
-docker rm -f weather-apis-prometheus-1
+docker rm -f farm-intelligence-platform-prometheus-1
 ```
 
 ```bash

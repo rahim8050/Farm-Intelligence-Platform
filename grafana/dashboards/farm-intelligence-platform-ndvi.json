@@ -392,7 +392,7 @@
   "schemaVersion": 38,
   "style": "dark",
   "tags": [
-    "weather-apis",
+    "farm-intelligence-platform",
     "ndvi"
   ],
   "templating": {
@@ -438,7 +438,7 @@
     ]
   },
   "timezone": "browser",
-  "title": "weather-apis / NDVI",
-  "uid": "weather-apis-ndvi",
+  "title": "farm-intelligence-platform / NDVI",
+  "uid": "farm-intelligence-platform-ndvi",
   "version": 2
 }

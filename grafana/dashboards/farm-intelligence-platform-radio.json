@@ -341,7 +341,7 @@
   "schemaVersion": 38,
   "tags": [
     "radio",
-    "weather-apis"
+    "farm-intelligence-platform"
   ],
   "templating": {
     "list": []
@@ -353,7 +353,7 @@
   "timepicker": {},
   "timezone": "",
   "title": "Radio Service",
-  "uid": "weather-apis-radio",
+  "uid": "farm-intelligence-platform-radio",
   "version": 1,
   "weekStart": ""
 }

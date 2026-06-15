@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Weather APIs
+  title: Farm Intelligence Platform
   version: 1.0.0
   description: REST API for user authentication and API key lifecycle management.
 paths:

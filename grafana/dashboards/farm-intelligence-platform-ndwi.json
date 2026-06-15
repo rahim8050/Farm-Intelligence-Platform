@@ -158,7 +158,7 @@
     }
   ],
   "schemaVersion": 39,
-  "tags": ["ndwi", "weather-apis"],
+  "tags": ["ndwi", "farm-intelligence-platform"],
   "templating": {
     "list": []
   },
@@ -168,8 +168,8 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Weather APIs — NDWI",
-  "uid": "weather-apis-ndwi",
+  "title": "Farm Intelligence Platform — NDWI",
+  "uid": "farm-intelligence-platform-ndwi",
   "version": 1,
   "weekStart": ""
 }

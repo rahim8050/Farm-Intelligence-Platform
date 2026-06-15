@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CI_IMAGE="${CI_IMAGE:-weather-apis-ci}"
+CI_IMAGE="${CI_IMAGE:-farm-intelligence-platform-ci}"
 MYSQL_CONTAINER="${MYSQL_CONTAINER:-ci-mysql}"
 CI_CONTAINER="${CI_CONTAINER:-ci-runner}"
 NETWORK="${NETWORK:-ci-net}"

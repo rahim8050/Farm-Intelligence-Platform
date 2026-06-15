@@ -69,7 +69,7 @@ def test_home_view_returns_metadata() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
-    assert body["service"] == "weather-apis"
+    assert body["service"] == "farm-intelligence-platform"
     assert body["docs"] == "/api/docs/"
 
 

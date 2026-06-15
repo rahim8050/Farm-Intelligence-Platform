@@ -10,8 +10,8 @@ behavior in code/tests.
 - DRF verification: `integrations/hmac.py`, `integrations/permissions.py`
 - DRF token endpoint: `integrations/views.py`
 - DRF config parsing: `integrations/config.py`
-- Nextcloud signer/client: `apps/weather_apis/lib/Service/TokenSigner.php`,
-  `apps/weather_apis/lib/Service/WeatherApiClient.php`
+- Nextcloud signer/client: `apps/farm_intelligence_platform/lib/Service/TokenSigner.php`,
+  `apps/farm_intelligence_platform/lib/Service/WeatherApiClient.php`
 - Golden vector (shared): `tests/fixtures/hmac_test_vector.json`
 
 ## Truth table (current behavior)

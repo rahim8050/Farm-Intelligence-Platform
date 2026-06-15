@@ -53,7 +53,7 @@ def home(request: HttpRequest) -> JsonResponse:
     return JsonResponse(
         {
             "ok": True,
-            "service": "weather-apis",
+            "service": "farm-intelligence-platform",
             "docs": "/api/docs/",
             "redoc": "/api/redoc/",
         }

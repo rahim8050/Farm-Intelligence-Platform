@@ -41,7 +41,7 @@ The following files have been updated in your repository:
 **Deploy changes:**
 
 ```bash
-cd /home/rahim/projects/weather-apis
+cd /home/rahim/projects/farm-intelligence-platform
 
 # Stop monitoring stack
 docker-compose -f docker-compose.monitoring.yml down
@@ -56,24 +56,24 @@ docker-compose -f docker-compose.monitoring.yml ps
 **Expected output:**
 ```
 NAME                           STATUS
-weather-apis-prometheus-1      Up
-weather-apis-grafana-1         Up
-weather-apis-loki-1            Up
-weather-apis-promtail-1        Up
-weather-apis-redis-1           Up
-weather-apis-node-exporter-1   Up
-weather-apis-blackbox-1        Up
-weather-apis-redis_exporter-1  Up
+farm-intelligence-platform-prometheus-1      Up
+farm-intelligence-platform-grafana-1         Up
+farm-intelligence-platform-loki-1            Up
+farm-intelligence-platform-promtail-1        Up
+farm-intelligence-platform-redis-1           Up
+farm-intelligence-platform-node-exporter-1   Up
+farm-intelligence-platform-blackbox-1        Up
+farm-intelligence-platform-redis_exporter-1  Up
 ```
 
 ### 1.2 Verify Prometheus Retention
 
 ```bash
 # Check Prometheus retention settings
-docker exec weather-apis-prometheus-1 prometheus --version
+docker exec farm-intelligence-platform-prometheus-1 prometheus --version
 
 # Verify flags
-docker exec weather-apis-prometheus-1 ps aux | grep retention
+docker exec farm-intelligence-platform-prometheus-1 ps aux | grep retention
 ```
 
 **Expected:** `--storage.tsdb.retention.time=7d --storage.tsdb.retention.size=2GB`
@@ -82,8 +82,8 @@ docker exec weather-apis-prometheus-1 ps aux | grep retention
 
 ```bash
 # Check Redis memory config
-docker exec weather-apis-redis-1 redis-cli CONFIG GET maxmemory
-docker exec weather-apis-redis-1 redis-cli CONFIG GET maxmemory-policy
+docker exec farm-intelligence-platform-redis-1 redis-cli CONFIG GET maxmemory
+docker exec farm-intelligence-platform-redis-1 redis-cli CONFIG GET maxmemory-policy
 ```
 
 **Expected:**
@@ -109,7 +109,7 @@ php -v
 
 ```bash
 # Copy tuning config (adjust PHP version as needed)
-sudo cp /home/rahim/projects/weather-apis/monitoring/tuning-configs/nextcloud-php-fpm.conf \
+sudo cp /home/rahim/projects/farm-intelligence-platform/monitoring/tuning-configs/nextcloud-php-fpm.conf \
   /etc/php/8.1/fpm/pool.d/nextcloud.conf
 
 # Replace placeholder PHP version in config
@@ -148,8 +148,8 @@ ps aux | grep php-fpm | awk '{print $6/1024 " MB - " $11}'
 
 ```bash
 # Copy tuning config
-sudo cp /home/rahim/projects/weather-apis/monitoring/tuning-configs/mysql-tuning.cnf \
-  /etc/mysql/mariadb.conf.d/99-weather-apis.cnf
+sudo cp /home/rahim/projects/farm-intelligence-platform/monitoring/tuning-configs/mysql-tuning.cnf \
+  /etc/mysql/mariadb.conf.d/99-farm-intelligence-platform.cnf
 
 # Verify syntax
 mysqld --validate-config
@@ -216,7 +216,7 @@ docker ps | grep redis
 sudo cp /etc/redis/redis.conf /etc/redis/redis.conf.backup.$(date +%Y%m%d)
 
 # Append tuning config
-cat /home/rahim/projects/weather-apis/monitoring/tuning-configs/redis-tuning.conf | \
+cat /home/rahim/projects/farm-intelligence-platform/monitoring/tuning-configs/redis-tuning.conf | \
   sudo tee -a /etc/redis/redis.conf
 
 # Restart Redis
@@ -277,7 +277,7 @@ sudo systemctl restart celery-beat
 pkill -f celery
 
 # Restart with new config
-cd /home/rahim/projects/weather-apis
+cd /home/rahim/projects/farm-intelligence-platform
 celery -A config.celery worker -l info -Q celery,ndvi --concurrency=4 &
 celery -A config.celery beat -l info &
 ```
@@ -409,7 +409,7 @@ redis-cli INFO memory | grep -E "used_memory_human|maxmemory_human"
 echo -e "\n=== Disk Usage ==="
 df -h
 du -sh /var/www/html/nextcloud/data/nextcloud.log 2>/dev/null || echo "Log not found"
-du -sh /var/lib/docker/volumes/weather-apis_prometheus_data/_data 2>/dev/null || echo "Prometheus data not found"
+du -sh /var/lib/docker/volumes/farm-intelligence-platform_prometheus_data/_data 2>/dev/null || echo "Prometheus data not found"
 
 echo -e "\n=== OOM Killer Logs ==="
 dmesg | grep -i oom | tail -n 5 || echo "No OOM events"
@@ -493,7 +493,7 @@ sudo systemctl restart php8.1-fpm
 
 ### MySQL Rollback
 ```bash
-sudo rm /etc/mysql/mariadb.conf.d/99-weather-apis.cnf
+sudo rm /etc/mysql/mariadb.conf.d/99-farm-intelligence-platform.cnf
 sudo systemctl restart mysql
 ```
 
@@ -505,7 +505,7 @@ sudo systemctl restart redis-server
 
 ### Docker Monitoring Rollback
 ```bash
-cd /home/rahim/projects/weather-apis
+cd /home/rahim/projects/farm-intelligence-platform
 git checkout HEAD -- docker-compose.monitoring.yml monitoring/
 docker-compose -f docker-compose.monitoring.yml down
 docker-compose -f docker-compose.monitoring.yml up -d
@@ -513,7 +513,7 @@ docker-compose -f docker-compose.monitoring.yml up -d
 
 ### Celery Rollback
 ```bash
-cd /home/rahim/projects/weather-apis
+cd /home/rahim/projects/farm-intelligence-platform
 git checkout HEAD -- config/celery.py
 sudo systemctl restart celery-worker
 ```
@@ -640,4 +640,4 @@ If issues persist after applying all tuning:
 
 **Document Version:** 1.0  
 **Last Updated:** April 4, 2026  
-**Maintained By:** Weather APIs Team
+**Maintained By:** Farm Intelligence Platform Team

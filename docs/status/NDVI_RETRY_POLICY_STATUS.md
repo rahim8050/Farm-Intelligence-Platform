@@ -148,7 +148,7 @@ expansion) and Phase 3 (observability) remain.
 - ✅ **`ndvi_circuit_breaker_transitions_total{engine, from_state, to_state}`** counter
   - Increments on CLOSED→OPEN, OPEN→HALF_OPEN, HALF_OPEN→CLOSED, HALF_OPEN→OPEN, manual resets
 
-- ✅ **Grafana dashboard updated** (`weather-apis-observability.json`)
+- ✅ **Grafana dashboard updated** (`farm-intelligence-platform-observability.json`)
   - Panel 23-25: Stat panels for STAC, SentinelHub, SH Raster circuit breaker state
     - Color-coded: green (CLOSED), red (OPEN), yellow (HALF_OPEN)
   - Panel 26: Time series for state transition rate (5m rate, `or vector(0)` fallback)

@@ -6,7 +6,7 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-weather_apis}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-farm_intelligence_platform}
       MYSQL_USER: ${MYSQL_USER:-weather}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-weather}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
@@ -53,7 +53,7 @@ services:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,web}
       DJANGO_API_KEY_PEPPER: ${DJANGO_API_KEY_PEPPER:-dev-pepper}
-      DATABASE_URL: ${DATABASE_URL:-mysql://weather:weather@db:3306/weather_apis}
+      DATABASE_URL: ${DATABASE_URL:-mysql://weather:weather@db:3306/farm_intelligence_platform}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
@@ -78,7 +78,7 @@ services:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,web}
       DJANGO_API_KEY_PEPPER: ${DJANGO_API_KEY_PEPPER:-dev-pepper}
-      DATABASE_URL: ${DATABASE_URL:-mysql://weather:weather@db:3306/weather_apis}
+      DATABASE_URL: ${DATABASE_URL:-mysql://weather:weather@db:3306/farm_intelligence_platform}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
@@ -115,7 +115,7 @@ services:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,web}
       DJANGO_API_KEY_PEPPER: ${DJANGO_API_KEY_PEPPER:-dev-pepper}
-      DATABASE_URL: ${DATABASE_URL:-mysql://weather:weather@db:3306/weather_apis}
+      DATABASE_URL: ${DATABASE_URL:-mysql://weather:weather@db:3306/farm_intelligence_platform}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
@@ -138,7 +138,7 @@ services:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,web}
       DJANGO_API_KEY_PEPPER: ${DJANGO_API_KEY_PEPPER:-dev-pepper}
-      DATABASE_URL: ${DATABASE_URL:-mysql://weather:weather@db:3306/weather_apis}
+      DATABASE_URL: ${DATABASE_URL:-mysql://weather:weather@db:3306/farm_intelligence_platform}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}

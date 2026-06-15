@@ -1,5 +1,5 @@
 #!/bin/bash
-# Daily report generator for weather-apis (Django backend)
+# Daily report generator for farm-intelligence-platform (Django backend)
 # Usage: ./scripts/daily-report.sh [date]  (defaults to today)
 
 set -euo pipefail
@@ -11,7 +11,7 @@ mkdir -p "${REPORT_DIR}"
 
 REPORT_FILE="${REPORT_DIR}/daily-${DATE}.md"
 
-echo "# Daily Report — weather-apis Django (${DATE})" > "${REPORT_FILE}"
+echo "# Daily Report — farm-intelligence-platform Django (${DATE})" > "${REPORT_FILE}"
 echo "" >> "${REPORT_FILE}"
 echo "Generated: $(date '+%Y-%m-%d %H:%M:%S %Z')" >> "${REPORT_FILE}"
 echo "" >> "${REPORT_FILE}"

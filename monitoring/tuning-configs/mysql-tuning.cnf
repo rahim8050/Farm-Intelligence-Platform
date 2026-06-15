@@ -1,5 +1,5 @@
 # MySQL/MariaDB Performance Tuning Configuration
-# Install to: /etc/mysql/mariadb.conf.d/99-weather-apis.cnf
+# Install to: /etc/mysql/mariadb.conf.d/99-farm-intelligence-platform.cnf
 # Or: /etc/mysql/my.cnf (append to existing config)
 
 [mysqld]

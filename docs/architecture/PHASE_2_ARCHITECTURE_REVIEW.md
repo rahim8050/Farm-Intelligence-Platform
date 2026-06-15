@@ -600,7 +600,7 @@ If stream mode causes issues in production:
    export NDVI_QUEUE_BACKEND=celery
    
    # Restart Django
-   systemctl restart weather-apis
+   systemctl restart farm-intelligence-platform
    
    # No code deploy needed
    ```

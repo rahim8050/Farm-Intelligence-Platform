@@ -393,7 +393,7 @@
   "schemaVersion": 38,
   "style": "dark",
   "tags": [
-    "weather-apis",
+    "farm-intelligence-platform",
     "hungry-endpoints"
   ],
   "templating": {
@@ -439,7 +439,7 @@
     ]
   },
   "timezone": "browser",
-  "title": "weather-apis / Hungry Endpoints",
+  "title": "farm-intelligence-platform / Hungry Endpoints",
   "uid": "hungry-endpoints",
   "version": 1
 }

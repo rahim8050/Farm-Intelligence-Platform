@@ -33,7 +33,7 @@ NDVI_COLORMAP_NAME: Final[str] = "RdYlGn"
 PNG_SIGNATURE: Final[bytes] = b"\x89PNG\r\n\x1a\n"
 MPLCONFIGDIR_ENV: Final[str] = "MPLCONFIGDIR"
 MPLCONFIGDIR_PATH: Final[Path] = (
-    Path(tempfile.gettempdir()) / "weather-apis-matplotlib"
+    Path(tempfile.gettempdir()) / "farm-intelligence-platform-matplotlib"
 )
 RDYL_GN_CONTROL_POINTS: Final[np.ndarray] = np.array(
     [

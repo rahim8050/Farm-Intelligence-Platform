@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for taking the time to improve Weather APIs.
+Thank you for taking the time to improve Farm Intelligence Platform.
 
 ## Scope
 
