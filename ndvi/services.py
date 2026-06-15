@@ -956,6 +956,38 @@ def _build_landsat_engine() -> NDVIEngine:
     return LandsatEngine()
 
 
+def _build_ndwi_sentinelhub_engine() -> NDVIEngine:
+    return SentinelHubEngine(index_type="NDWI")
+
+
+@lru_cache(maxsize=1)
+def _build_ndwi_stac_engine() -> NDVIEngine:
+    from .engines.stac import StacEngine
+
+    return StacEngine(index_type="NDWI")
+
+
+@lru_cache(maxsize=1)
+def _build_ndwi_gee_engine() -> NDVIEngine:
+    from .engines.gee import GeeEngine
+
+    return GeeEngine(index_type="NDWI")
+
+
+@lru_cache(maxsize=1)
+def _build_ndwi_landsat_engine() -> NDVIEngine:
+    from .engines.landsat import LandsatEngine
+
+    return LandsatEngine(index_type="NDWI")
+
+
+@lru_cache(maxsize=1)
+def _build_ndwi_modis_engine() -> NDVIEngine:
+    from .engines.modis import ModisEngine
+
+    return ModisEngine(index_type="NDWI")
+
+
 @lru_cache(maxsize=1)
 def _build_modis_engine() -> NDVIEngine:
     from .engines.modis import ModisEngine
@@ -969,38 +1001,22 @@ ENGINE_FACTORIES: dict[str, Callable[[], NDVIEngine]] = {
     "stac": _build_stac_engine,
     "landsat": _build_landsat_engine,
     "modis": _build_modis_engine,
+    "ndwi_gee": _build_ndwi_gee_engine,
+    "ndwi_sentinelhub": _build_ndwi_sentinelhub_engine,
+    "ndwi_stac": _build_ndwi_stac_engine,
+    "ndwi_landsat": _build_ndwi_landsat_engine,
+    "ndwi_modis": _build_ndwi_modis_engine,
 }
 
 
 def get_engine(
     engine_name: str | None = None, *, index_type: str = "NDVI"
 ) -> NDVIEngine:
-    if index_type == "NDWI":
-        engine = resolve_ndvi_engine_name(engine_name)
-        if engine == "modis":
-            from .engines.modis import ModisEngine
-
-            return ModisEngine(index_type=index_type)
-        if engine == "sentinelhub":
-            return SentinelHubEngine(index_type=index_type)
-        if engine == "stac":
-            from .engines.stac import StacEngine
-
-            return StacEngine(index_type=index_type)
-        if engine == "gee":
-            from .engines.gee import GeeEngine
-
-            return GeeEngine(index_type=index_type)
-        if engine == "landsat":
-            from .engines.landsat import LandsatEngine
-
-            return LandsatEngine(index_type=index_type)
-        raise ValueError(f"Unsupported NDWI engine: {engine}")
-
     engine = resolve_ndvi_engine_name(engine_name)
-    factory = ENGINE_FACTORIES.get(engine)
+    factory_key = f"ndwi_{engine}" if index_type == "NDWI" else engine
+    factory = ENGINE_FACTORIES.get(factory_key)
     if not factory:
-        raise ValueError(f"Unsupported NDVI engine: {engine}")
+        raise ValueError(f"Unsupported {index_type} engine: {engine}")
     from ndvi.metrics import ndvi_source_usage_total
 
     ndvi_source_usage_total.labels(source=engine, endpoint="get_engine").inc()
@@ -1852,11 +1868,16 @@ def dispatch_ndvi_job(job: NdviJob | int, *, queue: str | None = None) -> None:
         publish_ndvi_job(job_obj)
         return
 
-    from .tasks import run_ndvi_job
+    from .tasks import run_ndvi_job, run_ndwi_job
 
     job_id = job.id if isinstance(job, NdviJob) else int(job)
     target_queue = queue or get_ndvi_queue_name("ingestion")
-    run_ndvi_job.apply_async(args=[job_id], queue=target_queue)
+    task = (
+        run_ndwi_job
+        if isinstance(job, NdviJob) and job.index_type == "NDWI"
+        else run_ndvi_job
+    )
+    task.apply_async(args=[job_id], queue=target_queue)
 
 
 def dispatch_farm_state_coverage(

@@ -189,13 +189,19 @@ class NdviObservation(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["farm", "engine", "bucket_date", "version"],
-                name="uniq_ndvi_observation_farm_engine_bucket_version",
+                fields=[
+                    "farm",
+                    "engine",
+                    "bucket_date",
+                    "version",
+                    "index_type",
+                ],
+                name="uniq_observation_per_index_farm_engine_bucket_version",
             ),
             models.UniqueConstraint(
-                fields=["farm", "engine", "bucket_date"],
+                fields=["farm", "engine", "bucket_date", "index_type"],
                 condition=models.Q(is_latest=True),
-                name="uniq_ndvi_latest_observation",
+                name="uniq_observation_latest_per_index",
             ),
             models.UniqueConstraint(
                 fields=[
@@ -203,21 +209,28 @@ class NdviObservation(models.Model):
                     "engine",
                     "source_scene_id",
                     "provenance_hash",
+                    "index_type",
                 ],
                 condition=models.Q(source_scene_id__isnull=False),
-                name="uniq_ndvi_scene_per_farm_engine",
+                name="uniq_scene_per_index_farm_engine",
             ),
         ]
         indexes = [
-            models.Index(fields=["farm", "bucket_date"]),
-            models.Index(fields=["engine", "bucket_date"]),
+            models.Index(fields=["index_type", "farm", "bucket_date"]),
+            models.Index(fields=["index_type", "engine", "bucket_date"]),
             models.Index(
-                fields=["farm", "engine", "bucket_date", "is_latest"]
+                fields=[
+                    "index_type",
+                    "farm",
+                    "engine",
+                    "bucket_date",
+                    "is_latest",
+                ]
             ),
-            models.Index(fields=["version", "engine"]),
-            models.Index(fields=["state", "engine"]),
-            models.Index(fields=["acquired_at", "engine"]),
-            models.Index(fields=["source_scene_id", "engine"]),
+            models.Index(fields=["index_type", "version", "engine"]),
+            models.Index(fields=["index_type", "state", "engine"]),
+            models.Index(fields=["index_type", "acquired_at", "engine"]),
+            models.Index(fields=["index_type", "source_scene_id", "engine"]),
         ]
 
     def __str__(self) -> str:
@@ -301,14 +314,20 @@ class NdviJob(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["owner", "farm", "engine", "request_hash"],
+                fields=[
+                    "owner",
+                    "farm",
+                    "engine",
+                    "request_hash",
+                    "index_type",
+                ],
                 condition=models.Q(status__in=["queued", "running"]),
-                name="uniq_active_ndvi_job",
+                name="uniq_active_job_per_index",
             ),
         ]
         indexes = [
-            models.Index(fields=["owner", "farm", "status"]),
-            models.Index(fields=["request_hash"]),
+            models.Index(fields=["index_type", "owner", "farm", "status"]),
+            models.Index(fields=["index_type", "request_hash"]),
         ]
 
     def __str__(self) -> str:
@@ -362,13 +381,20 @@ class NdviRasterArtifact(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["farm", "engine", "date", "size", "max_cloud"],
-                name="uniq_ndvi_raster_farm_engine_date_size_cloud",
+                fields=[
+                    "farm",
+                    "engine",
+                    "date",
+                    "size",
+                    "max_cloud",
+                    "index_type",
+                ],
+                name="uniq_raster_per_index_farm_engine_date_size_cloud",
             ),
         ]
         indexes = [
-            models.Index(fields=["owner_id", "date"]),
-            models.Index(fields=["engine", "date"]),
+            models.Index(fields=["index_type", "owner_id", "date"]),
+            models.Index(fields=["index_type", "engine", "date"]),
         ]
 
     def __str__(self) -> str:
@@ -452,14 +478,16 @@ class NdviDerivedObservation(models.Model):
                 name="uniq_v2_per_v1_observation",
             ),
             models.UniqueConstraint(
-                fields=["farm", "engine", "bucket_date"],
-                name="uniq_v2_farm_engine_bucket",
+                fields=["farm", "engine", "bucket_date", "index_type"],
+                name="uniq_v2_per_index_farm_engine_bucket",
             ),
         ]
         indexes = [
-            models.Index(fields=["farm", "engine", "bucket_date"]),
-            models.Index(fields=["engine", "confidence"]),
-            models.Index(fields=["source", "bucket_date"]),
+            models.Index(
+                fields=["index_type", "farm", "engine", "bucket_date"]
+            ),
+            models.Index(fields=["index_type", "engine", "confidence"]),
+            models.Index(fields=["index_type", "source", "bucket_date"]),
         ]
 
     def __str__(self) -> str:

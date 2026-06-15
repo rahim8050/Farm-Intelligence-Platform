@@ -56,7 +56,7 @@ from integrations.authentication import (
 
 from .farm_state import build_farm_state
 from .farm_state_ndwi import compute_ndwi_farm_state
-from .metrics import ndvi_farms_stale_total, ndwi_farms_stale_total
+from .metrics import ndvi_farms_stale_total, spectral_farms_stale_total
 from .models import (
     NdviDerivedObservation,
     NdviJob,
@@ -1896,8 +1896,9 @@ class NdwiLatestView(BaseFarmView):
         observation = observations[0] if observations else None
 
         stale = is_stale(observation, params.lookback_days)
+        stale_labels = {"index": "NDWI", "engine": engine_name}
         if stale:
-            ndwi_farms_stale_total.labels(engine=engine_name).set(1)
+            spectral_farms_stale_total.labels(**stale_labels).set(1)
             job = enqueue_job(
                 owner_id=owner_id,
                 farm=farm,
@@ -1911,7 +1912,7 @@ class NdwiLatestView(BaseFarmView):
             )
             dispatch_ndvi_job(job)
         else:
-            ndwi_farms_stale_total.labels(engine=engine_name).set(0)
+            spectral_farms_stale_total.labels(**stale_labels).set(0)
 
         payload: dict[str, Any] = {
             "observation": (

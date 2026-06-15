@@ -35,12 +35,10 @@ from ndvi.stac_client import (
 )
 
 from .metrics import (
-    ndvi_backfill_rows_total,
-    ndvi_jobs_total,
     ndvi_task_runtime_seconds,
-    ndwi_backfill_rows_total,
-    ndwi_jobs_total,
-    ndwi_task_runtime_seconds,
+    spectral_backfill_rows_total,
+    spectral_jobs_total,
+    spectral_task_runtime_seconds,
 )
 from .models import NdviJob, NdviObservation, NdviRasterArtifact
 from .quality_ndwi import process_ndwi_v1_to_v2
@@ -207,30 +205,20 @@ def _handle_retryable_task_failure(
                 retry_exc,
             )
             _mark_job_failed(job, "max_retries_exceeded")
-            ndvi_jobs_total.labels(
+            spectral_jobs_total.labels(
+                index=job.index_type,
                 status=NdviJob.JobStatus.FAILED,
                 type=job.job_type,
                 engine=job.engine,
             ).inc()
-            if job.index_type == "NDWI":
-                ndwi_jobs_total.labels(
-                    status=NdviJob.JobStatus.FAILED,
-                    type=job.job_type,
-                    engine=job.engine,
-                ).inc()
             return "invalid"
     _mark_job_failed(job, exc)
-    ndvi_jobs_total.labels(
+    spectral_jobs_total.labels(
+        index=job.index_type,
         status=NdviJob.JobStatus.FAILED,
         type=job.job_type,
         engine=job.engine,
     ).inc()
-    if job.index_type == "NDWI":
-        ndwi_jobs_total.labels(
-            status=NdviJob.JobStatus.FAILED,
-            type=job.job_type,
-            engine=job.engine,
-        ).inc()
     return "invalid"
 
 
@@ -376,13 +364,11 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 )
                 _run_ndwi_v2_pipeline(v1_observations, job)
                 if job.job_type == NdviJob.JobType.BACKFILL:
-                    ndvi_backfill_rows_total.labels(
-                        engine=job.engine, status="success"
+                    spectral_backfill_rows_total.labels(
+                        index=job.index_type,
+                        engine=job.engine,
+                        status="success",
                     ).inc(len(points))
-                    if job.index_type == "NDWI":
-                        ndwi_backfill_rows_total.labels(
-                            engine=job.engine, status="success"
-                        ).inc(len(points))
         _with_fresh_connection(
             lambda: job.mark_finished(NdviJob.JobStatus.SUCCESS)
         )
@@ -390,34 +376,24 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             "NDVI raster job completed successfully for farm_id=%s",
             job.farm_id,
         )
-        ndvi_jobs_total.labels(
+        spectral_jobs_total.labels(
+            index=job.index_type,
             status=NdviJob.JobStatus.SUCCESS,
             type=job.job_type,
             engine=job.engine,
         ).inc()
-        if job.index_type == "NDWI":
-            ndwi_jobs_total.labels(
-                status=NdviJob.JobStatus.SUCCESS,
-                type=job.job_type,
-                engine=job.engine,
-            ).inc()
         return "ok"
     except SentinelHubAuthError as exc:
         logger.warning("ndvi.job.auth_failed job_id=%s err=%s", job.id, exc)
         job.mark_finished(
             NdviJob.JobStatus.FAILED, error=_safe_error_message(exc)
         )
-        ndvi_jobs_total.labels(
+        spectral_jobs_total.labels(
+            index=job.index_type,
             status=NdviJob.JobStatus.FAILED,
             type=job.job_type,
             engine=job.engine,
         ).inc()
-        if job.index_type == "NDWI":
-            ndwi_jobs_total.labels(
-                status=NdviJob.JobStatus.FAILED,
-                type=job.job_type,
-                engine=job.engine,
-            ).inc()
         return "invalid"
     except StacWafBlockedError as exc:
         logger.error(
@@ -486,38 +462,31 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             job.farm_id,
         )
         _mark_job_failed(job, exc)
-        ndvi_jobs_total.labels(
+        spectral_jobs_total.labels(
+            index=job.index_type,
             status=NdviJob.JobStatus.FAILED,
             type=job.job_type,
             engine=job.engine,
         ).inc()
-        if job.index_type == "NDWI":
-            ndwi_jobs_total.labels(
-                status=NdviJob.JobStatus.FAILED,
-                type=job.job_type,
-                engine=job.engine,
-            ).inc()
         raise
     finally:
         if lock_token:
             release_lock(lock_key, lock_token)
-        ndvi_task_runtime_seconds.labels(
+        spectral_task_runtime_seconds.labels(
+            index=job.index_type,
             task="run_ndvi_job",
             engine=task_engine,
         ).observe(max(time.monotonic() - started_at, 0.0))
-        ndvi_task_runtime_seconds.labels(
+        spectral_task_runtime_seconds.labels(
+            index=job.index_type,
             task="run_ndvi_job",
             engine=job.engine,
         ).observe(max(time.monotonic() - started_at, 0.0))
-        if job.index_type == "NDWI":
-            ndwi_task_runtime_seconds.labels(
-                task="run_ndvi_job",
-                engine=task_engine,
-            ).observe(max(time.monotonic() - started_at, 0.0))
-            ndwi_task_runtime_seconds.labels(
-                task="run_ndvi_job",
-                engine=job.engine,
-            ).observe(max(time.monotonic() - started_at, 0.0))
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def run_ndwi_job(self: Any, job_id: int) -> str:
+    return run_ndvi_job(self, job_id)
 
 
 @shared_task

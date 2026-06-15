@@ -309,42 +309,28 @@ spectral_upstream_requests_total = Counter(
     labelnames=["index", "engine", "outcome"],
 )
 
-# ── NDWI Metrics ────────────────────────────────────────────────
-
-ndwi_jobs_total = Counter(
-    "ndwi_jobs_total",
-    "Total NDWI jobs processed",
-    labelnames=["status", "type", "engine"],
-)
-
-ndwi_upstream_requests_total = Counter(
-    "ndwi_upstream_requests_total",
-    "Count of upstream NDWI engine requests",
-    labelnames=["engine", "outcome"],
-)
-
-ndwi_upstream_latency_seconds = Histogram(
-    "ndwi_upstream_latency_seconds",
-    "Latency of upstream NDWI engine requests",
-    labelnames=["engine"],
+spectral_upstream_latency_seconds = Histogram(
+    "spectral_upstream_latency_seconds",
+    "Latency of upstream engine requests per spectral index",
+    labelnames=["index", "engine"],
     buckets=(0.1, 0.3, 0.5, 1, 2, 5, 10, 20, 30),
 )
 
-ndwi_task_runtime_seconds = Histogram(
-    "ndwi_task_runtime_seconds",
-    "Runtime of NDWI Celery tasks",
-    labelnames=["task", "engine"],
+spectral_task_runtime_seconds = Histogram(
+    "spectral_task_runtime_seconds",
+    "Runtime of Celery tasks per spectral index",
+    labelnames=["index", "task", "engine"],
     buckets=(0.1, 0.3, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300),
 )
 
-ndwi_farms_stale_total = Gauge(
-    "ndwi_farms_stale_total",
-    "Gauge of farms missing fresh NDWI observations",
-    labelnames=["engine"],
+spectral_farms_stale_total = Gauge(
+    "spectral_farms_stale_total",
+    "Farms missing fresh observations per spectral index",
+    labelnames=["index", "engine"],
 )
 
-ndwi_backfill_rows_total = Counter(
-    "ndwi_backfill_rows_total",
-    "Count of NDWI backfill rows processed by engine and status",
-    labelnames=["engine", "status"],
+spectral_backfill_rows_total = Counter(
+    "spectral_backfill_rows_total",
+    "Backfill rows processed per spectral index",
+    labelnames=["index", "engine", "status"],
 )
