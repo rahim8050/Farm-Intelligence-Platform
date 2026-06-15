@@ -202,6 +202,8 @@ class NdwiV2RepresentationIntegrationTests(APITestCase):
             url,
             {
                 "representation": "v2",
+                "engine": "stac",
+                "step_days": "1",
                 "start": start.isoformat(),
                 "end": end.isoformat(),
             },
@@ -225,7 +227,9 @@ class NdwiV2RepresentationIntegrationTests(APITestCase):
             state=NdviObservation.ObservationState.FINAL,
         )
         url = f"/api/v1/farms/{self.farm.id}/ndwi/latest/"
-        response = self.client.get(url, {"representation": "v2"})
+        response = self.client.get(
+            url, {"representation": "v2", "engine": "stac"}
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data: dict[str, Any] = response.json()
         self.assertIn("data", data)
@@ -256,6 +260,8 @@ class NdwiV2RepresentationIntegrationTests(APITestCase):
             url,
             {
                 "representation": "v2",
+                "engine": "stac",
+                "step_days": "1",
                 "start": start.isoformat(),
                 "end": end.isoformat(),
             },
