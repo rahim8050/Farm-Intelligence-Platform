@@ -300,6 +300,14 @@ class TestGetEngineNdwi:
         engine = get_engine("landsat", index_type="NDWI")
         assert engine is not None
 
+    def test_get_engine_ndwi_modis(self) -> None:
+        from ndvi.engines.modis import UnsupportedIndexError
+
+        with pytest.raises(
+            UnsupportedIndexError, match="MODIS engine only supports NDVI"
+        ):
+            get_engine("modis", index_type="NDWI")
+
     def test_get_engine_unsupported_ndvi(self) -> None:
         with pytest.raises(ValueError, match="Unsupported NDVI engine"):
             get_engine("bogus_engine")
