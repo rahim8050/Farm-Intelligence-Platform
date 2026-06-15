@@ -151,7 +151,7 @@ class SentinelHubUpstreamError(UpstreamFailureError):
 class SentinelHubEngine(NDVIEngine):
     """Fetch NDVI metrics from Sentinel Hub APIs."""
 
-    engine_name: Final[str] = "sentinelhub"
+    engine_name: str = "sentinelhub"
 
     def __init__(
         self,

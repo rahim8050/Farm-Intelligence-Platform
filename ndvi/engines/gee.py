@@ -67,7 +67,7 @@ class GeeEngine(NDVIEngine):
     L2A collection.
     """
 
-    engine_name: Final[str] = "gee"
+    engine_name: str = "gee"
 
     def __init__(
         self,

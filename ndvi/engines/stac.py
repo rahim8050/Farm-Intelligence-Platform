@@ -77,7 +77,7 @@ def get_default_mask_water() -> bool:
 class StacEngine(NDVIEngine):
     """Fetch NDVI metrics from a STAC API."""
 
-    engine_name: Final[str] = "stac"
+    engine_name: str = "stac"
 
     def __init__(
         self,

@@ -58,7 +58,7 @@ class LandsatEngine(NDVIEngine):
     8/9 Collection 2 Level-2 collections.
     """
 
-    engine_name: Final[str] = "landsat"
+    engine_name: str = "landsat"
 
     def __init__(
         self,

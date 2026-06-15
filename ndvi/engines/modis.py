@@ -182,7 +182,7 @@ class ModisEngine(NDVIEngine):
     product. Defaults to Microsoft Planetary Computer STAC API.
     """
 
-    engine_name: Final[str] = "modis"
+    engine_name: str = "modis"
 
     def __init__(
         self,

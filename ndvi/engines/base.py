@@ -35,6 +35,8 @@ class NdviPoint:
 class NDVIEngine(Protocol):
     """Interface for NDVI engines capable of producing time series data."""
 
+    engine_name: str
+
     def get_timeseries(
         self,
         *,
