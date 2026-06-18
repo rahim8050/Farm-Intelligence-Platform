@@ -1375,7 +1375,7 @@ class NdwiFarmStateView(BaseFarmView):
 
     @extend_schema(
         auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
-        operation_id="v1_ndwi_farm_state_retrieve",
+        operation_id="v1_farms_ndwi_farm_state_retrieve",
         parameters=[external_farm_id_query_param],
         responses={
             200: ndwi_farm_state_success_response,

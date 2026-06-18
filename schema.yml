@@ -1515,6 +1515,381 @@ paths:
               schema:
                 $ref: '#/components/schemas/NdviErrorResponse'
           description: ''
+  /api/v1/farms/{farm_id}/ndwi/farm-state/:
+    get:
+      operationId: v1_farms_ndwi_farm_state_retrieve
+      description: |-
+        Return the derived NDWI farm state for the requested farm.
+
+        Inputs: path param farm_id.
+        Query params: optional external_farm_id (integration tokens).
+        Output: success envelope with NDWI metrics + moisture classification.
+        Side effects: none.
+      parameters:
+      - in: query
+        name: external_farm_id
+        schema:
+          type: string
+          format: uuid
+        description: Resolve farm by external_farm_id (integration tokens).
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdwiFarmStateSuccess'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+  /api/v1/farms/{farm_id}/ndwi/latest/:
+    get:
+      operationId: v1_farms_ndwi_latest_retrieve
+      description: |-
+        Return the most recent NDWI observation if present.
+
+        Query params: lookback_days (optional), max_cloud (optional),
+        engine (optional), representation (optional, v1 or v2).
+        Success: envelope with `observation` or null, plus stale flag.
+        Side effects: enqueues refresh_latest job when missing/stale.
+      parameters:
+      - in: query
+        name: engine
+        schema:
+          type: string
+        description: Override NDWI engine (sentinelhub or stac).
+      - in: query
+        name: external_farm_id
+        schema:
+          type: string
+          format: uuid
+        description: Resolve farm by external_farm_id (integration tokens).
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      - in: query
+        name: lookback_days
+        schema:
+          type: integer
+      - in: query
+        name: max_cloud
+        schema:
+          type: integer
+      - in: query
+        name: representation
+        schema:
+          type: string
+        description: Response representation version (v1 or v2).
+      tags:
+      - v1
+      security:
+      - FarmObservationAuth: []
+      - IntegrationJWTAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdwiLatestSuccess'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+  /api/v1/farms/{farm_id}/ndwi/raster.png:
+    get:
+      operationId: v1_farms_ndwi_raster.png_retrieve
+      description: |-
+        Return a cached NDWI raster PNG or 404 if missing.
+
+        Query params: date (required), optional size, max_cloud, engine,
+        external_farm_id (integration tokens).
+      parameters:
+      - in: query
+        name: date
+        schema:
+          type: string
+          format: date
+        required: true
+      - in: query
+        name: engine
+        schema:
+          type: string
+        description: Override NDWI engine (sentinelhub or stac).
+      - in: query
+        name: external_farm_id
+        schema:
+          type: string
+          format: uuid
+        description: Resolve farm by external_farm_id (integration tokens).
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      - in: query
+        name: max_cloud
+        schema:
+          type: integer
+      - in: query
+        name: size
+        schema:
+          type: integer
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+          description: ''
+        '304':
+          description: Not Modified
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+  /api/v1/farms/{farm_id}/ndwi/raster/queue:
+    post:
+      operationId: v1_farms_ndwi_raster_queue_create
+      description: Enqueue a raster render job for the specified date.
+      parameters:
+      - in: query
+        name: engine
+        schema:
+          type: string
+        description: Override NDWI engine (sentinelhub or stac).
+      - in: query
+        name: external_farm_id
+        schema:
+          type: string
+          format: uuid
+        description: Resolve farm by external_farm_id (integration tokens).
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RasterPngRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RasterPngRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RasterPngRequest'
+        required: true
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdwiRasterQueueSuccess'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+  /api/v1/farms/{farm_id}/ndwi/refresh/:
+    post:
+      operationId: v1_farms_ndwi_refresh_create
+      description: Enqueue a refresh_latest job if not recently triggered.
+      parameters:
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - FarmObservationAuth: []
+      - IntegrationJWTAuth: []
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdwiRefreshSuccess'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+  /api/v1/farms/{farm_id}/ndwi/timeseries/:
+    get:
+      operationId: v1_farms_ndwi_timeseries_retrieve
+      description: |-
+        Return NDWI observations for the requested range.
+
+        Query params: start, end, optional step_days, optional max_cloud,
+        optional engine, optional representation (v1 or v2).
+        Success: envelope containing observations + metadata.
+        Side effects: schedules gap-fill job when buckets are missing.
+      parameters:
+      - in: query
+        name: end
+        schema:
+          type: string
+          format: date
+        required: true
+      - in: query
+        name: engine
+        schema:
+          type: string
+        description: Override NDWI engine (sentinelhub or stac).
+      - in: query
+        name: external_farm_id
+        schema:
+          type: string
+          format: uuid
+        description: Resolve farm by external_farm_id (integration tokens).
+      - in: path
+        name: farm_id
+        schema:
+          type: integer
+        required: true
+      - in: query
+        name: max_cloud
+        schema:
+          type: integer
+        description: Maximum cloud coverage percent (0-100)
+      - in: query
+        name: representation
+        schema:
+          type: string
+        description: Response representation version (v1 or v2).
+      - in: query
+        name: start
+        schema:
+          type: string
+          format: date
+        required: true
+      - in: query
+        name: step_days
+        schema:
+          type: integer
+        description: Days per bucket (1-30)
+      tags:
+      - v1
+      security:
+      - FarmObservationAuth: []
+      - IntegrationJWTAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdwiTimeseriesSuccess'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NdviErrorResponse'
+          description: ''
   /api/v1/farms/{farm_id}/observations/:
     get:
       operationId: v1_farms_observations_list
@@ -3138,7 +3513,15 @@ paths:
   /api/v1/radio/emergency/{id}/:
     patch:
       operationId: v1_radio_emergency_update
-      description: Apply a partial update to one ``EmergencyBroadcast`` row.
+      description: |-
+        Update or delete a single emergency broadcast (admin only).
+
+        Auth: IsAdminUser
+        Throttle: None
+        PATCH: :class:`EmergencyBroadcastUpdateSerializer`
+        DELETE: idempotent — 200 even if the row is already gone.
+        Response data: :class:`EmergencyBroadcastSerializer` (on PATCH).
+        Side effects: updates or deletes one ``EmergencyBroadcast`` row.
       summary: Update an emergency broadcast (admin)
       parameters:
       - in: path
@@ -3432,6 +3815,42 @@ paths:
               schema:
                 $ref: '#/components/schemas/RadioErrorResponse'
           description: ''
+  /api/v1/radio/history/{session_id}/stop/:
+    post:
+      operationId: v1_radio_history_stop
+      description: Sets ``ended_at`` on the listening-history row identified by ``session_id``.
+        The session must belong to the authenticated user. Idempotent.
+      summary: Stop a listening session
+      parameters:
+      - in: path
+        name: session_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioNullEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
+          description: ''
   /api/v1/radio/history/recent/:
     get:
       operationId: v1_radio_history_recent
@@ -3644,6 +4063,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StreamUrlEnvelope'
+          description: ''
+  /api/v1/radio/stations/{station_id}/stream/signed/:
+    get:
+      operationId: v1_radio_stations_stream_signed
+      description: Returns a time-limited JWT and the stream URL for playback. The
+        token is valid for ``RADIO_SIGNED_STREAM_TTL_SECONDS`` (default 3600s = 1
+        hour). Records a listening-history row for the authenticated user.
+      summary: Get signed stream URL
+      parameters:
+      - in: path
+        name: station_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - v1
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioSignedStreamEnvelope'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RadioErrorResponse'
           description: ''
   /api/v1/radio/tts/:
     post:
@@ -4636,7 +5086,7 @@ components:
         is_delivered:
           type: boolean
           readOnly: true
-          description: True once a WebSocket push has been confirmed.
+          description: True once a WebSocket push has been confirmed by the server.
         is_acknowledged:
           type: boolean
           readOnly: true
@@ -6429,9 +6879,14 @@ components:
           type: number
           format: double
           nullable: true
+        ndwi_water_class:
+          type: string
+          nullable: true
+          readOnly: true
       required:
       - bucket_date
       - mean
+      - ndwi_water_class
     NdviProxyError:
       type: object
       properties:
@@ -6548,6 +7003,209 @@ components:
       properties:
         data:
           $ref: '#/components/schemas/NdviTimeseriesData'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
+    NdwiFarmState:
+      type: object
+      properties:
+        farm_id:
+          type: integer
+        mean_ndwi:
+          type: number
+          format: double
+          nullable: true
+        max_ndwi:
+          type: number
+          format: double
+          nullable: true
+        min_ndwi:
+          type: number
+          format: double
+          nullable: true
+        trend:
+          type: number
+          format: double
+          nullable: true
+        state:
+          type: string
+        interpretation:
+          type: string
+        action:
+          type: string
+      required:
+      - action
+      - farm_id
+      - interpretation
+      - max_ndwi
+      - mean_ndwi
+      - min_ndwi
+      - state
+      - trend
+    NdwiFarmStateSuccess:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/NdwiFarmState'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
+    NdwiLatestData:
+      type: object
+      properties:
+        observation:
+          allOf:
+          - $ref: '#/components/schemas/NdviObservation'
+          nullable: true
+        engine:
+          type: string
+        lookback_days:
+          type: integer
+        max_cloud:
+          type: integer
+        stale:
+          type: boolean
+      required:
+      - engine
+      - lookback_days
+      - max_cloud
+      - observation
+      - stale
+    NdwiLatestSuccess:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/NdwiLatestData'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
+    NdwiRasterQueueData:
+      type: object
+      properties:
+        job_id:
+          type: integer
+      required:
+      - job_id
+    NdwiRasterQueueSuccess:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/NdwiRasterQueueData'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
+    NdwiRefreshData:
+      type: object
+      properties:
+        job_id:
+          type: integer
+      required:
+      - job_id
+    NdwiRefreshSuccess:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/NdwiRefreshData'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
+    NdwiTimeseriesData:
+      type: object
+      properties:
+        observations:
+          type: array
+          items:
+            $ref: '#/components/schemas/NdviObservation'
+        engine:
+          type: string
+        start:
+          type: string
+          format: date
+        end:
+          type: string
+          format: date
+        step_days:
+          type: integer
+        max_cloud:
+          type: integer
+        is_partial:
+          type: boolean
+        missing_buckets_count:
+          type: integer
+      required:
+      - end
+      - engine
+      - is_partial
+      - max_cloud
+      - missing_buckets_count
+      - observations
+      - start
+      - step_days
+    NdwiTimeseriesSuccess:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/NdwiTimeseriesData'
         status:
           type: integer
         message:
@@ -7681,6 +8339,26 @@ components:
       - message
       - request_id
       - status
+    RadioSignedStreamEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/SignedStreamData'
+        status:
+          type: integer
+        message:
+          type: string
+        errors:
+          nullable: true
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - data
+      - errors
+      - message
+      - request_id
+      - status
     RadioStationAnalyticsListEnvelope:
       type: object
       properties:
@@ -7819,6 +8497,36 @@ components:
       - password
       - password2
       - username
+    SignedStreamData:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT signed stream-access token
+        stream_url:
+          type: string
+          format: uri
+          description: Resolved stream URL for playback
+        expires_at:
+          type: string
+          format: date-time
+          description: Token expiry timestamp (UTC)
+        format:
+          type: string
+          description: Audio format (e.g. MP3, AAC, HLS)
+        bitrate:
+          type: integer
+          description: Stream bitrate in kbps
+        station_name:
+          type: string
+          description: Human-readable station name
+      required:
+      - bitrate
+      - expires_at
+      - format
+      - station_name
+      - stream_url
+      - token
     Station:
       type: object
       description: Serialize station metadata for API responses.
