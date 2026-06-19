@@ -564,6 +564,7 @@ def load_ndvi_array(
                                     window=window,
                                     out_shape=out_shape,
                                     resampling=resampling_enum.nearest,
+                                    boundless=True,
                                 )
     except rasterio_error as exc:
         raise StacProcessingError(f"Raster processing failed: {exc}") from exc
@@ -692,6 +693,7 @@ def load_ndwi_array(
                                     window=window,
                                     out_shape=out_shape,
                                     resampling=resampling_enum.nearest,
+                                    boundless=True,
                                 )
     except rasterio_error as exc:
         raise StacProcessingError(f"Raster processing failed: {exc}") from exc
