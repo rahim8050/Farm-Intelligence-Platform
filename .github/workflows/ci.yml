@@ -138,6 +138,15 @@ jobs:
             echo "No manage.py found; skipping Django checks."
           fi
 
+      - name: Celery task name validation
+        run: |
+          set -e
+          if [ -f scripts/check_celery_tasks.py ]; then
+            uv run python scripts/check_celery_tasks.py
+          else
+            echo "No scripts/check_celery_tasks.py found; skipping."
+          fi
+
       - name: Tests (with coverage gate)
         run: |
           set -e

@@ -83,14 +83,14 @@ class ProbeStationTestCase(TestCase):
         self.assertEqual(result.status_code, 503)
         self.assertIn("HTTP 503", result.error_message)
 
-    def test_probe_falls_back_to_get_on_405(self) -> None:
-        client = _make_client(head_status=405, get_status=206)
+    def test_probe_returns_reachable_on_405(self) -> None:
+        client = _make_client(head_status=405)
         result = probe_station(
             self.station, timeout_seconds=2.0, client=client
         )
         self.assertTrue(result.is_reachable)
-        self.assertEqual(result.status_code, 206)
-        client.get.assert_called_once()
+        self.assertEqual(result.status_code, 405)
+        client.get.assert_not_called()
 
     def test_probe_records_network_error(self) -> None:
         boom = httpx.ConnectError("boom", request=httpx.Request("HEAD", "x"))

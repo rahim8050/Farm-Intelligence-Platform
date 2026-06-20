@@ -104,7 +104,7 @@ flowchart TB
 The implementation currently seeds:
 
 - BBC stations: `bbc_radio1`, `bbc_1xtra`, `bbc_radio2`
-- SomaFM stations: `somafm_groovesalad`, `somafm_dronezone`, `somafm_deepspaceone`, `somafm_spacestation`, `somafm_secretagent`, `somafm_defcon`, `somafm_lounge`, `somafm_beatblender`
+ - SomaFM stations: `somafm_groovesalad`, `somafm_dronezone`, `somafm_deepspaceone`, `somafm_spacestation`, `somafm_secretagent`, `somafm_defcon`, `somafm_beatblender`
 - TuneIn stations: `tunein_bbc_ws`
 
 ## Future Extensibility

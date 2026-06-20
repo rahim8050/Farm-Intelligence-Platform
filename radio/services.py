@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ALL_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -125,34 +126,44 @@ def probe_station(
         responsible for persisting the result and updating aggregate
         state.
     """
+    _user_agent = "FarmIntelligencePlatform/1.0"
+
     own_client = client is None
     if own_client:
-        client = httpx.Client(timeout=timeout_seconds, follow_redirects=True)
+        client = httpx.Client(
+            timeout=timeout_seconds,
+            follow_redirects=False,
+            headers={"User-Agent": _user_agent},
+        )
 
     start = time.monotonic()
     try:
         try:
             response = client.head(station.stream_url)
             if response.status_code in (405, 501):
+                pass
+        except httpx.HTTPError:
+            try:
                 response = client.get(
                     station.stream_url,
-                    headers={"Range": "bytes=0-0"},
+                    headers={"Range": "bytes=0-0", "User-Agent": _user_agent},
                 )
-        except httpx.HTTPError as exc:
-            elapsed_ms = int((time.monotonic() - start) * 1000)
-            return HealthProbeResult(
-                station_id=station.id,
-                is_reachable=False,
-                status_code=None,
-                response_time_ms=elapsed_ms,
-                error_message=_safe_error(exc),
-            )
+            except httpx.HTTPError as exc:
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+                return HealthProbeResult(
+                    station_id=station.id,
+                    is_reachable=False,
+                    status_code=None,
+                    response_time_ms=elapsed_ms,
+                    error_message=_safe_error(exc),
+                )
     finally:
         if own_client:
             client.close()
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
-    is_reachable = response.status_code < 400
+    code = response.status_code
+    is_reachable = code < 400 or code in (405, 501)
     return HealthProbeResult(
         station_id=station.id,
         is_reachable=is_reachable,
@@ -221,6 +232,9 @@ def probe_and_record(
     return result
 
 
+_PARALLEL_PROBE_WORKERS = 10
+
+
 def probe_all_active_stations(
     *,
     timeout_seconds: float,
@@ -228,27 +242,61 @@ def probe_all_active_stations(
 ) -> list[HealthProbeResult]:
     """Probe every active station and persist the results.
 
-    Iterates ``Station.objects.filter(is_active=True)`` in a stable
-    order and calls :func:`probe_and_record` for each. Suitable for
-    periodic Celery invocation.
+    Probes up to :data:`_PARALLEL_PROBE_WORKERS` stations concurrently
+    using a thread pool, then returns results in the same order as the
+    input query. Suitable for periodic Celery invocation.
+
+    When an explicit *client* is provided (e.g. in tests), falls back to
+    sequential probing since ``httpx.Client`` is not thread-safe.
 
     Returns:
         List of probe results, in the same order as the input query.
     """
     stations = list(Station.objects.filter(is_active=True).order_by("id"))
-    own_client = client is None
-    if own_client:
-        client = httpx.Client(timeout=timeout_seconds, follow_redirects=True)
-    try:
+
+    if client is not None:
         return [
             probe_and_record(
                 station, timeout_seconds=timeout_seconds, client=client
             )
             for station in stations
         ]
-    finally:
-        if own_client:
-            client.close()
+
+    _max_parallel_wait = 250  # seconds; well under Celery 270s soft limit
+
+    results: list[HealthProbeResult | None] = [None] * len(stations)
+    with ThreadPoolExecutor(max_workers=_PARALLEL_PROBE_WORKERS) as pool:
+        fut_list = [
+            pool.submit(
+                probe_and_record, station, timeout_seconds=timeout_seconds
+            )
+            for station in stations
+        ]
+        done, _ = wait(
+            fut_list, timeout=_max_parallel_wait, return_when=ALL_COMPLETED
+        )
+
+        for future in done:
+            idx = fut_list.index(future)
+            try:
+                results[idx] = future.result()
+            except Exception:
+                logger.exception(
+                    "probe_all_active_stations: station %s failed",
+                    stations[idx].id,
+                )
+
+    final = [r for r in results if r is not None]
+    if len(final) < len(stations):
+        logger.warning(
+            "probe_all_active_stations: %d / %d stations probed",
+            len(final),
+            len(stations),
+        )
+        for idx, r in enumerate(results):
+            if r is None:
+                logger.warning("  no result for station %s", stations[idx].id)
+    return final
 
 
 def summarize_health() -> dict[str, object]:

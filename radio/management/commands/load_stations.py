@@ -59,7 +59,7 @@ class Command(BaseCommand):
                 "name": "BBC Radio 1",
                 "provider": bbc_provider,
                 "genre": "Pop, Chart",
-                "country": "UK",
+                "country": "United Kingdom",
                 "language": "English",
                 "stream_url": "http://as-hls-ww-live.akamaized.net/pool_01505109/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8",
                 "format": "HLS",
@@ -71,7 +71,7 @@ class Command(BaseCommand):
                 "name": "BBC 1Xtra",
                 "provider": bbc_provider,
                 "genre": "Hip Hop, R&B",
-                "country": "UK",
+                "country": "United Kingdom",
                 "language": "English",
                 "stream_url": "http://as-hls-ww-live.akamaized.net/pool_92079267/live/ww/bbc_1xtra/bbc_1xtra.isml/bbc_1xtra-audio%3d96000.norewind.m3u8",
                 "format": "HLS",
@@ -83,7 +83,7 @@ class Command(BaseCommand):
                 "name": "BBC Radio 2",
                 "provider": bbc_provider,
                 "genre": "Adult Contemporary",
-                "country": "UK",
+                "country": "United Kingdom",
                 "language": "English",
                 "stream_url": "https://a.files.bbci.co.uk/media/live/manifesto/audio/simulcast/hls/uk/high/cfs/bbc_radio_two.m3u8",
                 "format": "HLS",
@@ -98,7 +98,7 @@ class Command(BaseCommand):
                 "name": "SomaFM Groove Salad",
                 "provider": somafm_provider,
                 "genre": "Ambient, Downtempo",
-                "country": "USA",
+                "country": "United States",
                 "language": "English",
                 "stream_url": "https://ice5.somafm.com/groovesalad-128-mp3",
                 "format": "MP3",
@@ -112,7 +112,7 @@ class Command(BaseCommand):
                 "name": "SomaFM Drone Zone",
                 "provider": somafm_provider,
                 "genre": "Ambient, Atmospheric",
-                "country": "USA",
+                "country": "United States",
                 "language": "English",
                 "stream_url": "https://ice5.somafm.com/dronezone-128-mp3",
                 "format": "MP3",
@@ -126,7 +126,7 @@ class Command(BaseCommand):
                 "name": "SomaFM Deep Space One",
                 "provider": somafm_provider,
                 "genre": "Ambient, Electronic",
-                "country": "USA",
+                "country": "United States",
                 "language": "English",
                 "stream_url": "https://ice5.somafm.com/deepspaceone-128-mp3",
                 "format": "MP3",
@@ -140,7 +140,7 @@ class Command(BaseCommand):
                 "name": "SomaFM Space Station Soma",
                 "provider": somafm_provider,
                 "genre": "Ambient, Electronica",
-                "country": "USA",
+                "country": "United States",
                 "language": "English",
                 "stream_url": "https://ice5.somafm.com/spacestation-128-mp3",
                 "format": "MP3",
@@ -154,7 +154,7 @@ class Command(BaseCommand):
                 "name": "SomaFM Secret Agent",
                 "provider": somafm_provider,
                 "genre": "Lounge, Spy",
-                "country": "USA",
+                "country": "United States",
                 "language": "English",
                 "stream_url": "https://ice5.somafm.com/secretagent-128-mp3",
                 "format": "MP3",
@@ -168,7 +168,7 @@ class Command(BaseCommand):
                 "name": "SomaFM DEF CON Radio",
                 "provider": somafm_provider,
                 "genre": "Electronic, Gaming",
-                "country": "USA",
+                "country": "United States",
                 "language": "English",
                 "stream_url": "https://ice5.somafm.com/defcon-128-mp3",
                 "format": "MP3",
@@ -178,25 +178,11 @@ class Command(BaseCommand):
                 "is_active": True,
             },
             {
-                "id": "somafm_lounge",
-                "name": "SomaFM Lounge",
-                "provider": somafm_provider,
-                "genre": "Lounge, Jazz",
-                "country": "USA",
-                "language": "English",
-                "stream_url": "https://ice5.somafm.com/lounge-128-mp3",
-                "format": "MP3",
-                "bitrate": 128,
-                "logo_url": "https://somafm.com/img3/lounge-200.jpg",
-                "website_url": "https://somafm.com/lounge",
-                "is_active": True,
-            },
-            {
                 "id": "somafm_beatblender",
                 "name": "SomaFM Beat Blender",
                 "provider": somafm_provider,
                 "genre": "House, Electronica",
-                "country": "USA",
+                "country": "United States",
                 "language": "English",
                 "stream_url": "https://ice5.somafm.com/beatblender-128-mp3",
                 "format": "MP3",
@@ -213,7 +199,7 @@ class Command(BaseCommand):
                 "name": "BBC World Service",
                 "provider": tunein_provider,
                 "genre": "News, Talk",
-                "country": "UK",
+                "country": "United Kingdom",
                 "language": "English",
                 "stream_url": "http://stream.live.vc.bbcmedia.co.uk/bbc_world_service",
                 "format": "MP3",
@@ -234,6 +220,53 @@ class Command(BaseCommand):
                 self.stdout.write(f"Created station: {station.name}")
             else:
                 self.stdout.write(f"Updated station: {station.name}")
+
+        def _trunc(s: str, maxlen: int) -> str:
+            return s[:maxlen] if len(s) > maxlen else s
+
+        field_maxlen = {
+            "name": 200,
+            "genre": 100,
+            "country": 100,
+            "language": 100,
+            "stream_url": 200,
+            "format": 20,
+            "logo_url": 200,
+            "website_url": 200,
+            "metadata_url": 200,
+        }
+
+        radiobrowser_count = 0
+        radiobrowser_errors = 0
+        try:
+            from radio.providers.radiobrowser import RadioBrowserProvider
+
+            provider = RadioBrowserProvider()
+            rb_stations = provider.get_stations()
+            for s in rb_stations:
+                s["provider"] = radiobrowser_provider
+                s["is_active"] = True
+                for field, maxlen in field_maxlen.items():
+                    if field in s and isinstance(s.get(field), str):
+                        s[field] = _trunc(s[field], maxlen)
+                try:
+                    Station.objects.update_or_create(
+                        id=s["id"],
+                        defaults=s,
+                    )
+                    radiobrowser_count += 1
+                except Exception:
+                    radiobrowser_errors += 1
+            msg = f"Loaded {radiobrowser_count} Radio Browser stations"
+            if radiobrowser_errors:
+                msg += f", {radiobrowser_errors} skipped"
+            self.stdout.write(self.style.SUCCESS(msg))
+        except Exception as exc:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Radio Browser API fetch failed (non-fatal): {exc}"
+                )
+            )
 
         self.stdout.write(
             self.style.SUCCESS("Radio stations loaded successfully")
