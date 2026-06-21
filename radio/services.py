@@ -262,6 +262,14 @@ def probe_all_active_stations(
             for station in stations
         ]
 
+    _engine = settings.DATABASES["default"]["ENGINE"]
+    _is_sqlite = _engine == "django.db.backends.sqlite3"
+    if _is_sqlite:
+        return [
+            probe_and_record(station, timeout_seconds=timeout_seconds)
+            for station in stations
+        ]
+
     _max_parallel_wait = 250  # seconds; well under Celery 270s soft limit
 
     results: list[HealthProbeResult | None] = [None] * len(stations)
