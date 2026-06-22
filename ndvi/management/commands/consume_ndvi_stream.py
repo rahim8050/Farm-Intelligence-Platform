@@ -36,7 +36,7 @@ from ndvi.metrics import (
     redis_stream_pending_entries,
 )
 from ndvi.streams import _get_stream_redis_client
-from ndvi.tasks import compute_farm_state_coverage, run_ndvi_job
+from ndvi.tasks import compute_farm_state_coverage, run_ndvi_job, run_ndwi_job
 
 logger = logging.getLogger(__name__)
 
@@ -374,7 +374,7 @@ class Command(BaseCommand):
     def _route_ndvi_job(
         self, payload: dict[str, str], log_ctx: dict[str, Any]
     ) -> bool:
-        """Validate and route NDVI job payload to Celery."""
+        """Validate and route NDVI/NDWI job payload to Celery."""
         try:
             job_id = int(payload["job_id"])
             # verify required fields exist
@@ -384,7 +384,11 @@ class Command(BaseCommand):
             _ = payload["engine"]
             _ = payload["job_type"]
 
-            run_ndvi_job.delay(job_id)
+            index_type = payload.get("index_type", "NDVI")
+            if index_type == "NDWI":
+                run_ndwi_job.delay(job_id)
+            else:
+                run_ndvi_job.delay(job_id)
             return True
         except (KeyError, ValueError) as exc:
             self._record_failure("route_validation_error")

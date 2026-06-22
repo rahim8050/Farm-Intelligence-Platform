@@ -40,6 +40,7 @@ class TestBuildStreamPayload:
         job.owner_id = 1
         job.engine = "stac"
         job.job_type = NdviJob.JobType.REFRESH_LATEST
+        job.index_type = "NDVI"
         job.start = date(2025, 1, 1)
         job.end = date(2025, 1, 15)
         job.step_days = 7
@@ -59,6 +60,7 @@ class TestBuildStreamPayload:
             "owner_id",
             "engine",
             "job_type",
+            "index_type",
             "start",
             "end",
             "step_days",
@@ -144,6 +146,7 @@ class TestPublishNdviJob:
         job.owner_id = 1
         job.engine = "stac"
         job.job_type = NdviJob.JobType.REFRESH_LATEST
+        job.index_type = "NDVI"
         job.start = date(2025, 1, 1)
         job.end = date(2025, 1, 15)
         job.step_days = 7

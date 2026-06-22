@@ -304,6 +304,7 @@ class NdviApiTests(APITestCase):
                 "step_days": params.step_days,
                 "max_cloud": params.max_cloud,
             },
+            index_type="NDVI",
         )
         job = NdviJob.objects.create(
             owner=self.user,

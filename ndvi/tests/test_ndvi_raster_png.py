@@ -98,6 +98,7 @@ class NdviRasterApiTests(APITestCase):
                 "step_days": size,
                 "max_cloud": max_cloud,
             },
+            index_type="NDVI",
         )
         error = ValidationError(
             {

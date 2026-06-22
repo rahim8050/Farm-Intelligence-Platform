@@ -62,6 +62,7 @@ def build_stream_payload(job: NdviJob) -> dict[str, str]:
         "owner_id": str(job.owner_id),
         "engine": job.engine,
         "job_type": job.job_type,
+        "index_type": job.index_type or "NDVI",
         "start": job.start.isoformat() if job.start else "",
         "end": job.end.isoformat() if job.end else "",
         "step_days": str(job.step_days) if job.step_days else "",

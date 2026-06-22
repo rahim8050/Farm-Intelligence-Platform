@@ -154,6 +154,7 @@ def _lookup_raster_not_found_reason(
     raster_date: date,
     size: int,
     max_cloud: int,
+    index_type: str = "NDVI",
 ) -> str | None:
     request_hash = hash_request(
         engine=engine,
@@ -165,6 +166,7 @@ def _lookup_raster_not_found_reason(
             "step_days": size,
             "max_cloud": max_cloud,
         },
+        index_type=index_type,
     )
     job = (
         NdviJob.objects.filter(
@@ -1135,6 +1137,7 @@ class NdviRasterPngView(BaseRasterView):
                 raster_date=cast(date, params["date"]),
                 size=cast(int, params["size"]),
                 max_cloud=cast(int, params["max_cloud"]),
+                index_type="NDVI",
             )
             return error_response(
                 RASTER_NOT_FOUND_MESSAGE,
@@ -1160,6 +1163,7 @@ class NdviRasterPngView(BaseRasterView):
                 raster_date=cast(date, params["date"]),
                 size=cast(int, params["size"]),
                 max_cloud=cast(int, params["max_cloud"]),
+                index_type="NDVI",
             )
             return error_response(
                 RASTER_NOT_FOUND_MESSAGE,
@@ -2016,6 +2020,7 @@ class NdwiRasterPngView(BaseRasterView):
                 raster_date=cast(date, params["date"]),
                 size=cast(int, params["size"]),
                 max_cloud=cast(int, params["max_cloud"]),
+                index_type="NDWI",
             )
             return error_response(
                 RASTER_NOT_FOUND_MESSAGE,
@@ -2041,6 +2046,7 @@ class NdwiRasterPngView(BaseRasterView):
                 raster_date=cast(date, params["date"]),
                 size=cast(int, params["size"]),
                 max_cloud=cast(int, params["max_cloud"]),
+                index_type="NDWI",
             )
             return error_response(
                 RASTER_NOT_FOUND_MESSAGE,

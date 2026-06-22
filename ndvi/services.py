@@ -1145,6 +1145,7 @@ def hash_request(
     owner_id: int,
     farm_id: int,
     params: dict[str, Any],
+    index_type: str = "NDVI",
 ) -> str:
     normalized = json.dumps(
         {
@@ -1152,6 +1153,7 @@ def hash_request(
             "owner": owner_id,
             "farm": farm_id,
             "params": params,
+            "index_type": index_type,
         },
         sort_keys=True,
         default=str,
@@ -1804,12 +1806,14 @@ def enqueue_job(
         owner_id=owner_id,
         farm_id=farm.id,
         params=params,
+        index_type=index_type,
     )
     existing = NdviJob.objects.filter(
         owner_id=owner_id,
         farm=farm,
         engine=resolved_engine,
         request_hash=request_hash,
+        index_type=index_type,
         status__in=[NdviJob.JobStatus.QUEUED, NdviJob.JobStatus.RUNNING],
     ).first()
     if existing:
