@@ -115,7 +115,7 @@ STAC API / SentinelHub / Planetary Computer
 |-----------|---------------------|
 | **Models** | `SpectralObservation` replaces `NdviObservation` as shared model with `index_type` discriminator. Existing `NdviObservation` rows get `index_type="NDVI"`. View-level proxy maintains backward compat. |
 | **StacClient** | No changes needed. `load_ndvi_array()` is renamed to `load_index_array()` with a formula parameter. Band asset names (Green vs. Red) configured per engine factory. |
-| **Engine factories** | `ENGINE_FACTORIES` grows `ndwi_stac`, `ndwi_sentinelhub`, `ndwi_gee`, `ndwi_landsat` entries. Each calls the same engine class but with `asset_green` + `formula=NDWI_FORMULA`. |
+| **Engine factories** | `ENGINE_FACTORIES` grows `ndwi_stac`, `ndwi_sentinelhub`, `ndwi_gee`, `ndwi_landsat`, `ndwi_modis` entries. Each calls the same engine class but with `asset_green` + `formula=NDWI_FORMULA`. MODIS NDWI uses MOD09GA surface reflectance (not MOD13Q1). |
 | **Services** | `get_engine()` accepts `index_type` parameter. `upsert_observations()` writes to `SpectralObservation` with `index_type` set. Cache keys change from `ndvi:cache:` to `ndwi:cache:`. |
 | **Views** | New `ndwi/` URL prefix. Internal view class dispatches by deriving `index_type` from URL prefix. No changes to existing `ndvi/` views. |
 | **Tasks** | `run_index_job()` (generic) replaces `run_ndvi_job()`. New `NDWI_REFRESH_LATEST`, `NDWI_GAP_FILL`, `NDWI_BACKFILL`, `NDWI_RASTER_PNG` job types. Celery Beat schedule adds `enqueue_daily_ndwi_refresh`. |
@@ -147,4 +147,4 @@ NDWI = (Green - NIR) / (Green + NIR)
 | SentinelHub | B03 | B08 | SCL | 10m |
 | GEE (Sentinel-2) | B03_10m | B08_10m | SCL | 10m |
 | Landsat 8/9 | B3 | B5 | (none) | 30m |
-| MODIS | N/A | N/A | N/A | Skipped |
+| MODIS (MOD09GA) | sur_refl_b04 (500m) | sur_refl_b02 (500m) | state_1km | 500m |

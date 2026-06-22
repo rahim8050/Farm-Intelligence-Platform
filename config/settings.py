@@ -965,6 +965,13 @@ NDVI_MODIS_MAX_CLOUD_DEFAULT = env.int(
 )
 NDVI_MODIS_NDVI_BAND = env("NDVI_MODIS_NDVI_BAND", default="NDVI")
 NDVI_MODIS_QA_BAND = env("NDVI_MODIS_QA_BAND", default="DetailedQA")
+NDVI_MODIS_NDWI_STAC_COLLECTION = env(
+    "NDVI_MODIS_NDWI_STAC_COLLECTION",
+    default="modis-09ga-061",
+)
+NDVI_MODIS_GREEN_BAND = env("NDVI_MODIS_GREEN_BAND", default="sur_refl_b04")
+NDVI_MODIS_NIR_BAND = env("NDVI_MODIS_NIR_BAND", default="sur_refl_b02")
+NDVI_MODIS_NDWI_QA_BAND = env("NDVI_MODIS_NDWI_QA_BAND", default="state_1km")
 
 # GEE engine settings (STAC-backed, independently configurable)
 NDVI_GEE_STAC_API_URL = env(

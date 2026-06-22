@@ -1,11 +1,9 @@
-"""MODIS NDVI engine adapter.
+"""MODIS NDVI/NDWI engine adapter.
 
-Provides NDVI from MODIS (Terra/Aqua) as a fallback for temporal
-continuity when Sentinel-2 and Landsat are both unavailable.
-
-Uses the MODIS MOD13Q1/MYD13Q1 NDVI product which contains
-pre-computed NDVI (not computed from red/nir bands). Available
-via STAC (default: Microsoft Planetary Computer).
+Provides NDVI from MODIS (Terra/Aqua) using the MOD13Q1 NDVI product
+(pre-computed NDVI), and NDWI using the MOD09GA surface reflectance
+product (Green band 4 + NIR band 2). Available via STAC (default:
+Microsoft Planetary Computer).
 """
 
 from __future__ import annotations
@@ -46,6 +44,11 @@ DEFAULT_MAX_CLOUD: Final[int] = 30
 DEFAULT_NDVI_BAND: Final[str] = "NDVI"
 DEFAULT_QA_BAND: Final[str] = "DetailedQA"
 MODIS_NDVI_SCALE: Final[float] = 0.0001
+DEFAULT_NDWI_COLLECTION: Final[str] = "modis-09ga-061"
+DEFAULT_GREEN_BAND: Final[str] = "sur_refl_b04"
+DEFAULT_NIR_BAND: Final[str] = "sur_refl_b02"
+DEFAULT_NDWI_QA_BAND: Final[str] = "state_1km"
+MODIS_REFL_SCALE: Final[float] = 0.0001
 
 
 def _str_setting(name: str, default: str) -> str:
@@ -176,10 +179,12 @@ def _compute_band_stats(
 
 
 class ModisEngine(NDVIEngine):
-    """NDVI engine backed by MODIS MOD13Q1 via STAC.
+    """MODIS spectral index engine (NDVI / NDWI) backed by STAC.
 
-    Uses the pre-computed NDVI band from the MODIS Vegetation Index
-    product. Defaults to Microsoft Planetary Computer STAC API.
+    - NDVI: uses MOD13Q1 pre-computed NDVI band (MOD13Q1)
+    - NDWI: computes from Green + NIR bands via MOD09GA surface reflectance
+
+    Defaults to Microsoft Planetary Computer STAC API.
     """
 
     engine_name: str = "modis"
@@ -193,13 +198,9 @@ class ModisEngine(NDVIEngine):
         index_type: str = "NDVI",
         ndvi_band: str | None = None,
         qa_band: str | None = None,
+        green_band: str | None = None,
+        nir_band: str | None = None,
     ) -> None:
-        if index_type != "NDVI":
-            raise UnsupportedIndexError(
-                f"MODIS engine only supports NDVI, not {index_type}. "
-                "MODIS provides pre-computed NDVI (MOD13Q1) and does not "
-                "have the Green band needed for NDWI computation."
-            )
         self.index_type = index_type
         self.timeout_seconds = timeout_seconds or _float_setting(
             "TIMEOUT_SECS", DEFAULT_TIMEOUT_SECONDS
@@ -207,15 +208,30 @@ class ModisEngine(NDVIEngine):
         self.date_window_days = date_window_days or _int_setting(
             "DATE_WINDOW_DAYS", DEFAULT_DATE_WINDOW_DAYS
         )
-        self.ndvi_band = ndvi_band or _str_setting(
-            "NDVI_BAND", DEFAULT_NDVI_BAND
-        )
-        self.qa_band = qa_band or _str_setting("QA_BAND", DEFAULT_QA_BAND)
         _stac_url = _str_setting(
             "STAC_API_URL",
             "https://planetarycomputer.microsoft.com/api/stac/v1/",
         )
-        _collection = _str_setting("STAC_COLLECTION", "modis-13q1-061")
+
+        if index_type == "NDWI":
+            _collection = _str_setting(
+                "NDWI_STAC_COLLECTION", DEFAULT_NDWI_COLLECTION
+            )
+            self.green_band = green_band or _str_setting(
+                "GREEN_BAND", DEFAULT_GREEN_BAND
+            )
+            self.nir_band = nir_band or _str_setting(
+                "NIR_BAND", DEFAULT_NIR_BAND
+            )
+            self.qa_band = qa_band or _str_setting(
+                "NDWI_QA_BAND", DEFAULT_NDWI_QA_BAND
+            )
+        else:
+            _collection = _str_setting("STAC_COLLECTION", "modis-13q1-061")
+            self.ndvi_band = ndvi_band or _str_setting(
+                "NDVI_BAND", DEFAULT_NDVI_BAND
+            )
+            self.qa_band = qa_band or _str_setting("QA_BAND", DEFAULT_QA_BAND)
         self.client = client or StacClient(
             base_url=_stac_url,
             collection=_collection,
@@ -299,6 +315,9 @@ class ModisEngine(NDVIEngine):
     def _process_item(
         self, item: Any, bbox: BBox, bucket_date: date
     ) -> NdviPoint | None:
+        if self.index_type == "NDWI":
+            return self._process_ndwi_item(item, bbox, bucket_date)
+
         ndvi_assets = build_asset_candidates(self.ndvi_band)
         qa_assets = build_asset_candidates(self.qa_band)
         from ndvi.stac_client import resolve_asset_href_candidates
@@ -337,4 +356,66 @@ class ModisEngine(NDVIEngine):
             if sample_count is not None
             else None,
             quality_flags={"modis": True, "pre_computed_ndvi": True},
+        )
+
+    def _process_ndwi_item(
+        self, item: Any, bbox: BBox, bucket_date: date
+    ) -> NdviPoint | None:
+        """Compute NDWI from MOD09GA Green + NIR bands."""
+        green_assets = build_asset_candidates(self.green_band)
+        nir_assets = build_asset_candidates(self.nir_band)
+        qa_assets = build_asset_candidates(self.qa_band)
+        from ndvi.stac_client import resolve_asset_href_candidates
+
+        green_href = resolve_asset_href_candidates(item, green_assets)
+        nir_href = resolve_asset_href_candidates(item, nir_assets)
+        if not green_href or not nir_href:
+            logger.warning(
+                "modis.item.missing_bands item_id=%s green=%s nir=%s",
+                getattr(item, "id", "-"),
+                bool(green_href),
+                bool(nir_href),
+            )
+            return None
+        qa_href = resolve_asset_href_candidates(item, qa_assets)
+
+        green = _load_single_band(
+            green_href,
+            bbox=bbox,
+            size=DEFAULT_STATS_SAMPLE_SIZE,
+            timeout_seconds=self.timeout_seconds,
+            scale_factor=MODIS_REFL_SCALE,
+            qa_href=qa_href,
+        )
+        if green.size == 0:
+            return None
+
+        nir = _load_single_band(
+            nir_href,
+            bbox=bbox,
+            size=DEFAULT_STATS_SAMPLE_SIZE,
+            timeout_seconds=self.timeout_seconds,
+            scale_factor=MODIS_REFL_SCALE,
+        )
+        if nir.size == 0:
+            return None
+
+        denom = green + nir
+        ndwi = np.where(denom == 0, np.nan, (green - nir) / denom)
+        ndwi[np.isinf(ndwi)] = np.nan
+
+        stats = _compute_band_stats(ndwi)
+        if stats["mean"] is None:
+            return None
+
+        sample_count = stats["sample_count"]
+        return NdviPoint(
+            date=bucket_date,
+            mean=stats["mean"],
+            min=stats["min"],
+            max=stats["max"],
+            sample_count=int(sample_count)
+            if sample_count is not None
+            else None,
+            quality_flags={"modis": True, "ndwi": True},
         )

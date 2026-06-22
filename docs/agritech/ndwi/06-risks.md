@@ -155,17 +155,11 @@
 - Provide `quality_flags["ndwi_interpretation"]` classification.
 - User documentation / training session.
 
-### R11: MODIS skipped for NDWI
+### R11 (Resolved): MODIS NDWI via MOD09GA
 
-**Description:** MODIS pre-computed NDVI cannot be converted to NDWI. No coarse-resolution NDWI fallback.
+**Description:** MODIS now supports NDWI via the MOD09GA surface reflectance product (band 4 Green + band 2 NIR) instead of the MOD13Q1 pre-computed NDVI product. Resolves the previous coarse-resolution fallback gap.
 
-**Likelihood:** Certain — MODIS does not provide NDWI in the standard product.
-**Impact:** Medium — small farms with few Sentinel-2 passes lose a fallback source.
-
-**Mitigation:**
-- Investigate `MCD43A4` (MODIS NBAR) for independent Green + NIR band retrieval.
-- This is a Phase 8+ enhancement, not a blocker.
-- Sentinel-2 10m resolution is sufficient for most farm operations.
+**Resolution:** Engine uses `modis-09ga-061` STAC collection with `sur_refl_b04` (Green, 500m) and `sur_refl_b02` (NIR, 500m) bands, computed as `(Green - NIR) / (Green + NIR)`.
 
 ### R12: Rollback of NDWI data after production writes
 
@@ -193,5 +187,5 @@
 | R8 | Inline with launch or next release | DevOps | At launch |
 | R9 | Shared rate limiter, monitor, separate credentials | Engineering | Before launch |
 | R10 | Documentation + classification flag | Product | Before launch |
-| R11 | Phase 8+ investigation | Engineering | Deferred |
+| R11 | Implemented via MOD09GA (band 4 + band 2) | Engineering | Resolved |
 | R12 | Rollback script in repo, backup | Infrastructure | Before launch |

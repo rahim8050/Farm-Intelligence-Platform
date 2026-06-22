@@ -55,7 +55,7 @@ Provide farm operations teams with a satellite-derived water index (NDWI) for ir
 ## Assumptions
 
 1. Green band (B03 for Sentinel-2, B3 for Landsat) is available on all target STAC collections.
-2. MODIS pre-computed NDVI band cannot be meaningfully converted to NDWI — MODIS engine will not support NDWI (or will provide a separate pre-computed `NDWI` band if available on MODIS collection).
+2. MODIS NDWI uses MOD09GA surface reflectance (Green band 4 + NIR band 2) — not the MOD13Q1 pre-computed NDVI product.
 3. The existing STAC client, circuit breaker, retry policy, lock manager, and cache layer require zero changes for NDWI support.
 4. Existing NDVI production workloads will not be affected by the model generalization migration (new `index_type` column with default `"NDVI"`).
 5. NDWI thresholds (quality, fusion) will need tuning after 2 weeks of production data — initial values are conservative estimates.
@@ -63,6 +63,5 @@ Provide farm operations teams with a satellite-derived water index (NDWI) for ir
 ## Open Questions
 
 1. Does the existing `NdviObservation` table row count permit an online migration (adding `index_type` column with default)? Or does it require a shadow-table approach?
-2. Should MODIS engine for NDWI fall back to a different band/product (e.g., `MCD43A4` for Nadir BRDF-Adjusted Reflectance) rather than skipping MODIS entirely?
-3. What is the acceptable NDWI null rate for farm operations teams? (NDVI target: < 20% null.)
-4. Should raster PNG generation for NDWI use a diverging colormap (blue-white-brown) or a sequential colormap (white-blue)?
+2. What is the acceptable NDWI null rate for farm operations teams? (NDVI target: < 20% null.)
+3. Should raster PNG generation for NDWI use a diverging colormap (blue-white-brown) or a sequential colormap (white-blue)?
