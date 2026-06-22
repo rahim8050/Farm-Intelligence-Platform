@@ -64,7 +64,7 @@ jobs:
         run: echo "CI_START_TS=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v5
