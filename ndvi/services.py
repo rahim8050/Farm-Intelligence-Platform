@@ -1480,8 +1480,9 @@ def upsert_observations(
     points: Iterable[NdviPoint],
     source_scene_ids: dict[date, str] | None = None,
     provenance: dict[str, Any] | None = None,
+    index_type: str = "NDVI",
 ) -> list[NdviObservation]:
-    """Upsert NDVI observations with full transactional guarantees.
+    """Upsert NDVI/NDWI observations with full transactional guarantees.
 
     Transaction scope (all inside one atomic block):
         1. select_for_update on existing latest rows
@@ -1567,6 +1568,7 @@ def upsert_observations(
                                 engine=engine,
                                 bucket_date=point.date,
                                 is_latest=True,
+                                index_type=index_type,
                             ).select_for_update()
                         )
 
@@ -1574,6 +1576,7 @@ def upsert_observations(
                             idempotent = NdviObservation.objects.filter(
                                 farm=farm,
                                 engine=engine,
+                                index_type=index_type,
                                 source_scene_id=scene_id,
                                 provenance_hash=prov_hash,
                             ).first()
@@ -1581,12 +1584,14 @@ def upsert_observations(
                             idempotent = NdviObservation.objects.filter(
                                 farm=farm,
                                 engine=engine,
+                                index_type=index_type,
                                 source_scene_id=scene_id,
                             ).first()
                         else:
                             idempotent = NdviObservation.objects.filter(
                                 farm=farm,
                                 engine=engine,
+                                index_type=index_type,
                                 bucket_date=point.date,
                                 version=version,
                             ).first()
@@ -1637,6 +1642,7 @@ def upsert_observations(
                             source_scene_id=scene_id,
                             provenance=validated_provenance,
                             provenance_hash=prov_hash,
+                            index_type=index_type,
                         )
                         ndvi_append_only_writes_total.labels(
                             engine=engine
@@ -1664,9 +1670,11 @@ def upsert_observations(
                         if prov_hash:
                             defaults["provenance_hash"] = prov_hash
 
+                        defaults["index_type"] = index_type
                         obj, _ = NdviObservation.objects.update_or_create(
                             farm=farm,
                             engine=engine,
+                            index_type=index_type,
                             bucket_date=point.date,
                             defaults=defaults,
                         )

@@ -277,6 +277,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                         engine=job.engine,
                         max_cloud=latest_params.max_cloud,
                         points=[point],
+                        index_type=job.index_type,
                     )
                 )
                 _run_ndwi_v2_pipeline(v1_observations, job)
@@ -360,6 +361,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                         engine=job.engine,
                         max_cloud=timeseries_params.max_cloud,
                         points=points,
+                        index_type=job.index_type,
                     )
                 )
                 _run_ndwi_v2_pipeline(v1_observations, job)
@@ -486,7 +488,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def run_ndwi_job(self: Any, job_id: int) -> str:
-    return run_ndvi_job(self, job_id)
+    return run_ndvi_job.run.__func__(self, job_id)
 
 
 @shared_task
