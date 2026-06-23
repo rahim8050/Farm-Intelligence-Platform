@@ -38,3 +38,7 @@ key.pem
 
 # AI prompts (local workspace only)
 prompts/
+
+# AI agent config (local workspace only)
+.opencode/
+.qwen/
