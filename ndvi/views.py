@@ -78,6 +78,8 @@ from .services import (
     LatestParams,
     TimeseriesParams,
     cache_latest_response,
+    cache_ndmi_latest_response,
+    cache_ndmi_timeseries_response,
     cache_ndwi_latest_response,
     cache_ndwi_timeseries_response,
     cache_timeseries_response,
@@ -88,6 +90,8 @@ from .services import (
     expected_buckets,
     filter_observations_by_cloud,
     get_cached_latest_response,
+    get_cached_ndmi_latest_response,
+    get_cached_ndmi_timeseries_response,
     get_cached_ndwi_latest_response,
     get_cached_ndwi_timeseries_response,
     get_cached_timeseries_response,
@@ -2173,6 +2177,611 @@ class NdwiRefreshView(BaseFarmView):
                 "max_cloud": get_default_max_cloud(),
             },
             index_type="NDWI",
+        )
+        dispatch_ndvi_job(job)
+
+        return success_response(
+            {"job_id": job.id},
+            message="Refresh queued",
+            status_code=status.HTTP_202_ACCEPTED,
+        )
+
+
+# ── NDMI Views ──────────────────────────────────────────────────
+
+ndmi_timeseries_data_schema = inline_serializer(
+    name="NdmiTimeseriesData",
+    fields={
+        "observations": NdviObservationSerializer(many=True),
+        "engine": serializers.CharField(),
+        "start": serializers.DateField(),
+        "end": serializers.DateField(),
+        "step_days": serializers.IntegerField(),
+        "max_cloud": serializers.IntegerField(),
+        "is_partial": serializers.BooleanField(),
+        "missing_buckets_count": serializers.IntegerField(),
+    },
+)
+ndmi_timeseries_success_response = success_envelope_serializer(
+    "NdmiTimeseriesSuccess", data=ndmi_timeseries_data_schema
+)
+
+ndmi_latest_data_schema = inline_serializer(
+    name="NdmiLatestData",
+    fields={
+        "observation": NdviObservationSerializer(allow_null=True),
+        "engine": serializers.CharField(),
+        "lookback_days": serializers.IntegerField(),
+        "max_cloud": serializers.IntegerField(),
+        "stale": serializers.BooleanField(),
+    },
+)
+ndmi_latest_success_response = success_envelope_serializer(
+    "NdmiLatestSuccess", data=ndmi_latest_data_schema
+)
+
+ndmi_refresh_success_response = success_envelope_serializer(
+    "NdmiRefreshSuccess",
+    data=inline_serializer(
+        name="NdmiRefreshData",
+        fields={"job_id": serializers.IntegerField()},
+    ),
+)
+
+ndmi_raster_queue_success_response = success_envelope_serializer(
+    "NdmiRasterQueueSuccess",
+    data=inline_serializer(
+        name="NdmiRasterQueueData",
+        fields={"job_id": serializers.IntegerField()},
+    ),
+)
+
+ndmi_engine_query_param = OpenApiParameter(
+    name="engine",
+    type=OpenApiTypes.STR,
+    location=OpenApiParameter.QUERY,
+    required=False,
+    description="Override NDMI engine (sentinelhub or stac).",
+)
+
+ndmi_representation_query_param = OpenApiParameter(
+    name="representation",
+    type=OpenApiTypes.STR,
+    location=OpenApiParameter.QUERY,
+    required=False,
+    description="Response representation version (v1 or v2).",
+)
+
+ndmi_external_farm_id_query_param = OpenApiParameter(
+    name="external_farm_id",
+    type=OpenApiTypes.UUID,
+    location=OpenApiParameter.QUERY,
+    required=False,
+    description="Resolve farm by external_farm_id (integration tokens).",
+)
+
+ndmi_timeseries_query_params = [
+    OpenApiParameter(
+        name="start",
+        type=OpenApiTypes.DATE,
+        location=OpenApiParameter.QUERY,
+        required=True,
+    ),
+    OpenApiParameter(
+        name="end",
+        type=OpenApiTypes.DATE,
+        location=OpenApiParameter.QUERY,
+        required=True,
+    ),
+    OpenApiParameter(
+        name="step_days",
+        type=OpenApiTypes.INT,
+        location=OpenApiParameter.QUERY,
+        required=False,
+        description="Days per bucket (1-30)",
+    ),
+    OpenApiParameter(
+        name="max_cloud",
+        type=OpenApiTypes.INT,
+        location=OpenApiParameter.QUERY,
+        required=False,
+        description="Maximum cloud coverage percent (0-100)",
+    ),
+    ndmi_engine_query_param,
+    ndmi_representation_query_param,
+    ndmi_external_farm_id_query_param,
+]
+
+ndmi_latest_query_params = [
+    OpenApiParameter(
+        name="lookback_days",
+        type=OpenApiTypes.INT,
+        location=OpenApiParameter.QUERY,
+        required=False,
+    ),
+    OpenApiParameter(
+        name="max_cloud",
+        type=OpenApiTypes.INT,
+        location=OpenApiParameter.QUERY,
+        required=False,
+    ),
+    ndmi_engine_query_param,
+    ndmi_representation_query_param,
+    ndmi_external_farm_id_query_param,
+]
+
+ndmi_raster_query_params = [
+    OpenApiParameter(
+        name="date",
+        type=OpenApiTypes.DATE,
+        location=OpenApiParameter.QUERY,
+        required=True,
+    ),
+    OpenApiParameter(
+        name="size",
+        type=OpenApiTypes.INT,
+        location=OpenApiParameter.QUERY,
+        required=False,
+    ),
+    OpenApiParameter(
+        name="max_cloud",
+        type=OpenApiTypes.INT,
+        location=OpenApiParameter.QUERY,
+        required=False,
+    ),
+    ndmi_external_farm_id_query_param,
+    ndmi_engine_query_param,
+]
+
+
+class NdmiTimeseriesView(BaseFarmView):
+    """Serve NDMI time series for a farm.
+
+    Auth: IsAuthenticated
+    """
+
+    @extend_schema(
+        parameters=ndmi_timeseries_query_params,
+        responses={
+            200: ndmi_timeseries_success_response,
+            400: ndvi_error_response,
+            404: ndvi_error_response,
+        },
+    )
+    def get(self, request: Request, farm_id: int) -> Response:
+        """Return NDMI observations for the requested range."""
+        farm = self._get_farm_for_request(request, farm_id)
+        owner_id = self._owner_id_for_request(request, farm)
+        engine_override = request.query_params.get("engine")
+        try:
+            engine_name = resolve_ndvi_engine_name(engine_override)
+        except ValueError as exc:
+            raise ValidationError("Invalid engine parameter.") from exc
+        representation = request.query_params.get("representation", "v1")
+        serializer = TimeseriesRequestSerializer(
+            data=request.query_params, context={"engine": engine_name}
+        )
+        serializer.is_valid(raise_exception=True)
+        params = TimeseriesParams(**serializer.validated_data)
+
+        bbox = normalize_bbox(farm)
+        enforce_quota(farm, bbox)
+
+        cached = get_cached_ndmi_timeseries_response(
+            owner_id=owner_id,
+            farm_id=farm.id,
+            engine=engine_name,
+            params=params,
+        )
+        if cached:
+            if representation == "v2":
+                _inject_v2_observations(
+                    cached,
+                    observations=None,
+                    farm=farm,
+                    engine=engine_name,
+                    index_type="NDMI",
+                )
+            return success_response(cached, message="NDMI timeseries (cached)")
+
+        observations = list(
+            NdviObservation.objects.filter(
+                farm=farm,
+                engine=engine_name,
+                index_type="NDMI",
+                bucket_date__gte=params.start,
+                bucket_date__lte=params.end,
+            ).order_by("bucket_date")
+        )
+        observations = filter_observations_by_cloud(
+            observations,
+            max_cloud=params.max_cloud,
+        )
+        serialized = NdviObservationSerializer(observations, many=True).data
+        existing_dates = {obs.bucket_date for obs in observations}
+        expected = expected_buckets(
+            params.start,
+            params.end,
+            params.step_days,
+        )
+        missing = detect_gaps(existing_dates, expected)
+
+        if missing:
+            job = enqueue_job(
+                owner_id=owner_id,
+                farm=farm,
+                engine_name=engine_override,
+                job_type=NdviJob.JobType.GAP_FILL,
+                params={
+                    "start": params.start,
+                    "end": params.end,
+                    "step_days": params.step_days,
+                    "max_cloud": params.max_cloud,
+                },
+                index_type="NDMI",
+            )
+            dispatch_ndvi_job(job)
+
+        payload: dict[str, Any] = {
+            "observations": serialized,
+            "engine": engine_name,
+            "start": params.start,
+            "end": params.end,
+            "step_days": params.step_days,
+            "max_cloud": params.max_cloud,
+            "is_partial": bool(missing),
+            "missing_buckets_count": len(missing),
+        }
+        if representation == "v2":
+            _inject_v2_observations(
+                payload,
+                observations=observations,
+                farm=farm,
+                engine=engine_name,
+                index_type="NDMI",
+            )
+        cache_ndmi_timeseries_response(
+            owner_id=owner_id,
+            farm_id=farm.id,
+            engine=engine_name,
+            params=params,
+            payload=payload,
+        )
+        return success_response(payload, message="NDMI timeseries")
+
+
+class NdmiLatestView(BaseFarmView):
+    """Return the latest NDMI observation and enqueue a refresh if stale."""
+
+    @extend_schema(
+        parameters=ndmi_latest_query_params,
+        responses={
+            200: ndmi_latest_success_response,
+            400: ndvi_error_response,
+            404: ndvi_error_response,
+        },
+    )
+    def get(self, request: Request, farm_id: int) -> Response:
+        """Return the most recent NDMI observation if present."""
+        farm = self._get_farm_for_request(request, farm_id)
+        owner_id = self._owner_id_for_request(request, farm)
+        engine_override = request.query_params.get("engine")
+        try:
+            engine_name = resolve_ndvi_engine_name(engine_override)
+        except ValueError as exc:
+            raise ValidationError("Invalid engine parameter.") from exc
+        representation = request.query_params.get("representation", "v1")
+        serializer = LatestRequestSerializer(
+            data=request.query_params, context={"engine": engine_name}
+        )
+        serializer.is_valid(raise_exception=True)
+        params = LatestParams(**serializer.validated_data)
+
+        bbox = normalize_bbox(farm)
+        enforce_quota(farm, bbox)
+
+        cached = get_cached_ndmi_latest_response(
+            owner_id=owner_id,
+            farm_id=farm.id,
+            engine=engine_name,
+            params=params,
+        )
+        if cached:
+            if representation == "v2":
+                obs_data = cached.get("observation") or {}
+                obs_date_raw = obs_data.get("bucket_date")
+                _inject_single_v2_observation(
+                    cached,
+                    farm=farm,
+                    engine=engine_name,
+                    obs_date=obs_date_raw,
+                    index_type="NDMI",
+                )
+            return success_response(cached, message="NDMI latest (cached)")
+
+        observations = filter_observations_by_cloud(
+            list(
+                NdviObservation.objects.filter(
+                    farm=farm,
+                    engine=engine_name,
+                    index_type="NDMI",
+                    is_latest=True,
+                )
+                .exclude(state="INVALIDATED")
+                .exclude(state="REJECTED")
+                .order_by("-bucket_date")
+            ),
+            max_cloud=params.max_cloud,
+        )
+        observation = observations[0] if observations else None
+
+        stale = is_stale(observation, params.lookback_days)
+        stale_labels = {"index": "NDMI", "engine": engine_name}
+        if stale:
+            spectral_farms_stale_total.labels(**stale_labels).set(1)
+            job = enqueue_job(
+                owner_id=owner_id,
+                farm=farm,
+                engine_name=engine_override,
+                job_type=NdviJob.JobType.REFRESH_LATEST,
+                params={
+                    "lookback_days": params.lookback_days,
+                    "max_cloud": params.max_cloud,
+                },
+                index_type="NDMI",
+            )
+            dispatch_ndvi_job(job)
+        else:
+            spectral_farms_stale_total.labels(**stale_labels).set(0)
+
+        payload: dict[str, Any] = {
+            "observation": (
+                NdviObservationSerializer(observation).data
+                if observation
+                else None
+            ),
+            "engine": engine_name,
+            "lookback_days": params.lookback_days,
+            "max_cloud": params.max_cloud,
+            "stale": stale,
+        }
+        if representation == "v2":
+            _inject_single_v2_observation(
+                payload,
+                farm=farm,
+                engine=engine_name,
+                obs_date=observation.bucket_date if observation else None,
+                index_type="NDMI",
+            )
+        cache_ndmi_latest_response(
+            owner_id=owner_id,
+            farm_id=farm.id,
+            engine=engine_name,
+            params=params,
+            payload=payload,
+        )
+        return success_response(payload, message="Latest NDMI")
+
+
+class NdmiRasterPngView(BaseRasterView):
+    """Serve NDMI raster PNG for a farm."""
+
+    renderer_classes = [JSONRenderer]
+    content_negotiation_class = IgnoreAcceptHeaderNegotiation
+
+    @extend_schema(
+        auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+        parameters=ndmi_raster_query_params,
+        responses={
+            (200, "image/png"): OpenApiTypes.BINARY,
+            304: OpenApiResponse(response=None, description="Not Modified"),
+            400: ndvi_error_response,
+            401: ndvi_error_response,
+            403: ndvi_error_response,
+            404: ndvi_error_response,
+        },
+    )
+    def get(self, request: Request, farm_id: int) -> HttpResponse | Response:
+        """Return a cached NDMI raster PNG or 404 if missing."""
+        self._enforce_integration_scope(request, write=False)
+        farm = self._get_farm_for_request(request, farm_id)
+        owner_id = farm.owner_id
+        engine_override = request.query_params.get("engine")
+        engine_name = resolve_raster_engine_name(engine_override)
+        serializer = RasterPngRequestSerializer(
+            data=request.query_params, context={"engine": engine_name}
+        )
+        serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+
+        bbox = normalize_bbox(farm)
+        enforce_quota(farm, bbox)
+
+        cache_key = (
+            f"ndmi:raster:ptr:{farm.id}:{engine_name}:"
+            f"{params['date']}:{params['size']}:{params['max_cloud']}"
+        )
+        cache = caches["default"]
+        artifact_id = cache.get(cache_key)
+        artifact: NdviRasterArtifact | None = None
+        if artifact_id:
+            artifact = NdviRasterArtifact.objects.filter(
+                id=cast(int, artifact_id)
+            ).first()
+        if artifact is None:
+            artifact = NdviRasterArtifact.objects.filter(
+                farm=farm,
+                engine=engine_name,
+                index_type="NDMI",
+                date=params["date"],
+                size=params["size"],
+                max_cloud=params["max_cloud"],
+            ).first()
+            if artifact:
+                cache.set(
+                    cache_key,
+                    artifact.id,
+                    getattr(settings, "NDVI_RASTER_CACHE_TTL_SECONDS", 86400),
+                )
+        if artifact is None:
+            reason = _lookup_raster_not_found_reason(
+                owner_id=owner_id,
+                farm_id=farm.id,
+                engine=engine_name,
+                raster_date=cast(date, params["date"]),
+                size=cast(int, params["size"]),
+                max_cloud=cast(int, params["max_cloud"]),
+                index_type="NDMI",
+            )
+            return error_response(
+                RASTER_NOT_FOUND_MESSAGE,
+                errors=_build_raster_not_found_errors(reason),
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        etag = artifact.content_hash
+        client_etag = request.headers.get("If-None-Match")
+        if client_etag and client_etag.strip('"') == etag:
+            not_modified = HttpResponse(status=status.HTTP_304_NOT_MODIFIED)
+            not_modified["ETag"] = etag
+            return not_modified
+
+        artifact.image.open("rb")
+        content = artifact.image.read()
+        artifact.image.close()
+        if not content:
+            reason = _lookup_raster_not_found_reason(
+                owner_id=owner_id,
+                farm_id=farm.id,
+                engine=engine_name,
+                raster_date=cast(date, params["date"]),
+                size=cast(int, params["size"]),
+                max_cloud=cast(int, params["max_cloud"]),
+                index_type="NDMI",
+            )
+            return error_response(
+                RASTER_NOT_FOUND_MESSAGE,
+                errors=_build_raster_not_found_errors(reason),
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        response = HttpResponse(content, content_type="image/png")
+        response["ETag"] = etag
+        ttl = int(getattr(settings, "NDVI_RASTER_CACHE_TTL_SECONDS", 86400))
+        response["Cache-Control"] = f"public, max-age={ttl}"
+        return response
+
+
+class NdmiRasterQueueView(BaseRasterView):
+    """Queue NDMI raster rendering with cooldown."""
+
+    throttle_cooldown = int(
+        getattr(
+            settings,
+            "NDVI_RASTER_MANUAL_QUEUE_COOLDOWN_SECONDS",
+            900,
+        )
+    )
+
+    @extend_schema(
+        auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+        request=RasterPngRequestSerializer,
+        parameters=[
+            ndmi_engine_query_param,
+            ndmi_external_farm_id_query_param,
+        ],
+        responses={
+            202: ndmi_raster_queue_success_response,
+            400: ndvi_error_response,
+            404: ndvi_error_response,
+            429: ndvi_error_response,
+        },
+    )
+    def post(self, request: Request, farm_id: int) -> Response:
+        """Enqueue a raster render job for the specified date."""
+        self._enforce_integration_scope(request, write=True)
+        farm = self._get_farm_for_request(request, farm_id)
+        owner_id = farm.owner_id
+        engine_override = request.query_params.get("engine")
+        engine_name = resolve_raster_engine_name(engine_override)
+        serializer = RasterPngRequestSerializer(
+            data=request.data, context={"engine": engine_name}
+        )
+        serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+
+        bbox = normalize_bbox(farm)
+        enforce_quota(farm, bbox)
+
+        throttle_cache = caches["default"]
+        key = f"ndmi:raster:queue:{owner_id}:{farm.id}"
+        if throttle_cache.get(key):
+            raise Throttled(detail="Raster already queued recently.")
+        throttle_cache.set(key, "1", self.throttle_cooldown)
+
+        job = enqueue_job(
+            owner_id=owner_id,
+            farm=farm,
+            engine_name=engine_override,
+            job_type=NdviJob.JobType.RASTER_PNG,
+            params={
+                "start": params["date"],
+                "end": params["date"],
+                "step_days": params["size"],
+                "max_cloud": params["max_cloud"],
+            },
+            index_type="NDMI",
+        )
+        dispatch_ndvi_job(job)
+
+        return success_response(
+            {"job_id": job.id},
+            message="Raster render queued",
+            status_code=status.HTTP_202_ACCEPTED,
+        )
+
+
+class NdmiRefreshView(BaseFarmView):
+    """Manual NDMI refresh trigger with throttling."""
+
+    throttle_cooldown = int(
+        getattr(
+            settings,
+            "NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS",
+            900,
+        )
+    )
+
+    @extend_schema(
+        request=None,
+        responses={
+            202: ndmi_refresh_success_response,
+            400: ndvi_error_response,
+            404: ndvi_error_response,
+            429: ndvi_error_response,
+        },
+    )
+    def post(self, request: Request, farm_id: int) -> Response:
+        """Enqueue a refresh_latest job if not recently triggered."""
+        farm = self._get_farm(farm_id, cast(int, request.user.id))
+        bbox = normalize_bbox(farm)
+        enforce_quota(farm, bbox)
+
+        throttle_cache = caches["default"]
+        key = f"ndmi:refresh:throttle:{request.user.id}:{farm.id}"
+        if throttle_cache.get(key):
+            raise Throttled(detail="Refresh already triggered recently.")
+        throttle_cache.set(key, "1", self.throttle_cooldown)
+
+        job = enqueue_job(
+            owner_id=cast(int, request.user.id),
+            farm=farm,
+            engine_name=None,
+            job_type=NdviJob.JobType.REFRESH_LATEST,
+            params={
+                "lookback_days": get_default_lookback_days(),
+                "max_cloud": get_default_max_cloud(),
+            },
+            index_type="NDMI",
         )
         dispatch_ndvi_job(job)
 

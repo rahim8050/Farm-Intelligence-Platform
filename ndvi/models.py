@@ -116,10 +116,10 @@ class NdviObservation(models.Model):
 
     index_type = models.CharField(
         max_length=16,
-        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI")],
+        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI"), ("NDMI", "NDMI")],
         default="NDVI",
         db_index=True,
-        help_text="Spectral index discriminator (NDVI, NDWI, etc.)",
+        help_text="Spectral index discriminator (NDVI, NDWI, NDMI, etc.)",
     )
 
     farm = models.ForeignKey(
@@ -287,9 +287,9 @@ class NdviJob(models.Model):
     )
     index_type = models.CharField(
         max_length=16,
-        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI")],
+        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI"), ("NDMI", "NDMI")],
         default="NDVI",
-        help_text="Spectral index discriminator (NDVI, NDWI, etc.)",
+        help_text="Spectral index discriminator (NDVI, NDWI, NDMI, etc.)",
     )
     engine = models.CharField(max_length=64)
     job_type = models.CharField(max_length=32, choices=JobType.choices)
@@ -365,9 +365,9 @@ class NdviRasterArtifact(models.Model):
     owner_id = models.IntegerField(db_index=True)
     index_type = models.CharField(
         max_length=16,
-        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI")],
+        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI"), ("NDMI", "NDMI")],
         default="NDVI",
-        help_text="Spectral index discriminator (NDVI, NDWI, etc.)",
+        help_text="Spectral index discriminator (NDVI, NDWI, NDMI, etc.)",
     )
     engine = models.CharField(max_length=64)
     date = models.DateField()
@@ -424,9 +424,9 @@ class NdviDerivedObservation(models.Model):
     )
     index_type = models.CharField(
         max_length=16,
-        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI")],
+        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI"), ("NDMI", "NDMI")],
         default="NDVI",
-        help_text="Spectral index discriminator (NDVI, NDWI, etc.)",
+        help_text="Spectral index discriminator (NDVI, NDWI, NDMI, etc.)",
     )
     engine = models.CharField(max_length=64)
     bucket_date = models.DateField()

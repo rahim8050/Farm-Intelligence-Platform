@@ -7,6 +7,11 @@ from .proxy_views import NdviIngestProxyView
 from .views import (
     CircuitBreakerResetView,
     FarmStateView,
+    NdmiLatestView,
+    NdmiRasterPngView,
+    NdmiRasterQueueView,
+    NdmiRefreshView,
+    NdmiTimeseriesView,
     NdviJobStatusView,
     NdviLatestView,
     NdviRasterPngView,
@@ -108,5 +113,31 @@ urlpatterns = [
         "farms/<int:farm_id>/ndwi/farm-state/",
         NdwiFarmStateView.as_view(),
         name="ndwi-farm-state",
+    ),
+    # ── NDMI endpoints ─────────────────────────────────────────
+    path(
+        "farms/<int:farm_id>/ndmi/timeseries/",
+        NdmiTimeseriesView.as_view(),
+        name="ndmi-timeseries",
+    ),
+    path(
+        "farms/<int:farm_id>/ndmi/latest/",
+        NdmiLatestView.as_view(),
+        name="ndmi-latest",
+    ),
+    path(
+        "farms/<int:farm_id>/ndmi/refresh/",
+        NdmiRefreshView.as_view(),
+        name="ndmi-refresh",
+    ),
+    path(
+        "farms/<int:farm_id>/ndmi/raster.png",
+        NdmiRasterPngView.as_view(),
+        name="ndmi-raster",
+    ),
+    path(
+        "farms/<int:farm_id>/ndmi/raster/queue",
+        NdmiRasterQueueView.as_view(),
+        name="ndmi-raster-queue",
     ),
 ]

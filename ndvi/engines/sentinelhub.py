@@ -114,6 +114,31 @@ function evaluatePixel(sample) {
 }
 """
 
+NDMI_EVALSCRIPT: Final[str] = """
+//VERSION=3
+function setup() {
+  return {
+    input: [{bands: ["B08", "B11", "SCL"]}],
+    output: [
+      { id: "ndmi", bands: 1, sampleType: "FLOAT32", statistics: true },
+      { id: "dataMask", bands: 1, sampleType: "UINT8", statistics: true }
+    ]
+  };
+}
+
+const MASKED_SCL = [0, 1, 2, 3, 8, 9, 10, 11];
+
+function isClear(sceneClass) {
+  return MASKED_SCL.indexOf(sceneClass) === -1;
+}
+
+function evaluatePixel(sample) {
+  const ndmi = (sample.B08 - sample.B11) / (sample.B08 + sample.B11);
+  const mask = isFinite(ndmi) && isClear(sample.SCL) ? 1 : 0;
+  return { ndmi: [ndmi], dataMask: [mask] };
+}
+"""
+
 
 class SentinelHubAuthError(UpstreamFailureError):
     """Signals Sentinel Hub authentication/authorization failures."""
@@ -388,9 +413,10 @@ class SentinelHubEngine(NDVIEngine):
             float(bbox.east),
             float(bbox.north),
         ]
-        evalscript = (
-            NDWI_EVALSCRIPT if self.index_type == "NDWI" else NDVI_EVALSCRIPT
-        )
+        evalscript = {
+            "NDWI": NDWI_EVALSCRIPT,
+            "NDMI": NDMI_EVALSCRIPT,
+        }.get(self.index_type, NDVI_EVALSCRIPT)
         payload: dict[str, Any] = {
             "input": {
                 "bounds": {"bbox": bounds},
@@ -437,7 +463,10 @@ class SentinelHubEngine(NDVIEngine):
                 continue
 
             outputs = item.get("outputs", {})
-            index_output_id = "ndwi" if self.index_type == "NDWI" else "ndvi"
+            index_output_id = {
+                "NDWI": "ndwi",
+                "NDMI": "ndmi",
+            }.get(self.index_type, "ndvi")
             ndvi_output = outputs.get(
                 index_output_id, outputs.get("default", {})
             )
@@ -451,7 +480,7 @@ class SentinelHubEngine(NDVIEngine):
             if not ndvi_stats:
                 ndvi_stats = ndvi_output
 
-            band_key = "NDWI" if self.index_type == "NDWI" else "NDVI"
+            band_key = self.index_type
             # Handle nested "statistics.{index}.stats" structure
             if not ndvi_stats.get("mean") and index_output_id in ndvi_stats:
                 ndvi_stats = ndvi_stats[index_output_id].get("stats", {})

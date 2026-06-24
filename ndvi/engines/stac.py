@@ -16,6 +16,7 @@ from ndvi.stac_client import (
     StacItem,
     build_asset_candidates,
     compute_ndvi_stats,
+    load_ndmi_array,
     load_ndvi_array,
     load_ndwi_array,
     normalize_cloud_fraction,
@@ -33,6 +34,7 @@ DEFAULT_ASSET_RED: Final[str] = "B04"
 DEFAULT_ASSET_GREEN: Final[str] = "B03"
 DEFAULT_ASSET_NIR: Final[str] = "B08"
 DEFAULT_ASSET_SCL: Final[str] = "SCL"
+DEFAULT_ASSET_SWIR1: Final[str] = "B11_20m"
 DEFAULT_MASK_WATER: Final[bool] = False
 
 
@@ -74,6 +76,10 @@ def get_default_mask_water() -> bool:
     return bool(getattr(settings, "NDVI_STAC_MASK_WATER", DEFAULT_MASK_WATER))
 
 
+def get_default_asset_swir1() -> str:
+    return str(getattr(settings, "NDVI_STAC_ASSET_SWIR1", DEFAULT_ASSET_SWIR1))
+
+
 class StacEngine(NDVIEngine):
     """Fetch NDVI metrics from a STAC API."""
 
@@ -89,6 +95,7 @@ class StacEngine(NDVIEngine):
         asset_red: str | None = None,
         asset_green: str | None = None,
         asset_nir: str | None = None,
+        asset_swir1: str | None = None,
         asset_scl: str | None = None,
         mask_water: bool | None = None,
     ) -> None:
@@ -100,6 +107,7 @@ class StacEngine(NDVIEngine):
         self.asset_red = asset_red or get_default_asset_red()
         self.asset_green = asset_green or DEFAULT_ASSET_GREEN
         self.asset_nir = asset_nir or get_default_asset_nir()
+        self.asset_swir1 = asset_swir1 or get_default_asset_swir1()
         self.asset_scl = asset_scl or get_default_asset_scl()
         self.mask_water = (
             mask_water if mask_water is not None else get_default_mask_water()
@@ -240,6 +248,24 @@ class StacEngine(NDVIEngine):
             index_array = load_ndwi_array(
                 green_href=green_href,
                 nir_href=nir_href,
+                bbox=bbox,
+                size=DEFAULT_STATS_SAMPLE_SIZE,
+                timeout_seconds=self.timeout_seconds,
+                scl_href=scl_href,
+                mask_water=self.mask_water,
+            )
+        elif self.index_type == "NDMI":
+            swir1_candidates = build_asset_candidates(self.asset_swir1)
+            swir1_href = resolve_asset_href_candidates(item, swir1_candidates)
+            if not swir1_href or not nir_href:
+                logger.warning(
+                    "stac.item.missing_assets item_id=%s",
+                    getattr(item, "id", "-"),
+                )
+                return None
+            index_array = load_ndmi_array(
+                nir_href=nir_href,
+                swir1_href=swir1_href,
                 bbox=bbox,
                 size=DEFAULT_STATS_SAMPLE_SIZE,
                 timeout_seconds=self.timeout_seconds,

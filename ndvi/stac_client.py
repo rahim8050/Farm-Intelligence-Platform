@@ -729,6 +729,127 @@ def load_ndwi_array(
     return ndwi.astype(np.float32)
 
 
+def load_ndmi_array(
+    *,
+    nir_href: str,
+    swir1_href: str,
+    bbox: BBox,
+    size: int | None,
+    timeout_seconds: float,
+    scl_href: str | None = None,
+    mask_water: bool = False,
+) -> np.ndarray:
+    """Load NDMI values for the given bbox.
+
+    NDMI = (NIR - SWIR1) / (NIR + SWIR1)
+    Uses SWIR1 band (B11, 20m) instead of Red/Green used by NDVI/NDWI.
+    NIR (B08, 10m) is resampled to 20m to match SWIR1 resolution.
+    Downloads remote assets to temp files first to avoid
+    OpenJPEG streaming decode errors, then processes locally.
+    Returns NaN for invalid pixels.
+    """
+
+    (
+        rasterio,
+        resampling_enum,
+        rasterio_error,
+        transform_bounds,
+        from_bounds,
+    ) = _require_rasterio()
+    gdal_env = {
+        "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+        "GDAL_HTTP_TIMEOUT": int(timeout_seconds),
+        "GDAL_HTTP_CONNECTTIMEOUT": int(timeout_seconds),
+        "GDAL_HTTP_MAX_RETRY": 5,
+        "GDAL_HTTP_RETRY_DELAY": 2,
+        "CPL_CURL_VERBOSE": False,
+        "GDAL_NUM_THREADS": "ALL_CPUS",
+        "GDAL_CACHEMAX": 256,
+    }
+    try:
+        with _local_asset_context(nir_href, swir1_href) as (
+            local_nir,
+            local_swir1,
+        ):
+            with rasterio.Env(**gdal_env):
+                with (
+                    rasterio.open(local_nir) as nir_ds,
+                    rasterio.open(local_swir1) as swir1_ds,
+                ):
+                    if nir_ds.crs is None or swir1_ds.crs is None:
+                        raise StacProcessingError(
+                            "Raster assets missing CRS metadata."
+                        )
+                    bounds = transform_bounds(
+                        "EPSG:4326",
+                        nir_ds.crs,
+                        float(bbox.west),
+                        float(bbox.south),
+                        float(bbox.east),
+                        float(bbox.north),
+                        densify_pts=21,
+                    )
+                    window = from_bounds(
+                        *bounds,
+                        transform=swir1_ds.transform,
+                    )
+                    out_shape: tuple[int, int] | None = None
+                    if size:
+                        out_shape = (size, size)
+                    resampling = resampling_enum.bilinear
+                    # Read SWIR1 at native 20m resolution
+                    swir1 = swir1_ds.read(
+                        1,
+                        window=window,
+                        out_shape=out_shape,
+                        resampling=resampling,
+                        masked=True,
+                    )
+                    # Read NIR resampled to SWIR1's 20m resolution
+                    nir = nir_ds.read(
+                        1,
+                        window=window,
+                        out_shape=out_shape,
+                        resampling=resampling,
+                        masked=True,
+                    )
+
+                    if scl_href is not None:
+                        with _local_asset_context(scl_href, scl_href) as (
+                            local_scl,
+                            _,
+                        ):
+                            with rasterio.open(local_scl) as scl_ds:
+                                scl = scl_ds.read(
+                                    1,
+                                    window=window,
+                                    out_shape=out_shape,
+                                    resampling=resampling_enum.nearest,
+                                    boundless=True,
+                                )
+    except rasterio_error as exc:
+        raise StacProcessingError(f"Raster processing failed: {exc}") from exc
+    except Exception as exc:
+        raise StacProcessingError(f"Raster processing failed: {exc}") from exc
+
+    nir_data = nir.filled(np.nan).astype(np.float32)
+    swir1_data = swir1.filled(np.nan).astype(np.float32)
+    _validate_band_variation(nir_data, "NIR")
+    _validate_band_variation(swir1_data, "SWIR1")
+    denom = nir_data + swir1_data
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ndmi = np.where(
+            denom != 0,
+            (nir_data - swir1_data) / denom,
+            np.nan,
+        )
+
+    if scl_href is not None:
+        ndmi, _, _ = apply_scl_mask(ndmi, scl, mask_water=mask_water)
+
+    return ndmi.astype(np.float32)
+
+
 def _validate_band_variation(data: np.ndarray, band_name: str) -> None:
     """Ensure each band has spatial variation."""
 

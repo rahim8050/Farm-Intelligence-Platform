@@ -995,6 +995,38 @@ def _build_modis_engine() -> NDVIEngine:
     return ModisEngine()
 
 
+def _build_ndmi_sentinelhub_engine() -> NDVIEngine:
+    return SentinelHubEngine(index_type="NDMI")
+
+
+@lru_cache(maxsize=1)
+def _build_ndmi_stac_engine() -> NDVIEngine:
+    from .engines.stac import StacEngine
+
+    return StacEngine(index_type="NDMI")
+
+
+@lru_cache(maxsize=1)
+def _build_ndmi_gee_engine() -> NDVIEngine:
+    from .engines.gee import GeeEngine
+
+    return GeeEngine(index_type="NDMI")
+
+
+@lru_cache(maxsize=1)
+def _build_ndmi_landsat_engine() -> NDVIEngine:
+    from .engines.landsat import LandsatEngine
+
+    return LandsatEngine(index_type="NDMI")
+
+
+@lru_cache(maxsize=1)
+def _build_ndmi_modis_engine() -> NDVIEngine:
+    from .engines.modis import ModisEngine
+
+    return ModisEngine(index_type="NDMI")
+
+
 ENGINE_FACTORIES: dict[str, Callable[[], NDVIEngine]] = {
     "gee": _build_gee_engine,
     "sentinelhub": _build_sentinelhub_engine,
@@ -1006,6 +1038,11 @@ ENGINE_FACTORIES: dict[str, Callable[[], NDVIEngine]] = {
     "ndwi_stac": _build_ndwi_stac_engine,
     "ndwi_landsat": _build_ndwi_landsat_engine,
     "ndwi_modis": _build_ndwi_modis_engine,
+    "ndmi_gee": _build_ndmi_gee_engine,
+    "ndmi_sentinelhub": _build_ndmi_sentinelhub_engine,
+    "ndmi_stac": _build_ndmi_stac_engine,
+    "ndmi_landsat": _build_ndmi_landsat_engine,
+    "ndmi_modis": _build_ndmi_modis_engine,
 }
 
 
@@ -1013,7 +1050,8 @@ def get_engine(
     engine_name: str | None = None, *, index_type: str = "NDVI"
 ) -> NDVIEngine:
     engine = resolve_ndvi_engine_name(engine_name)
-    factory_key = f"ndwi_{engine}" if index_type == "NDWI" else engine
+    prefix = {"NDWI": "ndwi", "NDMI": "ndmi"}.get(index_type)
+    factory_key = f"{prefix}_{engine}" if prefix else engine
     factory = ENGINE_FACTORIES.get(factory_key)
     if not factory:
         raise ValueError(f"Unsupported {index_type} engine: {engine}")
@@ -1352,6 +1390,72 @@ def get_cached_ndwi_latest_response(
     cached = cache.get(key)
     if cached:
         ndvi_cache_hit_total.labels(layer="ndwi_latest").inc()
+    return cached
+
+
+def cache_ndmi_timeseries_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: TimeseriesParams,
+    payload: dict[str, Any],
+) -> None:
+    cache = caches["default"]
+    key = (
+        f"ndmi:cache:v{NDVI_TIMESERIES_CACHE_VERSION}:ts:{owner_id}:"
+        f"{farm_id}:{engine}:{params.start}:{params.end}:"
+        f"{params.step_days}:{params.max_cloud}"
+    )
+    cache.set(key, payload, get_cache_ttl_timeseries())
+
+
+def get_cached_ndmi_timeseries_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: TimeseriesParams,
+) -> dict[str, Any] | None:
+    cache = caches["default"]
+    key = (
+        f"ndmi:cache:v{NDVI_TIMESERIES_CACHE_VERSION}:ts:{owner_id}:"
+        f"{farm_id}:{engine}:{params.start}:{params.end}:"
+        f"{params.step_days}:{params.max_cloud}"
+    )
+    cached = cache.get(key)
+    if cached:
+        ndvi_cache_hit_total.labels(layer="ndmi_timeseries").inc()
+    return cached
+
+
+def cache_ndmi_latest_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: LatestParams,
+    payload: dict[str, Any],
+) -> None:
+    cache = caches["default"]
+    key = (
+        f"ndmi:cache:v{NDVI_LATEST_CACHE_VERSION}:latest:{owner_id}:"
+        f"{farm_id}:{engine}:{params.lookback_days}:{params.max_cloud}"
+    )
+    cache.set(key, payload, get_cache_ttl_latest())
+
+
+def get_cached_ndmi_latest_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: LatestParams,
+) -> dict[str, Any] | None:
+    cache = caches["default"]
+    key = (
+        f"ndmi:cache:v{NDVI_LATEST_CACHE_VERSION}:latest:{owner_id}:"
+        f"{farm_id}:{engine}:{params.lookback_days}:{params.max_cloud}"
+    )
+    cached = cache.get(key)
+    if cached:
+        ndvi_cache_hit_total.labels(layer="ndmi_latest").inc()
     return cached
 
 
