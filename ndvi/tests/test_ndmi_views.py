@@ -50,7 +50,7 @@ class NdmiViewMixin:
             bbox_east=Decimal("0.2"),
             is_active=True,
         )
-        self.client.force_authenticate(user=self.user)
+        self.client.force_authenticate(user=self.user)  # type: ignore[attr-defined]
 
 
 class NdmiApiTests(NdmiViewMixin, APITestCase):

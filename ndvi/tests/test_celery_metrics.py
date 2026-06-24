@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import sys
+from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
 import prometheus_client
@@ -16,7 +17,7 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _clear_registry() -> None:
+def _clear_registry() -> Generator[None, None, None]:
     """Reset Prometheus registry between tests."""
     prometheus_client.REGISTRY = prometheus_client.CollectorRegistry()
     yield
@@ -65,7 +66,8 @@ def test_collect_metrics_sets_gauge_values(mock_start: MagicMock) -> None:
     with patch("redis.Redis.from_url", return_value=fake_redis):
         collect_metrics("redis://localhost:6379/0")
 
-    sample = queue_length.labels(queue="default").collect()[0].samples[0]
+    metrics = list(queue_length.labels(queue="default").collect())
+    sample = metrics[0].samples[0]
     assert sample.value == 3
 
 
