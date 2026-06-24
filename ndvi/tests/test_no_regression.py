@@ -73,6 +73,28 @@ class NdviEngineFactoriesNotOverwritten(TestCase):
         for suffix in ("gee", "sentinelhub", "stac", "landsat", "modis"):
             self.assertIn(f"ndwi_{suffix}", ENGINE_FACTORIES)
 
+    def test_ndmi_factories_are_separate_keys(self) -> None:
+        self.assertIn("stac", ENGINE_FACTORIES)
+        self.assertIn("ndmi_stac", ENGINE_FACTORIES)
+        self.assertIsNot(
+            ENGINE_FACTORIES["stac"], ENGINE_FACTORIES["ndmi_stac"]
+        )
+
+    def test_ndmi_factories_all_present(self) -> None:
+        for suffix in ("gee", "sentinelhub", "stac", "landsat", "modis"):
+            self.assertIn(f"ndmi_{suffix}", ENGINE_FACTORIES)
+
+    def test_factories_are_distinct_per_index_type(self) -> None:
+        for suffix in ("gee", "sentinelhub", "stac", "landsat", "modis"):
+            factories = {
+                "NDVI": ENGINE_FACTORIES[suffix],
+                "NDWI": ENGINE_FACTORIES[f"ndwi_{suffix}"],
+                "NDMI": ENGINE_FACTORIES[f"ndmi_{suffix}"],
+            }
+            assert len(set(id(f) for f in factories.values())) == 3, (
+                f"Factories for {suffix} must be distinct objects"
+            )
+
 
 class NdviModelQueriesUnchanged(TestCase):
     """NdviObservation queries must be unaffected by index_type."""
@@ -132,8 +154,8 @@ class NdviMetricNamesUnchanged(TestCase):
         self.assertIsNotNone(spectral_jobs_total)
 
 
-class NdwiEndpointsDoNotBreakNdvi(TestCase):
-    """NDWI endpoint registration must not break NDVI URL resolution."""
+class IndexEndpointsDoNotBreakEachOther(TestCase):
+    """NDWI/NDMI must not break NDVI/NDWI URL resolution."""
 
     def test_ndvi_timeseries_url_resolves(self) -> None:
         resolver = resolve("/api/v1/farms/1/ndvi/timeseries/")
@@ -142,6 +164,26 @@ class NdwiEndpointsDoNotBreakNdvi(TestCase):
     def test_ndwi_timeseries_url_resolves(self) -> None:
         resolver = resolve("/api/v1/farms/1/ndwi/timeseries/")
         self.assertIn("ndwi", resolver.view_name or "")
+
+    def test_ndmi_timeseries_url_resolves(self) -> None:
+        resolver = resolve("/api/v1/farms/1/ndmi/timeseries/")
+        self.assertIn("ndmi", resolver.view_name or "")
+
+    def test_ndmi_latest_url_resolves(self) -> None:
+        resolver = resolve("/api/v1/farms/1/ndmi/latest/")
+        self.assertIn("ndmi", resolver.view_name or "")
+
+    def test_ndmi_refresh_url_resolves(self) -> None:
+        resolver = resolve("/api/v1/farms/1/ndmi/refresh/")
+        self.assertIn("ndmi", resolver.view_name or "")
+
+    def test_ndmi_raster_png_url_resolves(self) -> None:
+        resolver = resolve("/api/v1/farms/1/ndmi/raster.png")
+        self.assertIn("ndmi", resolver.view_name or "")
+
+    def test_ndmi_raster_queue_url_resolves(self) -> None:
+        resolver = resolve("/api/v1/farms/1/ndmi/raster/queue")
+        self.assertIn("ndmi", resolver.view_name or "")
 
 
 class NdwiV2RepresentationIntegrationTests(APITestCase):
