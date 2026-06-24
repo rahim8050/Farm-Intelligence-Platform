@@ -10,8 +10,10 @@ Covers the NDMI-specific branches added in Phase 0:
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -25,6 +27,11 @@ from ndvi.engines.sentinelhub import (
 from ndvi.engines.stac import StacEngine
 from ndvi.services import ENGINE_FACTORIES
 from ndvi.stac_client import NdviStats, StacItem
+
+_SENTINEL_CREDS = {
+    "SENTINELHUB_CLIENT_ID": "test-id",
+    "SENTINELHUB_CLIENT_SECRET": "test-secret",
+}
 
 
 class FakeClient:
@@ -146,10 +153,15 @@ def _make_bbox() -> BBox:
     )
 
 
-def test_sentinelhub_evalscript_dispatch_returns_ndmi_for_ndmi() -> None:
+def _make_sentinel_engine(index_type: str = "NDVI") -> Any:
     from ndvi.engines.sentinelhub import SentinelHubEngine
 
-    engine = SentinelHubEngine(index_type="NDMI")
+    with patch.dict(os.environ, _SENTINEL_CREDS):
+        return SentinelHubEngine(index_type=index_type)
+
+
+def test_sentinelhub_evalscript_dispatch_returns_ndmi_for_ndmi() -> None:
+    engine = _make_sentinel_engine(index_type="NDMI")
     payload = engine._build_statistics_payload(
         bbox=_make_bbox(),
         start=date(2025, 1, 1),
@@ -162,9 +174,7 @@ def test_sentinelhub_evalscript_dispatch_returns_ndmi_for_ndmi() -> None:
 
 
 def test_sentinelhub_evalscript_dispatch_returns_ndwi_for_ndwi() -> None:
-    from ndvi.engines.sentinelhub import SentinelHubEngine
-
-    engine = SentinelHubEngine(index_type="NDWI")
+    engine = _make_sentinel_engine(index_type="NDWI")
     payload = engine._build_statistics_payload(
         bbox=_make_bbox(),
         start=date(2025, 1, 1),
@@ -177,9 +187,7 @@ def test_sentinelhub_evalscript_dispatch_returns_ndwi_for_ndwi() -> None:
 
 
 def test_sentinelhub_evalscript_dispatch_returns_ndvi_by_default() -> None:
-    from ndvi.engines.sentinelhub import SentinelHubEngine
-
-    engine = SentinelHubEngine()
+    engine = _make_sentinel_engine()
     payload = engine._build_statistics_payload(
         bbox=_make_bbox(),
         start=date(2025, 1, 1),
@@ -192,9 +200,7 @@ def test_sentinelhub_evalscript_dispatch_returns_ndvi_by_default() -> None:
 
 
 def test_sentinelhub_evalscript_dispatch_returns_ndvi_for_unknown() -> None:
-    from ndvi.engines.sentinelhub import SentinelHubEngine
-
-    engine = SentinelHubEngine(index_type="UNKNOWN")
+    engine = _make_sentinel_engine(index_type="UNKNOWN")
     payload = engine._build_statistics_payload(
         bbox=_make_bbox(),
         start=date(2025, 1, 1),
@@ -259,5 +265,6 @@ def test_get_engine_resolves_ndmi_stac(mock_resolve: MagicMock) -> None:
 def test_get_engine_resolves_ndmi_sentinelhub(mock_resolve: MagicMock) -> None:
     from ndvi.services import get_engine
 
-    engine = get_engine("sentinelhub", index_type="NDMI")
+    with patch.dict(os.environ, _SENTINEL_CREDS):
+        engine = get_engine("sentinelhub", index_type="NDMI")
     assert engine.index_type == "NDMI"

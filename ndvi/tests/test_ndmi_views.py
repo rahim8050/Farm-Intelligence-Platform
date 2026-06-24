@@ -126,6 +126,69 @@ class NdmiApiTests(NdmiViewMixin, APITestCase):
 
     @patch("ndvi.views.enforce_quota")
     @patch("ndvi.views.dispatch_ndvi_job")
+    def test_ndmi_timeseries_v2_cached(
+        self, mock_dispatch: MagicMock, mock_quota: MagicMock
+    ) -> None:
+        """GET /ndmi/timeseries/ with representation=v2 returns envelope."""
+        td = date.today()
+        start = td - timedelta(days=3)
+        end = td
+        from ndvi.services import cache_ndmi_timeseries_response
+
+        params = TimeseriesParams(
+            start=start, end=end, step_days=1, max_cloud=30
+        )
+        cache_ndmi_timeseries_response(
+            owner_id=self.user.id,
+            farm_id=self.farm.id,
+            engine="stac",
+            params=params,
+            payload={"observations": []},
+        )
+        response = self.client.get(
+            self.timeseries_url,
+            {
+                "engine": "stac",
+                "step_days": "1",
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "representation": "v2",
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("data", response.json())
+
+    @patch("ndvi.views.enforce_quota")
+    @patch("ndvi.views.dispatch_ndvi_job")
+    def test_ndmi_timeseries_gap_fill(
+        self, mock_dispatch: MagicMock, mock_quota: MagicMock
+    ) -> None:
+        """GET /ndmi/timeseries/ triggers gap fill for missing dates."""
+        td = date.today()
+        start = td - timedelta(days=10)
+        end = td + timedelta(days=1)
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=td,
+            mean=0.4,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        response = self.client.get(
+            self.timeseries_url,
+            {
+                "engine": "stac",
+                "step_days": "1",
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_dispatch.assert_called()
+
+    @patch("ndvi.views.enforce_quota")
+    @patch("ndvi.views.dispatch_ndvi_job")
     def test_ndmi_latest_returns_200(
         self, mock_dispatch: MagicMock, mock_quota: MagicMock
     ) -> None:
@@ -149,10 +212,10 @@ class NdmiApiTests(NdmiViewMixin, APITestCase):
 
     @patch("ndvi.views.enforce_quota")
     @patch("ndvi.views.dispatch_ndvi_job")
-    def test_ndmi_latest_cached_response(
+    def test_ndmi_latest_v2_cached(
         self, mock_dispatch: MagicMock, mock_quota: MagicMock
     ) -> None:
-        """GET /ndmi/latest/ returns envelope when cached."""
+        """GET /ndmi/latest/ with representation=v2 returns envelope."""
         from ndvi.services import cache_ndmi_latest_response
 
         params = LatestParams(lookback_days=14, max_cloud=30)
@@ -161,13 +224,15 @@ class NdmiApiTests(NdmiViewMixin, APITestCase):
             farm_id=self.farm.id,
             engine="stac",
             params=params,
-            payload={"observation": None},
+            payload={"observation": None, "engine": "stac"},
         )
         response = self.client.get(
             self.latest_url,
-            {"engine": "stac"},
+            {"engine": "stac", "representation": "v2"},
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data: dict[str, Any] = response.json()
+        self.assertIn("data", data)
 
     @patch("ndvi.views.enforce_quota")
     @patch("ndvi.views.dispatch_ndvi_job")
