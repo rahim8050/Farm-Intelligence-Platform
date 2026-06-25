@@ -5,7 +5,7 @@ description = "Backend Django/DRF service for farm intelligence: NDVI/NDWI satel
 license = {text = "MIT"}
 requires-python = ">=3.12"
 dependencies = [
-  "Django==5.1.15",
+  "Django==5.2.13",
   "dj-database-url==3.1.0",
   "djangorestframework==3.16.1",
   "djangorestframework-simplejwt==5.5.1",
@@ -54,7 +54,7 @@ dev = [
   "daphne==4.1.2",
   "distlib==0.4.0",
   "dj-database-url==3.1.0",
-  "Django==5.1.15",
+  "Django==5.2.13",
   "django-celery-beat==2.9.0",
   "django-environ==0.12.1",
   "django-extensions==4.1",
