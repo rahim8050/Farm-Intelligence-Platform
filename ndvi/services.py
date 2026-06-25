@@ -1001,9 +1001,9 @@ def _build_ndmi_sentinelhub_engine() -> NDVIEngine:
 
 @lru_cache(maxsize=1)
 def _build_ndmi_stac_engine() -> NDVIEngine:
-    from .engines.stac import StacEngine
+    from .engines.stac import DEFAULT_ASSET_SWIR1_20M, StacEngine
 
-    return StacEngine(index_type="NDMI")
+    return StacEngine(index_type="NDMI", asset_swir1=DEFAULT_ASSET_SWIR1_20M)
 
 
 @lru_cache(maxsize=1)

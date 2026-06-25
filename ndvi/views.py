@@ -55,6 +55,7 @@ from integrations.authentication import (
 )
 
 from .farm_state import build_farm_state
+from .farm_state_ndmi import compute_ndmi_farm_state
 from .farm_state_ndwi import compute_ndwi_farm_state
 from .metrics import ndvi_farms_stale_total, spectral_farms_stale_total
 from .models import (
@@ -67,6 +68,7 @@ from .raster.registry import resolve_raster_engine_name
 from .serializers import (
     FarmStateSerializer,
     LatestRequestSerializer,
+    NdmiFarmStateSerializer,
     NdviDerivedObservationSerializer,
     NdviJobSerializer,
     NdviObservationSerializer,
@@ -2187,6 +2189,11 @@ class NdwiRefreshView(BaseFarmView):
         )
 
 
+ndmi_farm_state_success_response = success_envelope_serializer(
+    "NdmiFarmStateSuccess", data=NdmiFarmStateSerializer()
+)
+
+
 # ── NDMI Views ──────────────────────────────────────────────────
 
 ndmi_timeseries_data_schema = inline_serializer(
@@ -2790,3 +2797,113 @@ class NdmiRefreshView(BaseFarmView):
             message="Refresh queued",
             status_code=status.HTTP_202_ACCEPTED,
         )
+
+
+class NdmiFarmStateView(BaseFarmView):
+    """Summarize NDMI-derived farm state for a farm.
+
+    Auth: API key, user JWT, or integration JWT.
+    Permissions: owner-only for user/API key requests.
+    Integration access: allow-listed per farm via FarmIntegrationAccess.
+    Integration scope: read.
+    Response data: farm_id, mean_ndmi, max_ndmi, min_ndmi, trend,
+    state, interpretation, action.
+    """
+
+    authentication_classes = (FarmObservationAuthentication,)
+    permission_classes = [IsAuthenticated]
+
+    def _integration_scopes(self, request: Request) -> set[str]:
+        auth_obj: Any = getattr(request, "auth", None)
+
+        def _claim(key: str) -> str:
+            if isinstance(auth_obj, dict):
+                return str(auth_obj.get(key, "") or "")
+            getter = getattr(auth_obj, "get", None)
+            if callable(getter):
+                try:
+                    value = getter(key)
+                except Exception:
+                    value = None
+                else:
+                    if value is not None:
+                        return str(value or "")
+            try:
+                return str(auth_obj[key] or "")
+            except Exception:
+                return ""
+
+        scope = _claim("scope")
+        if not scope:
+            return set()
+        normalized = scope.replace(",", " ")
+        return {item for item in normalized.split() if item}
+
+    def _enforce_integration_scope(
+        self, request: Request, *, write: bool
+    ) -> None:
+        if not isinstance(request.user, IntegrationTokenUser):
+            return
+        scopes = self._integration_scopes(request)
+        if not scopes:
+            raise PermissionDenied("Integration token scope missing.")
+        read_scopes = {"read", "write", "admin"}
+        write_scopes = {"write", "admin"}
+        allowed = write_scopes if write else read_scopes
+        if not scopes.intersection(allowed):
+            raise PermissionDenied("Integration token scope not permitted.")
+
+    def _get_farm_for_request(self, request: Request, farm_id: int) -> Farm:
+        if isinstance(request.user, IntegrationTokenUser):
+            external_farm_id = self._resolve_external_farm_id(request)
+            lookup: dict[str, Any] = {
+                "is_active": True,
+                "integration_access__client_id": request.user.client_id,
+                "integration_access__is_active": True,
+            }
+            if external_farm_id is not None:
+                lookup["external_farm_id"] = external_farm_id
+            else:
+                lookup["id"] = farm_id
+            return get_object_or_404(Farm, **lookup)
+
+        user_id = getattr(request.user, "id", None)
+        if user_id is None:
+            raise Http404
+
+        return self._get_farm(farm_id, cast(int, user_id))
+
+    @extend_schema(
+        auth=cast(list[str], [{"BearerAuth": []}, {"ApiKeyAuth": []}]),
+        operation_id="v1_farms_ndmi_farm_state_retrieve",
+        parameters=[external_farm_id_query_param],
+        responses={
+            200: ndmi_farm_state_success_response,
+            401: ndvi_error_response,
+            403: ndvi_error_response,
+            404: ndvi_error_response,
+        },
+    )
+    def get(self, request: Request, farm_id: int) -> Response:
+        """Return the derived NDMI farm state for the requested farm.
+
+        Inputs: path param farm_id.
+        Query params: optional external_farm_id (integration tokens).
+        Output: success envelope with NDMI metrics + moisture classification.
+        Side effects: none.
+        """
+
+        self._enforce_integration_scope(request, write=False)
+        farm = self._get_farm_for_request(request, farm_id)
+        result = compute_ndmi_farm_state(farm=farm)
+        payload: dict[str, JSONValue] = {
+            "farm_id": result.farm_id,
+            "mean_ndmi": result.mean_ndmi,
+            "max_ndmi": result.max_ndmi,
+            "min_ndmi": result.min_ndmi,
+            "trend": result.trend,
+            "state": result.state,
+            "interpretation": result.interpretation,
+            "action": result.action,
+        }
+        return success_response(payload, message="NDMI farm state")

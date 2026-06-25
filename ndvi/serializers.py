@@ -94,6 +94,17 @@ class NdwiFarmStateSerializer(serializers.Serializer):
     action = serializers.CharField()
 
 
+class NdmiFarmStateSerializer(serializers.Serializer):
+    farm_id = serializers.IntegerField()
+    mean_ndmi = serializers.FloatField(allow_null=True)
+    max_ndmi = serializers.FloatField(allow_null=True)
+    min_ndmi = serializers.FloatField(allow_null=True)
+    trend = serializers.FloatField(allow_null=True)
+    state = serializers.CharField()
+    interpretation = serializers.CharField()
+    action = serializers.CharField()
+
+
 class TimeseriesRequestSerializer(serializers.Serializer):
     start = FlexibleDateField()
     end = FlexibleDateField()

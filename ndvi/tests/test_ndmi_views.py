@@ -6,6 +6,7 @@ Covers:
 - NdmiRefreshView
 - NdmiRasterPngView
 - NdmiRasterQueueView
+- NdmiFarmStateView
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from farms.models import Farm
+from ndvi.farm_state_ndmi import STATE_UNKNOWN, compute_ndmi_farm_state
 from ndvi.models import NdviObservation
 from ndvi.services import LatestParams, TimeseriesParams
 
@@ -388,3 +390,201 @@ class NdmiUrlResolutionTests(NdmiViewMixin, APITestCase):
 
         resolver = resolve("/api/v1/farms/1/ndmi/raster/queue")
         self.assertIn("ndmi", resolver.view_name or "")
+
+    def test_ndmi_farm_state_url_resolves(self) -> None:
+        from django.urls import resolve
+
+        resolver = resolve("/api/v1/farms/1/ndmi/farm-state/")
+        self.assertIn("ndmi", resolver.view_name or "")
+
+
+class NdmiFarmStateApiTests(NdmiViewMixin, APITestCase):
+    """NDMI farm state API endpoint tests."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.url = f"/api/v1/farms/{self.farm.id}/ndmi/farm-state/"
+        self.client.force_authenticate(user=self.user)
+
+    def _seed_observations(
+        self, mean: float = 0.5, count: int = 5
+    ) -> list[NdviObservation]:
+        today = date.today()
+        obs = []
+        for i in range(count):
+            o = NdviObservation.objects.create(
+                farm=self.farm,
+                engine="stac",
+                bucket_date=today - timedelta(days=i),
+                mean=mean,
+                min=mean - 0.1,
+                max=mean + 0.1,
+                sample_count=100,
+                cloud_fraction=0.05,
+                index_type="NDMI",
+                state=NdviObservation.ObservationState.FINAL,
+            )
+            obs.append(o)
+        return obs
+
+    def test_farm_state_returns_200(self) -> None:
+        self._seed_observations(mean=0.5)
+        response = self.client.get(self.url)
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_farm_state_has_envelope(self) -> None:
+        self._seed_observations(mean=-0.3)
+        response = self.client.get(self.url)
+        data: dict[str, Any] = response.json()
+        assert "data" in data
+        assert "message" in data
+        assert "errors" in data or "success" in data
+
+    def test_farm_state_moisture_classification(self) -> None:
+        self._seed_observations(mean=0.5)
+        response = self.client.get(self.url)
+        data = response.json()
+        payload = data.get("data", {})
+        assert payload.get("mean_ndmi") == 0.5
+        assert payload.get("state") is not None
+        assert payload.get("interpretation") is not None
+        assert payload.get("action") is not None
+        assert payload.get("farm_id") == self.farm.id
+
+    def test_farm_state_dry_moisture(self) -> None:
+        self._seed_observations(mean=-0.3)
+        response = self.client.get(self.url)
+        data = response.json()
+        assert data["data"]["state"] == "dry"
+
+    def test_farm_state_returns_404_for_other_user(self) -> None:
+        other_pw = secrets.token_urlsafe(16)
+        other = get_user_model().objects.create_user(
+            username="ndmi_other2",
+            password=other_pw,
+            email="other2@example.com",
+        )
+        self.client.force_authenticate(user=other)
+        response = self.client.get(self.url)
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_farm_state_no_observations(self) -> None:
+        response = self.client.get(self.url)
+        data = response.json()
+        assert data["data"]["state"] == STATE_UNKNOWN
+
+    def test_farm_state_returns_min_ndmi(self) -> None:
+        self._seed_observations(mean=0.3)
+        response = self.client.get(self.url)
+        data = response.json()
+        payload = data["data"]
+        assert payload.get("min_ndmi") is not None
+
+
+class ComputeNdmiFarmStateTests(NdmiViewMixin, APITestCase):
+    """Unit tests for compute_ndmi_farm_state()."""
+
+    def test_returns_result_for_empty_farm(self) -> None:
+        result = compute_ndmi_farm_state(farm=self.farm)
+        assert result.farm_id == self.farm.id
+        assert result.mean_ndmi is None
+
+    def test_uses_only_ndmi_observations(self) -> None:
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today(),
+            mean=0.8,
+            min=0.7,
+            max=0.9,
+            sample_count=100,
+            cloud_fraction=0.05,
+            index_type="NDVI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        result = compute_ndmi_farm_state(farm=self.farm)
+        assert result.mean_ndmi is None
+
+    def test_dry_threshold(self) -> None:
+        """mean_ndmi < -0.2 should be classified as dry."""
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today(),
+            mean=-0.3,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        result = compute_ndmi_farm_state(farm=self.farm)
+        assert result.state == "dry"
+
+    def test_moist_state(self) -> None:
+        """mean_ndmi between -0.2 and 0.2 with no declining trend is moist."""
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today(),
+            mean=0.0,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        result = compute_ndmi_farm_state(farm=self.farm)
+        assert result.state == "moist"
+
+    def test_declining_trend(self) -> None:
+        """Multiple observations with decreasing mean should be declining."""
+        today = date.today()
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=today - timedelta(days=2),
+            mean=0.1,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=today - timedelta(days=1),
+            mean=0.05,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=today,
+            mean=0.0,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        result = compute_ndmi_farm_state(farm=self.farm)
+        assert result.state == "declining"
+        assert result.trend is not None
+        assert result.trend < 0
+
+    def test_saturated_threshold(self) -> None:
+        """mean_ndmi > 0.2 should be classified as saturated."""
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today(),
+            mean=0.25,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        result = compute_ndmi_farm_state(farm=self.farm)
+        assert result.state == "saturated"
+
+    def test_water_threshold(self) -> None:
+        """mean_ndmi > 0.3 should be classified as water."""
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today(),
+            mean=0.35,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        result = compute_ndmi_farm_state(farm=self.farm)
+        assert result.state == "water"
