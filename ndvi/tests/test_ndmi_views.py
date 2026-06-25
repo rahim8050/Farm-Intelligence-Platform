@@ -7,6 +7,7 @@ Covers:
 - NdmiRasterPngView
 - NdmiRasterQueueView
 - NdmiFarmStateView
+- compute_ndmi_farm_state and helpers
 """
 
 from __future__ import annotations
@@ -20,14 +21,95 @@ from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.core.cache import caches
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
 from farms.models import Farm, FarmIntegrationAccess
 from integrations.tokens import mint_integration_access_token
-from ndvi.farm_state_ndmi import STATE_UNKNOWN, compute_ndmi_farm_state
-from ndvi.models import NdviObservation
+from ndvi.farm_state_ndmi import (
+    STATE_DECLINING,
+    STATE_DRY,
+    STATE_MOIST,
+    STATE_SATURATED,
+    STATE_UNKNOWN,
+    STATE_WATER,
+    _classify_ndmi_state,
+    _get_dry_threshold,
+    _get_saturated_threshold,
+    _get_trend_window_days,
+    _get_water_threshold,
+    compute_ndmi_farm_state,
+)
+from ndvi.models import NdviObservation, NdviRasterArtifact
 from ndvi.services import LatestParams, TimeseriesParams
+
+
+class NdmiFarmStateHelperTests(APITestCase):
+    """Direct unit tests for farm_state_ndmi helper functions."""
+
+    def test_classify_dry(self) -> None:
+        state, interp, action = _classify_ndmi_state(-0.3, None)
+        assert state == STATE_DRY
+        assert "dry" in interp.lower()
+        assert "irrigation" in action.lower()
+
+    def test_classify_moist(self) -> None:
+        state, interp, action = _classify_ndmi_state(0.0, None)
+        assert state == STATE_MOIST
+        assert "moderate" in interp.lower()
+
+    def test_classify_saturated(self) -> None:
+        state, interp, action = _classify_ndmi_state(0.25, None)
+        assert state == STATE_SATURATED
+        assert "high moisture" in interp.lower()
+
+    def test_classify_water(self) -> None:
+        state, interp, action = _classify_ndmi_state(0.35, None)
+        assert state == STATE_WATER
+        assert "flooding" in action.lower()
+
+    def test_classify_declining(self) -> None:
+        state, interp, action = _classify_ndmi_state(0.0, -0.05)
+        assert state == STATE_DECLINING
+        assert "declining" in interp.lower()
+
+    def test_classify_moist_not_declining_with_slight_trend(self) -> None:
+        state, interp, action = _classify_ndmi_state(0.0, -0.005)
+        assert state == STATE_MOIST
+
+    def test_classify_none(self) -> None:
+        state, interp, action = _classify_ndmi_state(None, None)
+        assert state == STATE_UNKNOWN
+        assert "insufficient" in interp.lower()
+
+    def test_get_trend_window_days_default(self) -> None:
+        assert _get_trend_window_days() == 30
+
+    @override_settings(NDMI_TREND_WINDOW_DAYS=14)
+    def test_get_trend_window_days_overridden(self) -> None:
+        assert _get_trend_window_days() == 14
+
+    def test_get_dry_threshold_default(self) -> None:
+        assert _get_dry_threshold() == -0.2
+
+    @override_settings(NDMI_DRY_THRESHOLD=-0.15)
+    def test_get_dry_threshold_overridden(self) -> None:
+        assert _get_dry_threshold() == -0.15
+
+    def test_get_saturated_threshold_default(self) -> None:
+        assert _get_saturated_threshold() == 0.2
+
+    @override_settings(NDMI_SATURATED_THRESHOLD=0.25)
+    def test_get_saturated_threshold_overridden(self) -> None:
+        assert _get_saturated_threshold() == 0.25
+
+    def test_get_water_threshold_default(self) -> None:
+        assert _get_water_threshold() == 0.3
+
+    @override_settings(NDMI_WATER_THRESHOLD=0.35)
+    def test_get_water_threshold_overridden(self) -> None:
+        assert _get_water_threshold() == 0.35
 
 
 class NdmiViewMixin:
@@ -238,6 +320,103 @@ class NdmiApiTests(NdmiViewMixin, APITestCase):
         data: dict[str, Any] = response.json()
         self.assertIn("data", data)
 
+    @patch("ndvi.views.is_stale", return_value=True)
+    @patch("ndvi.views.enforce_quota")
+    @patch("ndvi.views.dispatch_ndvi_job")
+    def test_ndmi_latest_stale_sets_metric(
+        self,
+        mock_dispatch: MagicMock,
+        mock_quota: MagicMock,
+        mock_stale: MagicMock,
+    ) -> None:
+        """GET /ndmi/latest/ sets stale metric to 1 when stale."""
+        from ndvi.views import spectral_farms_stale_total
+
+        spectral_farms_stale_total.clear()
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today() - timedelta(days=30),
+            mean=0.4,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+            is_latest=True,
+        )
+        response = self.client.get(
+            self.latest_url,
+            {"engine": "stac"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data: dict[str, Any] = response.json()
+        self.assertTrue(data["data"]["stale"])
+
+    @patch("ndvi.views.is_stale", return_value=False)
+    @patch("ndvi.views.enforce_quota")
+    @patch("ndvi.views.dispatch_ndvi_job")
+    def test_ndmi_latest_not_stale_sets_metric(
+        self,
+        mock_dispatch: MagicMock,
+        mock_quota: MagicMock,
+        mock_stale: MagicMock,
+    ) -> None:
+        """GET /ndmi/latest/ sets stale metric to 0 when fresh."""
+        from ndvi.views import spectral_farms_stale_total
+
+        spectral_farms_stale_total.clear()
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today(),
+            mean=0.4,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+            is_latest=True,
+        )
+        response = self.client.get(
+            self.latest_url,
+            {"engine": "stac"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data: dict[str, Any] = response.json()
+        self.assertFalse(data["data"]["stale"])
+
+    @patch("ndvi.views.enforce_quota")
+    @patch("ndvi.views.dispatch_ndvi_job")
+    def test_ndmi_latest_v2_cache_miss(
+        self, mock_dispatch: MagicMock, mock_quota: MagicMock
+    ) -> None:
+        """GET /ndmi/latest/ with v2 on cache miss still works."""
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today(),
+            mean=0.4,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+            is_latest=True,
+        )
+        response = self.client.get(
+            self.latest_url,
+            {"engine": "stac", "representation": "v2"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data: dict[str, Any] = response.json()
+        self.assertIn("data", data)
+
+    @patch("ndvi.views.enforce_quota")
+    @patch("ndvi.views.dispatch_ndvi_job")
+    def test_ndmi_latest_no_observation(
+        self, mock_dispatch: MagicMock, mock_quota: MagicMock
+    ) -> None:
+        """GET /ndmi/latest/ returns envelope with null observation."""
+        response = self.client.get(
+            self.latest_url,
+            {"engine": "stac"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data: dict[str, Any] = response.json()
+        self.assertIsNone(data["data"]["observation"])
+
     @patch("ndvi.views.enforce_quota")
     @patch("ndvi.views.dispatch_ndvi_job")
     def test_ndmi_refresh_returns_202(
@@ -334,6 +513,15 @@ class NdmiRasterQueueTests(NdmiViewMixin, APITestCase):
             response.status_code, status.HTTP_429_TOO_MANY_REQUESTS
         )
 
+    def test_ndmi_raster_queue_bad_date_returns_400(self) -> None:
+        """POST with invalid date returns 400."""
+        response = self.client.post(
+            self.queue_url,
+            {"engine": "stac", "date": "not-a-date"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
 class NdmiRasterPngTests(NdmiViewMixin, APITestCase):
     """NDMI raster PNG endpoint tests."""
@@ -358,6 +546,69 @@ class NdmiRasterPngTests(NdmiViewMixin, APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    @patch("ndvi.views.enforce_quota")
+    @patch("ndvi.views.dispatch_ndvi_job")
+    def test_ndmi_raster_png_304_on_etag_match(
+        self, mock_dispatch: MagicMock, mock_quota: MagicMock
+    ) -> None:
+        """Raster PNG returns 304 when If-None-Match matches."""
+        from django.core.files.base import ContentFile
+
+        artifact = NdviRasterArtifact.objects.create(
+            farm=self.farm,
+            owner_id=self.user.id,
+            engine="stac",
+            index_type="NDMI",
+            date=date.today(),
+            size=256,
+            max_cloud=60,
+            content_hash="test-hash-123",
+        )
+        artifact.image.save("test.png", ContentFile(b"fake-png-data"))
+        response = self.client.get(
+            self.png_url,
+            {
+                "engine": "stac",
+                "date": date.today().isoformat(),
+                "size": "256",
+            },
+            HTTP_IF_NONE_MATCH='"test-hash-123"',
+        )
+        self.assertEqual(response.status_code, status.HTTP_304_NOT_MODIFIED)
+        self.assertEqual(response["ETag"], "test-hash-123")
+
+    @patch("ndvi.views.enforce_quota")
+    @patch("ndvi.views.dispatch_ndvi_job")
+    def test_ndmi_raster_png_200_on_etag_mismatch(
+        self, mock_dispatch: MagicMock, mock_quota: MagicMock
+    ) -> None:
+        """Raster PNG returns 200 when If-None-Match does not match."""
+        from django.core.files.base import ContentFile
+
+        artifact = NdviRasterArtifact.objects.create(
+            farm=self.farm,
+            owner_id=self.user.id,
+            engine="stac",
+            index_type="NDMI",
+            date=date.today(),
+            size=256,
+            max_cloud=60,
+            content_hash="actual-hash",
+        )
+        artifact.image.save("test.png", ContentFile(b"real-png-data"))
+        response = self.client.get(
+            self.png_url,
+            {
+                "engine": "stac",
+                "date": date.today().isoformat(),
+                "size": "256",
+            },
+            HTTP_IF_NONE_MATCH='"wrong-hash"',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response["ETag"], "actual-hash")
+        self.assertEqual(response.content, b"real-png-data")
 
 
 class NdmiUrlResolutionTests(NdmiViewMixin, APITestCase):
@@ -590,6 +841,47 @@ class ComputeNdmiFarmStateTests(NdmiViewMixin, APITestCase):
         result = compute_ndmi_farm_state(farm=self.farm)
         assert result.state == "water"
 
+    def test_compute_returns_max_ndmi(self) -> None:
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today(),
+            mean=0.1,
+            min=0.0,
+            max=0.2,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+            is_latest=True,
+        )
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today() - timedelta(days=1),
+            mean=0.5,
+            min=0.4,
+            max=0.6,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+            is_latest=True,
+        )
+        result = compute_ndmi_farm_state(farm=self.farm)
+        assert result.max_ndmi == 0.5
+        assert result.min_ndmi == 0.1
+
+    def test_compute_with_engine_override(self) -> None:
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="sentinelhub",
+            bucket_date=date.today(),
+            mean=0.3,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+            is_latest=True,
+        )
+        result = compute_ndmi_farm_state(farm=self.farm, engine="sentinelhub")
+        assert result.mean_ndmi == 0.3
+        assert result.farm_id == self.farm.id
+
 
 class NdmiFarmStateIntegrationTests(NdmiViewMixin, APITestCase):
     """NDMI farm state with integration tokens."""
@@ -667,6 +959,21 @@ class NdmiFarmStateIntegrationTests(NdmiViewMixin, APITestCase):
 
     def test_unauthenticated_returns_403(self) -> None:
         resp = APIClient().get(self.url)
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_integration_empty_scope_returns_403(self) -> None:
+        """Integration token with empty scope returns 403."""
+        access, token_str = mint_integration_access_token(
+            user_id="scope-test-client",
+            scope="",
+        )
+        FarmIntegrationAccess.objects.create(
+            farm=self.farm,
+            client_id="scope-test-client",
+        )
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_str}")
+        resp = client.get(self.url)
         assert resp.status_code == status.HTTP_403_FORBIDDEN
 
     def test_integration_comma_scope(self) -> None:
