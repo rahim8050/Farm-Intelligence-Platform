@@ -664,3 +664,27 @@ class NdmiFarmStateIntegrationTests(NdmiViewMixin, APITestCase):
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
         resp = client.get(self.url)
         assert resp.status_code == status.HTTP_200_OK
+
+    def test_unauthenticated_returns_403(self) -> None:
+        resp = APIClient().get(self.url)
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_integration_comma_scope(self) -> None:
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today(),
+            mean=0.3,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        access, _ = mint_integration_access_token(
+            user_id="client-comma", scope="read,write"
+        )
+        FarmIntegrationAccess.objects.create(
+            farm=self.farm, client_id="client-comma"
+        )
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        resp = client.get(self.url)
+        assert resp.status_code == status.HTTP_200_OK
