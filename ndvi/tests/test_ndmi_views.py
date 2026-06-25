@@ -458,10 +458,9 @@ class NdmiFarmStateApiTests(NdmiViewMixin, APITestCase):
         assert data["data"]["state"] == "dry"
 
     def test_farm_state_returns_404_for_other_user(self) -> None:
-        other_pw = secrets.token_urlsafe(16)
         other = get_user_model().objects.create_user(
             username="ndmi_other2",
-            password=other_pw,
+            password=secrets.token_urlsafe(16),
             email="other2@example.com",
         )
         self.client.force_authenticate(user=other)
