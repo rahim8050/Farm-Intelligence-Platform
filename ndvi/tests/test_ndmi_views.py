@@ -16,13 +16,15 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.core.cache import caches
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
-from farms.models import Farm
+from farms.models import Farm, FarmIntegrationAccess
+from integrations.tokens import mint_integration_access_token
 from ndvi.farm_state_ndmi import STATE_UNKNOWN, compute_ndmi_farm_state
 from ndvi.models import NdviObservation
 from ndvi.services import LatestParams, TimeseriesParams
@@ -587,3 +589,78 @@ class ComputeNdmiFarmStateTests(NdmiViewMixin, APITestCase):
         )
         result = compute_ndmi_farm_state(farm=self.farm)
         assert result.state == "water"
+
+
+class NdmiFarmStateIntegrationTests(NdmiViewMixin, APITestCase):
+    """NDMI farm state with integration tokens."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.url = f"/api/v1/farms/{self.farm.id}/ndmi/farm-state/"
+
+    def test_integration_read_allowed(self) -> None:
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine="stac",
+            bucket_date=date.today(),
+            mean=0.3,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        access, _ = mint_integration_access_token(
+            user_id="client-ndmi", scope="read"
+        )
+        FarmIntegrationAccess.objects.create(
+            farm=self.farm, client_id="client-ndmi"
+        )
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        resp = client.get(self.url)
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json()["data"]["farm_id"] == self.farm.id
+
+    def test_integration_read_with_external_farm_id(self) -> None:
+        eid = uuid4()
+        farm = Farm.objects.create(
+            owner=self.user,
+            external_farm_id=eid,
+            name="NDMI Ext",
+            slug="ndmi-ext",
+            bbox_south=Decimal("0"),
+            bbox_west=Decimal("0"),
+            bbox_north=Decimal("0.1"),
+            bbox_east=Decimal("0.1"),
+            is_active=True,
+        )
+        NdviObservation.objects.create(
+            farm=farm,
+            engine="stac",
+            bucket_date=date.today(),
+            mean=0.2,
+            index_type="NDMI",
+            state=NdviObservation.ObservationState.FINAL,
+        )
+        access, _ = mint_integration_access_token(
+            user_id="client-ext", scope="read"
+        )
+        FarmIntegrationAccess.objects.create(farm=farm, client_id="client-ext")
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        resp = client.get(
+            "/api/v1/farms/999999/ndmi/farm-state/",
+            {"external_farm_id": str(eid)},
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json()["data"]["farm_id"] == farm.id
+
+    def test_integration_denied_when_write_scope_not_enough(self) -> None:
+        access, _ = mint_integration_access_token(
+            user_id="client-write", scope="write"
+        )
+        FarmIntegrationAccess.objects.create(
+            farm=self.farm, client_id="client-write"
+        )
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        resp = client.get(self.url)
+        assert resp.status_code == status.HTTP_200_OK
