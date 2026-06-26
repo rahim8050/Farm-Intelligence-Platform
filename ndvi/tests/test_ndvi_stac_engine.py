@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import cast
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -192,3 +193,52 @@ def test_stac_engine_compute_stats_returns_stats(
     stats = engine._compute_stats(item, _bbox())
     assert stats is not None
     assert stats.sample_count == 1
+
+
+@patch(
+    "ndvi.engines.stac.load_ndwi_array",
+    return_value=np.array([[0.1, 0.2]], dtype=np.float32),
+)
+def test_stac_engine_ndwi_loader_calls_load_ndwi_array(
+    mock_load_ndwi: MagicMock,
+) -> None:
+    engine = StacEngine(index_type="NDWI")
+    item = StacItem(
+        id="ndwi",
+        datetime=datetime(2025, 1, 2, tzinfo=UTC),
+        assets={"B03": "green.tif", "B08": "nir.tif"},
+        cloud_cover=5.0,
+    )
+
+    array = stac_engine_module._load_stac_ndwi(engine, item, _bbox())
+
+    assert array.size == 2
+    mock_load_ndwi.assert_called_once()
+    kwargs = mock_load_ndwi.call_args.kwargs
+    assert kwargs["green_href"] == "green.tif"
+    assert kwargs["nir_href"] == "nir.tif"
+
+
+@patch("ndvi.engines.stac.compute_ndvi_stats", return_value=None)
+@patch(
+    "ndvi.engines.stac.load_ndvi_array",
+    return_value=np.array([[0.2]], dtype=np.float32),
+)
+def test_stac_engine_compute_stats_returns_none_when_stats_missing(
+    mock_load_ndvi: MagicMock,
+    mock_stats: MagicMock,
+) -> None:
+    engine = StacEngine(client=cast(StacClient, FakeClient([])))
+    item = _item(date(2025, 1, 2))
+
+    assert engine._compute_stats(item, _bbox()) is None
+    mock_load_ndvi.assert_called_once()
+    mock_stats.assert_called_once()
+
+
+def test_stac_engine_compute_stats_unknown_index_type_raises() -> None:
+    engine = StacEngine(index_type="UNKNOWN")
+    item = _item(date(2025, 1, 2))
+
+    with pytest.raises(ValueError, match="Unsupported index type"):
+        engine._compute_stats(item, _bbox())
