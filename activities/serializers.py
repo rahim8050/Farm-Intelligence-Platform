@@ -85,7 +85,7 @@ class ActivityCreateSerializer(serializers.ModelSerializer):
             except (ValueError, KeyError, IndexError) as e:
                 raise serializers.ValidationError(
                     {"cron_expression": f"Invalid cron expression: {e}"}
-                ) from e
+                ) from None
 
         valid_types = [t[0] for t in Activity.Type.choices]
         if attrs.get("type") not in valid_types:
