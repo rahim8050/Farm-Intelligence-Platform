@@ -40,12 +40,6 @@ DEFAULT_ASSET_SWIR1_20M: Final[str] = "B11_20m"
 DEFAULT_ASSET_SWIR1: Final[str] = DEFAULT_ASSET_SWIR1_20M
 DEFAULT_MASK_WATER: Final[bool] = False
 
-_INDEX_LOADERS: Final[dict[str, Any]] = {
-    "NDVI": load_ndvi_array,
-    "NDWI": load_ndwi_array,
-    "NDMI": load_ndmi_array,
-}
-
 
 def _load_stac_ndvi(
     engine: StacEngine, item: StacItem, bbox: BBox
@@ -141,6 +135,13 @@ def _load_stac_ndmi(
         scl_href=scl_href,
         mask_water=engine.mask_water,
     )
+
+
+_INDEX_LOADERS: Final[dict[str, Any]] = {
+    "NDVI": _load_stac_ndvi,
+    "NDWI": _load_stac_ndwi,
+    "NDMI": _load_stac_ndmi,
+}
 
 
 def get_default_timeout_seconds() -> float:
