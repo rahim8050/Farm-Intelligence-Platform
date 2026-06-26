@@ -26,6 +26,7 @@ This directory contains both public-facing documentation and repository notes.
 - [Radio architecture](architecture/radio/README.md)
 - [NDVI architecture overview](architecture/ndvi/00_overview.md)
 - [Activities technical design](architecture/activities/01_technical_design.md)
+- [Automation architecture](architecture/automation_architecture.md)
 
 ## Operational notes
 
