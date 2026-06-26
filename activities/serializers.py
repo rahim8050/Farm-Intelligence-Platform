@@ -82,9 +82,9 @@ class ActivityCreateSerializer(serializers.ModelSerializer):
                 Activity._compute_cron_next(
                     cron_expression, datetime.datetime.now()
                 )
-            except (ValueError, KeyError, IndexError) as e:
+            except (ValueError, KeyError, IndexError):
                 raise serializers.ValidationError(
-                    {"cron_expression": f"Invalid cron expression: {e}"}
+                    {"cron_expression": "Invalid cron expression"}
                 ) from None
 
         valid_types = [t[0] for t in Activity.Type.choices]
