@@ -15,6 +15,7 @@ import logging
 from datetime import date, timedelta
 from typing import Any, Final
 
+import numpy as np
 from django.conf import settings
 
 from ndvi.engines.base import BBox, NDVIEngine, NdviPoint
@@ -41,6 +42,72 @@ DEFAULT_ASSET_GREEN: Final[str] = "B03_10m"
 DEFAULT_ASSET_NIR: Final[str] = "B08_10m"
 DEFAULT_ASSET_SCL: Final[str] = "SCL"
 DEFAULT_MASK_WATER: Final[bool] = False
+
+
+def _load_gee_ndvi(engine: GeeEngine, item: Any, bbox: BBox) -> np.ndarray:
+    nir_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_nir),
+    )
+    red_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_red),
+    )
+    scl_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_scl),
+    )
+    if not red_href or not nir_href:
+        logger.warning(
+            "gee.item.missing_assets item_id=%s",
+            getattr(item, "id", "-"),
+        )
+        return np.array([])
+    return load_ndvi_array(
+        red_href=red_href,
+        nir_href=nir_href,
+        bbox=bbox,
+        size=DEFAULT_STATS_SAMPLE_SIZE,
+        timeout_seconds=engine.timeout_seconds,
+        scl_href=scl_href,
+        mask_water=engine.mask_water,
+    )
+
+
+def _load_gee_ndwi(engine: GeeEngine, item: Any, bbox: BBox) -> np.ndarray:
+    nir_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_nir),
+    )
+    green_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_green),
+    )
+    scl_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_scl),
+    )
+    if not green_href or not nir_href:
+        logger.warning(
+            "gee.item.missing_assets item_id=%s",
+            getattr(item, "id", "-"),
+        )
+        return np.array([])
+    return load_ndwi_array(
+        green_href=green_href,
+        nir_href=nir_href,
+        bbox=bbox,
+        size=DEFAULT_STATS_SAMPLE_SIZE,
+        timeout_seconds=engine.timeout_seconds,
+        scl_href=scl_href,
+        mask_water=engine.mask_water,
+    )
+
+
+_INDEX_LOADERS: Final[dict[str, Any]] = {
+    "NDVI": _load_gee_ndvi,
+    "NDWI": _load_gee_ndwi,
+}
 
 
 def _str_setting(name: str, default: str) -> str:
@@ -225,58 +292,19 @@ class GeeEngine(NDVIEngine):
         return buckets
 
     def _compute_stats(self, item: Any, bbox: BBox) -> NdviStats | None:
-        nir_assets = build_asset_candidates(self.asset_nir)
-        scl_assets = build_asset_candidates(self.asset_scl)
-        nir_href = resolve_asset_href_candidates(item, nir_assets)
-        scl_href = resolve_asset_href_candidates(item, scl_assets)
-
-        if self.index_type == "NDWI":
-            green_assets = build_asset_candidates(self.asset_green)
-            green_href = resolve_asset_href_candidates(item, green_assets)
-            if not green_href or not nir_href:
-                logger.warning(
-                    "gee.item.missing_assets item_id=%s",
-                    getattr(item, "id", "-"),
-                )
-                return None
-            index_array = load_ndwi_array(
-                green_href=green_href,
-                nir_href=nir_href,
-                bbox=bbox,
-                size=DEFAULT_STATS_SAMPLE_SIZE,
-                timeout_seconds=self.timeout_seconds,
-                scl_href=scl_href,
-                mask_water=self.mask_water,
-            )
-        else:
-            red_assets = build_asset_candidates(self.asset_red)
-            red_href = resolve_asset_href_candidates(item, red_assets)
-            if not red_href or not nir_href:
-                logger.warning(
-                    "gee.item.missing_assets item_id=%s",
-                    getattr(item, "id", "-"),
-                )
-                return None
-            index_array = load_ndvi_array(
-                red_href=red_href,
-                nir_href=nir_href,
-                bbox=bbox,
-                size=DEFAULT_STATS_SAMPLE_SIZE,
-                timeout_seconds=self.timeout_seconds,
-                scl_href=scl_href,
-                mask_water=self.mask_water,
-            )
+        index_loader = _INDEX_LOADERS.get(self.index_type)
+        if index_loader is None:
+            raise ValueError(f"Unsupported index type: {self.index_type}")
+        index_array = index_loader(self, item, bbox)
+        if index_array.size == 0:
+            return None
 
         stats = compute_ndvi_stats(index_array)
         if stats is None:
             return None
 
-        if scl_href is not None:
-            valid_pixel_fraction = stats.valid_pixel_fraction
-            quality_flags = stats.quality_flags
-        else:
-            valid_pixel_fraction = None
-            quality_flags = None
+        valid_pixel_fraction = stats.valid_pixel_fraction
+        quality_flags = stats.quality_flags
 
         return NdviStats(
             mean=stats.mean,

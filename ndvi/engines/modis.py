@@ -44,11 +44,131 @@ DEFAULT_MAX_CLOUD: Final[int] = 30
 DEFAULT_NDVI_BAND: Final[str] = "NDVI"
 DEFAULT_QA_BAND: Final[str] = "DetailedQA"
 MODIS_NDVI_SCALE: Final[float] = 0.0001
+DEFAULT_INDEX_TYPE: Final[str] = "NDVI"
 DEFAULT_NDWI_COLLECTION: Final[str] = "modis-09ga-061"
 DEFAULT_GREEN_BAND: Final[str] = "sur_refl_b04"
 DEFAULT_NIR_BAND: Final[str] = "sur_refl_b02"
 DEFAULT_NDWI_QA_BAND: Final[str] = "state_1km"
 MODIS_REFL_SCALE: Final[float] = 0.0001
+
+
+def _process_modis_ndvi(
+    engine: ModisEngine,
+    item: Any,
+    bbox: BBox,
+    bucket_date: date,
+) -> NdviPoint | None:
+    ndvi_assets = build_asset_candidates(engine.ndvi_band)
+    qa_assets = build_asset_candidates(engine.qa_band)
+    from ndvi.stac_client import resolve_asset_href_candidates
+
+    ndvi_href = resolve_asset_href_candidates(item, ndvi_assets)
+    qa_href = resolve_asset_href_candidates(item, qa_assets)
+    if not ndvi_href:
+        logger.warning(
+            "modis.item.missing_ndvi item_id=%s",
+            getattr(item, "id", "-"),
+        )
+        return None
+
+    array = _load_single_band(
+        ndvi_href,
+        bbox=bbox,
+        size=DEFAULT_STATS_SAMPLE_SIZE,
+        timeout_seconds=engine.timeout_seconds,
+        scale_factor=MODIS_NDVI_SCALE,
+        qa_href=qa_href,
+    )
+    if array.size == 0:
+        return None
+
+    stats = _compute_band_stats(array)
+    if stats["mean"] is None:
+        return None
+
+    sample_count = stats["sample_count"]
+    return NdviPoint(
+        date=bucket_date,
+        mean=stats["mean"],
+        min=stats["min"],
+        max=stats["max"],
+        sample_count=int(sample_count) if sample_count is not None else None,
+        quality_flags={"modis": True, "pre_computed_ndvi": True},
+    )
+
+
+def _process_modis_ndwi(
+    engine: ModisEngine,
+    item: Any,
+    bbox: BBox,
+    bucket_date: date,
+) -> NdviPoint | None:
+    green_assets = build_asset_candidates(engine.green_band)
+    nir_assets = build_asset_candidates(engine.nir_band)
+    qa_assets = build_asset_candidates(engine.qa_band)
+    from ndvi.stac_client import resolve_asset_href_candidates
+
+    green_href = resolve_asset_href_candidates(item, green_assets)
+    nir_href = resolve_asset_href_candidates(item, nir_assets)
+    if not green_href or not nir_href:
+        logger.warning(
+            "modis.item.missing_bands item_id=%s green=%s nir=%s",
+            getattr(item, "id", "-"),
+            bool(green_href),
+            bool(nir_href),
+        )
+        return None
+    qa_href = resolve_asset_href_candidates(item, qa_assets)
+
+    green = _load_single_band(
+        green_href,
+        bbox=bbox,
+        size=DEFAULT_STATS_SAMPLE_SIZE,
+        timeout_seconds=engine.timeout_seconds,
+        scale_factor=MODIS_REFL_SCALE,
+        qa_href=qa_href,
+    )
+    if green.size == 0:
+        return None
+
+    nir = _load_single_band(
+        nir_href,
+        bbox=bbox,
+        size=DEFAULT_STATS_SAMPLE_SIZE,
+        timeout_seconds=engine.timeout_seconds,
+        scale_factor=MODIS_REFL_SCALE,
+    )
+    if nir.size == 0:
+        return None
+
+    denom = green + nir
+    ndwi = np.where(denom == 0, np.nan, (green - nir) / denom)
+    ndwi[np.isinf(ndwi)] = np.nan
+
+    stats = _compute_band_stats(ndwi)
+    if stats["mean"] is None:
+        return None
+
+    sample_count = stats["sample_count"]
+    return NdviPoint(
+        date=bucket_date,
+        mean=stats["mean"],
+        min=stats["min"],
+        max=stats["max"],
+        sample_count=int(sample_count) if sample_count is not None else None,
+        quality_flags={"modis": True, "ndwi": True},
+    )
+
+
+_MODIS_PROCESSORS: Final[dict[str, Any]] = {
+    "NDVI": _process_modis_ndvi,
+    "NDWI": _process_modis_ndwi,
+}
+
+_MODIS_COLLECTIONS: Final[dict[str, tuple[str, str]]] = {
+    "NDVI": ("STAC_COLLECTION", "modis-13q1-061"),
+    "NDWI": ("NDWI_STAC_COLLECTION", DEFAULT_NDWI_COLLECTION),
+}
 
 
 def _str_setting(name: str, default: str) -> str:
@@ -212,26 +332,21 @@ class ModisEngine(NDVIEngine):
             "STAC_API_URL",
             "https://planetarycomputer.microsoft.com/api/stac/v1/",
         )
-
-        if index_type == "NDWI":
-            _collection = _str_setting(
-                "NDWI_STAC_COLLECTION", DEFAULT_NDWI_COLLECTION
-            )
-            self.green_band = green_band or _str_setting(
-                "GREEN_BAND", DEFAULT_GREEN_BAND
-            )
-            self.nir_band = nir_band or _str_setting(
-                "NIR_BAND", DEFAULT_NIR_BAND
-            )
-            self.qa_band = qa_band or _str_setting(
-                "NDWI_QA_BAND", DEFAULT_NDWI_QA_BAND
-            )
-        else:
-            _collection = _str_setting("STAC_COLLECTION", "modis-13q1-061")
-            self.ndvi_band = ndvi_band or _str_setting(
-                "NDVI_BAND", DEFAULT_NDVI_BAND
-            )
-            self.qa_band = qa_band or _str_setting("QA_BAND", DEFAULT_QA_BAND)
+        collection_setting, default_collection = _MODIS_COLLECTIONS.get(
+            index_type, _MODIS_COLLECTIONS[DEFAULT_INDEX_TYPE]
+        )
+        _collection = _str_setting(collection_setting, default_collection)
+        self.ndvi_band = ndvi_band or _str_setting(
+            "NDVI_BAND", DEFAULT_NDVI_BAND
+        )
+        self.qa_band = qa_band or _str_setting("QA_BAND", DEFAULT_QA_BAND)
+        self.green_band = green_band or _str_setting(
+            "GREEN_BAND", DEFAULT_GREEN_BAND
+        )
+        self.nir_band = nir_band or _str_setting("NIR_BAND", DEFAULT_NIR_BAND)
+        self._process_item_fn = _MODIS_PROCESSORS.get(
+            index_type, _MODIS_PROCESSORS[DEFAULT_INDEX_TYPE]
+        )
         self.client = client or StacClient(
             base_url=_stac_url,
             collection=_collection,
@@ -315,107 +430,10 @@ class ModisEngine(NDVIEngine):
     def _process_item(
         self, item: Any, bbox: BBox, bucket_date: date
     ) -> NdviPoint | None:
-        if self.index_type == "NDWI":
-            return self._process_ndwi_item(item, bbox, bucket_date)
-
-        ndvi_assets = build_asset_candidates(self.ndvi_band)
-        qa_assets = build_asset_candidates(self.qa_band)
-        from ndvi.stac_client import resolve_asset_href_candidates
-
-        ndvi_href = resolve_asset_href_candidates(item, ndvi_assets)
-        if not ndvi_href:
-            logger.warning(
-                "modis.item.missing_ndvi item_id=%s",
-                getattr(item, "id", "-"),
-            )
-            return None
-        qa_href = resolve_asset_href_candidates(item, qa_assets)
-
-        array = _load_single_band(
-            ndvi_href,
-            bbox=bbox,
-            size=DEFAULT_STATS_SAMPLE_SIZE,
-            timeout_seconds=self.timeout_seconds,
-            scale_factor=MODIS_NDVI_SCALE,
-            qa_href=qa_href,
-        )
-        if array.size == 0:
-            return None
-
-        stats = _compute_band_stats(array)
-        if stats["mean"] is None:
-            return None
-
-        sample_count = stats["sample_count"]
-        return NdviPoint(
-            date=bucket_date,
-            mean=stats["mean"],
-            min=stats["min"],
-            max=stats["max"],
-            sample_count=int(sample_count)
-            if sample_count is not None
-            else None,
-            quality_flags={"modis": True, "pre_computed_ndvi": True},
-        )
+        return self._process_item_fn(self, item, bbox, bucket_date)
 
     def _process_ndwi_item(
         self, item: Any, bbox: BBox, bucket_date: date
     ) -> NdviPoint | None:
         """Compute NDWI from MOD09GA Green + NIR bands."""
-        green_assets = build_asset_candidates(self.green_band)
-        nir_assets = build_asset_candidates(self.nir_band)
-        qa_assets = build_asset_candidates(self.qa_band)
-        from ndvi.stac_client import resolve_asset_href_candidates
-
-        green_href = resolve_asset_href_candidates(item, green_assets)
-        nir_href = resolve_asset_href_candidates(item, nir_assets)
-        if not green_href or not nir_href:
-            logger.warning(
-                "modis.item.missing_bands item_id=%s green=%s nir=%s",
-                getattr(item, "id", "-"),
-                bool(green_href),
-                bool(nir_href),
-            )
-            return None
-        qa_href = resolve_asset_href_candidates(item, qa_assets)
-
-        green = _load_single_band(
-            green_href,
-            bbox=bbox,
-            size=DEFAULT_STATS_SAMPLE_SIZE,
-            timeout_seconds=self.timeout_seconds,
-            scale_factor=MODIS_REFL_SCALE,
-            qa_href=qa_href,
-        )
-        if green.size == 0:
-            return None
-
-        nir = _load_single_band(
-            nir_href,
-            bbox=bbox,
-            size=DEFAULT_STATS_SAMPLE_SIZE,
-            timeout_seconds=self.timeout_seconds,
-            scale_factor=MODIS_REFL_SCALE,
-        )
-        if nir.size == 0:
-            return None
-
-        denom = green + nir
-        ndwi = np.where(denom == 0, np.nan, (green - nir) / denom)
-        ndwi[np.isinf(ndwi)] = np.nan
-
-        stats = _compute_band_stats(ndwi)
-        if stats["mean"] is None:
-            return None
-
-        sample_count = stats["sample_count"]
-        return NdviPoint(
-            date=bucket_date,
-            mean=stats["mean"],
-            min=stats["min"],
-            max=stats["max"],
-            sample_count=int(sample_count)
-            if sample_count is not None
-            else None,
-            quality_flags={"modis": True, "ndwi": True},
-        )
+        return _process_modis_ndwi(self, item, bbox, bucket_date)

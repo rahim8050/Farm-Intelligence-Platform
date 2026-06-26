@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from typing import Final
+from typing import Any, Final
 
+import numpy as np
 from django.conf import settings
 
 from ndvi.engines.base import BBox, NDVIEngine, NdviPoint
@@ -38,6 +39,108 @@ DEFAULT_ASSET_SWIR1_10M: Final[str] = "B11_10m"
 DEFAULT_ASSET_SWIR1_20M: Final[str] = "B11_20m"
 DEFAULT_ASSET_SWIR1: Final[str] = DEFAULT_ASSET_SWIR1_20M
 DEFAULT_MASK_WATER: Final[bool] = False
+
+_INDEX_LOADERS: Final[dict[str, Any]] = {
+    "NDVI": load_ndvi_array,
+    "NDWI": load_ndwi_array,
+    "NDMI": load_ndmi_array,
+}
+
+
+def _load_stac_ndvi(
+    engine: StacEngine, item: StacItem, bbox: BBox
+) -> np.ndarray:
+    red_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_red),
+    )
+    nir_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_nir),
+    )
+    scl_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_scl),
+    )
+    if not red_href or not nir_href:
+        logger.warning(
+            "stac.item.missing_assets item_id=%s",
+            getattr(item, "id", "-"),
+        )
+        return np.array([])
+    return load_ndvi_array(
+        red_href=red_href,
+        nir_href=nir_href,
+        bbox=bbox,
+        size=DEFAULT_STATS_SAMPLE_SIZE,
+        timeout_seconds=engine.timeout_seconds,
+        scl_href=scl_href,
+        mask_water=engine.mask_water,
+    )
+
+
+def _load_stac_ndwi(
+    engine: StacEngine, item: StacItem, bbox: BBox
+) -> np.ndarray:
+    green_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_green),
+    )
+    nir_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_nir),
+    )
+    scl_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_scl),
+    )
+    if not green_href or not nir_href:
+        logger.warning(
+            "stac.item.missing_assets item_id=%s",
+            getattr(item, "id", "-"),
+        )
+        return np.array([])
+    return load_ndwi_array(
+        green_href=green_href,
+        nir_href=nir_href,
+        bbox=bbox,
+        size=DEFAULT_STATS_SAMPLE_SIZE,
+        timeout_seconds=engine.timeout_seconds,
+        scl_href=scl_href,
+        mask_water=engine.mask_water,
+    )
+
+
+def _load_stac_ndmi(
+    engine: StacEngine, item: StacItem, bbox: BBox
+) -> np.ndarray:
+    nir_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_nir),
+    )
+    swir1_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_swir1),
+    )
+    scl_href = resolve_asset_href_candidates(
+        item,
+        build_asset_candidates(engine.asset_scl),
+    )
+    if not swir1_href or not nir_href:
+        logger.warning(
+            "stac.item.missing_assets item_id=%s",
+            getattr(item, "id", "-"),
+        )
+        return np.array([])
+    return load_ndmi_array(
+        nir_href=nir_href,
+        swir1_href=swir1_href,
+        bbox=bbox,
+        size=DEFAULT_STATS_SAMPLE_SIZE,
+        timeout_seconds=engine.timeout_seconds,
+        scl_href=scl_href,
+        mask_water=engine.mask_water,
+    )
 
 
 def get_default_timeout_seconds() -> float:
@@ -233,76 +336,19 @@ class StacEngine(NDVIEngine):
         item: StacItem,
         bbox: BBox,
     ) -> NdviStats | None:
-        nir_candidates = build_asset_candidates(self.asset_nir)
-        scl_candidates = build_asset_candidates(self.asset_scl)
-        nir_href = resolve_asset_href_candidates(item, nir_candidates)
-        scl_href = resolve_asset_href_candidates(item, scl_candidates)
-
-        if self.index_type == "NDWI":
-            green_candidates = build_asset_candidates(self.asset_green)
-            green_href = resolve_asset_href_candidates(item, green_candidates)
-            if not green_href or not nir_href:
-                logger.warning(
-                    "stac.item.missing_assets item_id=%s",
-                    getattr(item, "id", "-"),
-                )
-                return None
-            index_array = load_ndwi_array(
-                green_href=green_href,
-                nir_href=nir_href,
-                bbox=bbox,
-                size=DEFAULT_STATS_SAMPLE_SIZE,
-                timeout_seconds=self.timeout_seconds,
-                scl_href=scl_href,
-                mask_water=self.mask_water,
-            )
-        elif self.index_type == "NDMI":
-            swir1_candidates = build_asset_candidates(self.asset_swir1)
-            swir1_href = resolve_asset_href_candidates(item, swir1_candidates)
-            if not swir1_href or not nir_href:
-                logger.warning(
-                    "stac.item.missing_assets item_id=%s",
-                    getattr(item, "id", "-"),
-                )
-                return None
-            index_array = load_ndmi_array(
-                nir_href=nir_href,
-                swir1_href=swir1_href,
-                bbox=bbox,
-                size=DEFAULT_STATS_SAMPLE_SIZE,
-                timeout_seconds=self.timeout_seconds,
-                scl_href=scl_href,
-                mask_water=self.mask_water,
-            )
-        else:
-            red_candidates = build_asset_candidates(self.asset_red)
-            red_href = resolve_asset_href_candidates(item, red_candidates)
-            if not red_href or not nir_href:
-                logger.warning(
-                    "stac.item.missing_assets item_id=%s",
-                    getattr(item, "id", "-"),
-                )
-                return None
-            index_array = load_ndvi_array(
-                red_href=red_href,
-                nir_href=nir_href,
-                bbox=bbox,
-                size=DEFAULT_STATS_SAMPLE_SIZE,
-                timeout_seconds=self.timeout_seconds,
-                scl_href=scl_href,
-                mask_water=self.mask_water,
-            )
+        index_loader = _INDEX_LOADERS.get(self.index_type)
+        if index_loader is None:
+            raise ValueError(f"Unsupported index type: {self.index_type}")
+        index_array = index_loader(self, item, bbox)
+        if index_array.size == 0:
+            return None
 
         stats = compute_ndvi_stats(index_array)
         if stats is None:
             return None
 
-        if scl_href is not None:
-            valid_pixel_fraction = stats.valid_pixel_fraction
-            quality_flags = stats.quality_flags
-        else:
-            valid_pixel_fraction = None
-            quality_flags = None
+        valid_pixel_fraction = stats.valid_pixel_fraction
+        quality_flags = stats.quality_flags
 
         return NdviStats(
             mean=stats.mean,
