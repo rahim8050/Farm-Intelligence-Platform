@@ -169,8 +169,20 @@ def _search_s1_items(
     }
 
     try:
-        with httpx.Client(timeout=cfg["timeout"]) as client:
-            response = client.post(search_url, json=payload)
+        timeout_seconds = float(cfg["timeout"])
+        timeout = httpx.Timeout(
+            timeout_seconds,
+            connect=timeout_seconds,
+            read=timeout_seconds,
+            write=timeout_seconds,
+            pool=timeout_seconds,
+        )
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(
+                search_url,
+                json=payload,
+                timeout=timeout,
+            )
             response.raise_for_status()
             data = response.json()
     except httpx.HTTPStatusError as exc:
