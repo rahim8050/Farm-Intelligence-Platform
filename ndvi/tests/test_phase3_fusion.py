@@ -17,7 +17,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from ndvi.engines.base import BBox
+from ndvi.engines.base import BBox, NdviPoint
 from ndvi.engines.landsat import LandsatEngine
 from ndvi.engines.modis import (
     ModisEngine,
@@ -35,7 +35,7 @@ from ndvi.fusion import (
     _select_by_decision_tree,
     fuse_observations,
 )
-from ndvi.stac_client import NdviStats, StacItem
+from ndvi.stac_client import StacItem
 from ndvi.v2_quality import ConfidenceComponents, V2Result
 
 
@@ -399,16 +399,19 @@ class TestLandsatEngine:
             assets={"B4": "r.tif", "B5": "n.tif"},
             cloud_cover=10.0,
         )
-        fake_array = np.array([0.2, 0.6])
-        fake_stats = NdviStats(mean=0.4, min=0.2, max=0.6, sample_count=2)
-        with (
-            patch(
-                "ndvi.engines.landsat.load_ndvi_array", return_value=fake_array
-            ),
-            patch(
-                "ndvi.engines.landsat.compute_ndvi_stats",
-                return_value=fake_stats,
-            ),
+        fake_point = NdviPoint(
+            date=date(2025, 1, 5),
+            mean=0.4,
+            min=0.2,
+            max=0.6,
+            sample_count=2,
+            cloud_fraction=10.0,
+            valid_pixel_fraction=1.0,
+            quality_flags={"phase3": True},
+        )
+        with patch(
+            "ndvi.engines.compute.SpectralComputeEngine._compute_for_item",
+            return_value=fake_point,
         ):
             stats = engine._compute_stats(
                 item,
@@ -450,14 +453,9 @@ class TestLandsatEngine:
             assets={"B4": "r.tif", "B5": "n.tif"},
             cloud_cover=10.0,
         )
-        with (
-            patch(
-                "ndvi.engines.landsat.load_ndvi_array",
-                return_value=np.array([]),
-            ),
-            patch(
-                "ndvi.engines.landsat.compute_ndvi_stats", return_value=None
-            ),
+        with patch(
+            "ndvi.engines.compute.SpectralComputeEngine._compute_for_item",
+            return_value=None,
         ):
             stats = engine._compute_stats(
                 item,
@@ -474,16 +472,19 @@ class TestLandsatEngine:
         engine = LandsatEngine(
             client=_MockStacClientWithItems(collection="landsat-8-c2-l2"),  # type: ignore[arg-type]
         )
-        fake_array = np.array([0.3, 0.7])
-        fake_stats = NdviStats(mean=0.5, min=0.3, max=0.7, sample_count=2)
-        with (
-            patch(
-                "ndvi.engines.landsat.load_ndvi_array", return_value=fake_array
-            ),
-            patch(
-                "ndvi.engines.landsat.compute_ndvi_stats",
-                return_value=fake_stats,
-            ),
+        fake_point = NdviPoint(
+            date=date(2025, 1, 12),
+            mean=0.5,
+            min=0.3,
+            max=0.7,
+            sample_count=2,
+            cloud_fraction=10.0,
+            valid_pixel_fraction=1.0,
+            quality_flags={"phase3": True},
+        )
+        with patch(
+            "ndvi.engines.compute.SpectralComputeEngine._compute_for_item",
+            return_value=fake_point,
         ):
             result = engine.get_timeseries(
                 bbox=BBox(
@@ -505,17 +506,22 @@ class TestLandsatEngine:
         engine = LandsatEngine(
             client=_MockStacClientWithItems(collection="landsat-8-c2-l2"),  # type: ignore[arg-type]
         )
-        fake_array = np.array([0.4, 0.8])
-        fake_stats = NdviStats(mean=0.6, min=0.4, max=0.8, sample_count=2)
+        fake_point = NdviPoint(
+            date=date(2025, 1, 20),
+            mean=0.6,
+            min=0.4,
+            max=0.8,
+            sample_count=2,
+            cloud_fraction=10.0,
+            valid_pixel_fraction=1.0,
+            quality_flags={"phase3": True},
+        )
         with (
             patch(
-                "ndvi.engines.landsat.load_ndvi_array", return_value=fake_array
+                "ndvi.engines.compute.SpectralComputeEngine._compute_for_item",
+                return_value=fake_point,
             ),
-            patch(
-                "ndvi.engines.landsat.compute_ndvi_stats",
-                return_value=fake_stats,
-            ),
-            patch("ndvi.engines.landsat.date", wraps=date) as mock_date,
+            patch("ndvi.providers.stac.date", wraps=date) as mock_date,
         ):
             mock_date.today.return_value = _FAKE_TODAY
             result = engine.get_latest(
@@ -538,13 +544,10 @@ class TestLandsatEngine:
         )
         with (
             patch(
-                "ndvi.engines.landsat.load_ndvi_array",
-                return_value=np.array([]),
+                "ndvi.engines.compute.SpectralComputeEngine._compute_for_item",
+                return_value=None,
             ),
-            patch(
-                "ndvi.engines.landsat.compute_ndvi_stats", return_value=None
-            ),
-            patch("ndvi.engines.landsat.date", wraps=date) as mock_date,
+            patch("ndvi.providers.stac.date", wraps=date) as mock_date,
         ):
             mock_date.today.return_value = _FAKE_TODAY
             result = engine.get_latest(
@@ -582,14 +585,9 @@ class TestLandsatEngine:
             client=_MockStacClientWithItems(collection="landsat-8-c2-l2"),  # type: ignore[arg-type]
             date_window_days=15,
         )
-        with (
-            patch(
-                "ndvi.engines.landsat.load_ndvi_array",
-                return_value=np.array([]),
-            ),
-            patch(
-                "ndvi.engines.landsat.compute_ndvi_stats", return_value=None
-            ),
+        with patch(
+            "ndvi.engines.compute.SpectralComputeEngine._compute_for_item",
+            return_value=None,
         ):
             result = engine.get_timeseries(
                 bbox=BBox(

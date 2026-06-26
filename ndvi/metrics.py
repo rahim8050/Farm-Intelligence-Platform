@@ -334,3 +334,9 @@ spectral_backfill_rows_total = Counter(
     "Backfill rows processed per spectral index",
     labelnames=["index", "engine", "status"],
 )
+
+spectral_shadow_comparison_diffs_total = Counter(
+    "spectral_shadow_comparison_diffs_total",
+    "Count of shadow comparison diffs between legacy and spectral paths",
+    labelnames=["engine", "index", "field"],
+)
