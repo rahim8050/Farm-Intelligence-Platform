@@ -562,7 +562,7 @@ class NdmiRasterPngTests(NdmiViewMixin, APITestCase):
             index_type="NDMI",
             date=date.today(),
             size=256,
-            max_cloud=60,
+            max_cloud=30,
             content_hash="test-hash-123",
         )
         artifact.image.save("test.png", ContentFile(b"fake-png-data"))
@@ -572,6 +572,7 @@ class NdmiRasterPngTests(NdmiViewMixin, APITestCase):
                 "engine": "stac",
                 "date": date.today().isoformat(),
                 "size": "256",
+                "max_cloud": "30",
             },
             HTTP_IF_NONE_MATCH='"test-hash-123"',
         )
@@ -593,7 +594,7 @@ class NdmiRasterPngTests(NdmiViewMixin, APITestCase):
             index_type="NDMI",
             date=date.today(),
             size=256,
-            max_cloud=60,
+            max_cloud=30,
             content_hash="actual-hash",
         )
         artifact.image.save("test.png", ContentFile(b"real-png-data"))
@@ -603,6 +604,7 @@ class NdmiRasterPngTests(NdmiViewMixin, APITestCase):
                 "engine": "stac",
                 "date": date.today().isoformat(),
                 "size": "256",
+                "max_cloud": "30",
             },
             HTTP_IF_NONE_MATCH='"wrong-hash"',
         )
