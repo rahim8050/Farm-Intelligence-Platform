@@ -32,6 +32,7 @@ logs/
 cloc_no_migrations.txt
 ndvi/rasters/**
 celerybeat-schedule
+gunicorn.ctl
 cert.pem
 key.pem
 .codex

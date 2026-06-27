@@ -676,9 +676,8 @@ def test_run_ndvi_job_stac_circuit_breaker_persists_across_retries(
                 retryable=True,
             )
 
-    # Access the StacEngine's client (shared_engine is StacEngine)
-    stac_engine = shared_engine  # type: ignore[assignment]
-    failing_engine = FailingEngine(stac_engine.client)  # type: ignore[attr-defined]
+    # Access the StacClient via SpectralComputeEngine.provider.client
+    failing_engine = FailingEngine(shared_engine.provider.client)
 
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
     monkeypatch.setattr(

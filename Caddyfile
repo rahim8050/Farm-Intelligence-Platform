@@ -1,6 +1,0 @@
-https://172.25.121.28 {
-    reverse_proxy 127.0.0.1:8001
-    tls internal
-}
-
-
