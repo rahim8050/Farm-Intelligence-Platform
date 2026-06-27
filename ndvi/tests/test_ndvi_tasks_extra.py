@@ -4,6 +4,7 @@ from __future__ import annotations
 import secrets
 from datetime import date
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -676,8 +677,15 @@ def test_run_ndvi_job_stac_circuit_breaker_persists_across_retries(
                 retryable=True,
             )
 
-    # Access the StacClient via SpectralComputeEngine.provider.client
-    failing_engine = FailingEngine(shared_engine.provider.client)
+    from ndvi.engines.compute import SpectralComputeEngine
+    from ndvi.providers.stac import StacDataProvider
+
+    failing_engine = FailingEngine(
+        cast(
+            StacDataProvider,
+            cast(SpectralComputeEngine, shared_engine).provider,
+        ).client
+    )
 
     monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
     monkeypatch.setattr(
