@@ -29,7 +29,9 @@ PNG_BYTES = (
 
 
 @override_settings(
+    NDVI_RASTER_ENGINE_NAME="sentinelhub",
     NDVI_RASTER_ENGINE_PATH="ndvi.tests.fakes.FakeRasterEngine",
+    NDVI_RASTER_ENGINE_PATH_STAC="ndvi.tests.fakes.FakeRasterEngine",
     NDVI_RASTER_DEFAULT_SIZE=512,
     NDVI_RASTER_MAX_SIZE=1024,
 )

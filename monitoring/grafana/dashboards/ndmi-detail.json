@@ -1,0 +1,139 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "title": "NDMI Detail",
+  "uid": "ndmi-detail-001",
+  "version": 1,
+  "timezone": "browser",
+  "editable": true,
+  "tags": ["ndmi", "spectral"],
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "title": "NDMI Observations Ingested",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(ndmi_observations_ingested_total[5m])",
+          "legendFormat": "{{engine}} - {{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        }
+      }
+    },
+    {
+      "title": "NDMI Null Rate by Reason",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(ndmi_observations_null_total[5m])",
+          "legendFormat": "{{null_reason}}"
+        }
+      ]
+    },
+    {
+      "title": "NDMI Compute Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(ndmi_compute_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95 - {{step}}"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(ndmi_compute_duration_seconds_bucket[5m]))",
+          "legendFormat": "p50 - {{step}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "NDMI Confidence Distribution",
+      "type": "heatmap",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "rate(ndvi_v2_confidence_bucket_bucket{source=~\"sentinel-2|sentinelhub|landsat\"}[5m])",
+          "legendFormat": "{{engine}}"
+        }
+      ]
+    },
+    {
+      "title": "NDMI Provider Breakdown",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(rate(ndvi_v2_observation_total{engine=~\"sentinel-2|sentinelhub|landsat|modis\"}[5m])) by (engine)",
+          "legendFormat": "{{engine}}"
+        }
+      ]
+    },
+    {
+      "title": "NDMI Cache Hit Ratio",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "rate(ndmi_cache_hit_ratio{level=~\"memory|redis\"}[5m])",
+          "legendFormat": "{{level}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps"
+        }
+      }
+    },
+    {
+      "title": "NDMI Job Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(ndmi_job_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95 - {{queue}}"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(ndmi_job_duration_seconds_bucket[5m]))",
+          "legendFormat": "p50 - {{queue}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "NDMI Freshness (Acquisition to API)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "time() - ndvi_observation_latest_age_seconds",
+          "legendFormat": "{{engine}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    }
+  ],
+  "schemaVersion": 38
+}

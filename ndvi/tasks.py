@@ -33,6 +33,8 @@ from ndvi.stac_client import (
     StacUpstreamError,
     StacWafBlockedError,
 )
+from science.fusion.ndmi import run_ndmi_fusion
+from science.quality.ndmi import process_ndmi_v1_to_v2
 
 from .metrics import (
     ndvi_task_runtime_seconds,
@@ -42,7 +44,7 @@ from .metrics import (
 )
 from .models import NdviJob, NdviObservation, NdviRasterArtifact
 from .quality_ndwi import process_ndwi_v1_to_v2
-from .raster.service import render_ndvi_png, render_ndwi_png
+from .raster.service import render_ndmi_png, render_ndvi_png, render_ndwi_png
 from .services import (
     acquire_lock,
     dispatch_farm_state_coverage,
@@ -157,6 +159,45 @@ def _run_ndwi_v2_pipeline(
         except Exception:
             logger.exception(
                 "ndwi.fusion.failed farm_id=%s date=%s",
+                job.farm_id,
+                bucket_date,
+            )
+
+
+def _run_ndmi_v2_pipeline(
+    observations: list[NdviObservation],
+    job: NdviJob,
+) -> None:
+    """Run NDMI V2 quality + fusion for observations from a completed job.
+
+    Called after upsert_observations when index_type == "NDMI".
+    Processes each observation through the NDMI quality scorer and persists
+    the result, then runs NDMI fusion for each unique bucket date.
+    """
+    if job.index_type != "NDMI":
+        return
+    if not observations:
+        return
+
+    bucket_dates: set[date] = set()
+    for obs in observations:
+        if obs.bucket_date:
+            bucket_dates.add(obs.bucket_date)
+        try:
+            process_ndmi_v1_to_v2(obs, persist=True)
+        except Exception:
+            logger.exception(
+                "ndmi.v2.failed farm_id=%s obs_id=%s",
+                job.farm_id,
+                obs.id,
+            )
+
+    for bucket_date in bucket_dates:
+        try:
+            run_ndmi_fusion(job.farm_id, bucket_date)
+        except Exception:
+            logger.exception(
+                "ndmi.fusion.failed farm_id=%s date=%s",
                 job.farm_id,
                 bucket_date,
             )
@@ -281,6 +322,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                     )
                 )
                 _run_ndwi_v2_pipeline(v1_observations, job)
+                _run_ndmi_v2_pipeline(v1_observations, job)
         elif job.job_type == NdviJob.JobType.RASTER_PNG:
             raster_date = job.start or job.end or date.today()
             default_size = int(
@@ -297,7 +339,9 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             max_cloud = job.max_cloud or get_default_max_cloud()
             colormap_norm = get_default_colormap_normalization()
             render_func = (
-                render_ndwi_png
+                render_ndmi_png
+                if job.index_type == "NDMI"
+                else render_ndwi_png
                 if job.index_type == "NDWI"
                 else render_ndvi_png
             )
@@ -365,6 +409,7 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                     )
                 )
                 _run_ndwi_v2_pipeline(v1_observations, job)
+                _run_ndmi_v2_pipeline(v1_observations, job)
                 if job.job_type == NdviJob.JobType.BACKFILL:
                     spectral_backfill_rows_total.labels(
                         index=job.index_type,
@@ -538,6 +583,75 @@ def enqueue_daily_ndwi_refresh() -> int:
                 "max_cloud": get_default_max_cloud(),
             },
             index_type="NDWI",
+        )
+        dispatch_ndvi_job(job)
+        count += 1
+    return count
+
+
+@shared_task
+def enqueue_daily_ndmi_refresh() -> int:
+    """Enqueue REFRESH_LATEST jobs for active farms (NDMI).
+
+    Scheduled every 6 hours via CELERY_BEAT_SCHEDULE.
+    Creates a NDMI refresh job for each active farm with a valid bbox.
+    """
+    count = 0
+    for farm in Farm.objects.filter(is_active=True):
+        if (
+            farm.bbox_south is None
+            or farm.bbox_west is None
+            or farm.bbox_north is None
+            or farm.bbox_east is None
+        ):
+            continue
+        job = enqueue_job(
+            owner_id=farm.owner_id,
+            farm=farm,
+            engine_name=None,
+            job_type=NdviJob.JobType.REFRESH_LATEST,
+            params={
+                "lookback_days": get_default_lookback_days(),
+                "max_cloud": get_default_max_cloud(),
+            },
+            index_type="NDMI",
+        )
+        dispatch_ndvi_job(job)
+        count += 1
+    return count
+
+
+@shared_task
+def enqueue_ndmi_gap_fill() -> int:
+    """Enqueue GAP_FILL jobs for active farms with bbox (NDMI).
+
+    Scheduled every 24 hours via CELERY_BEAT_SCHEDULE.
+    Creates a NDMI gap-fill job for each active farm covering the
+    last 120 days.
+    """
+    count = 0
+    end = date.today()
+    start = end - timedelta(days=120)
+    for farm in Farm.objects.filter(is_active=True):
+        if (
+            farm.bbox_south is None
+            or farm.bbox_west is None
+            or farm.bbox_north is None
+            or farm.bbox_east is None
+        ):
+            continue
+        job = enqueue_job(
+            owner_id=farm.owner_id,
+            farm=farm,
+            engine_name=None,
+            job_type=NdviJob.JobType.GAP_FILL,
+            params={
+                "start": start,
+                "end": end,
+                "step_days": 7,
+                "max_cloud": get_default_max_cloud(),
+            },
+            index_type="NDMI",
         )
         dispatch_ndvi_job(job)
         count += 1

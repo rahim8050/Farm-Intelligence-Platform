@@ -1134,6 +1134,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ndvi.tasks.enqueue_daily_ndwi_refresh",
         "schedule": crontab(hour=3, minute=20),
     },
+    "ndmi-daily-refresh": {
+        "task": "ndvi.tasks.enqueue_daily_ndmi_refresh",
+        "schedule": crontab(hour="3,9,15,21", minute=25),
+    },
     "farm-state-daily-coverage": {
         "task": "ndvi.tasks.enqueue_daily_farm_state_coverage",
         "schedule": crontab(hour=3, minute=45),
@@ -1157,6 +1161,10 @@ CELERY_BEAT_SCHEDULE = {
     "ndwi-weekly-gap-fill": {
         "task": "ndvi.tasks.enqueue_weekly_ndwi_gap_fill",
         "schedule": crontab(hour=4, minute=5, day_of_week="sun"),
+    },
+    "ndmi-gap-fill": {
+        "task": "ndvi.tasks.enqueue_ndmi_gap_fill",
+        "schedule": crontab(hour=4, minute=10),
     },
     "schema-cache-warm": {
         "task": "weather.tasks.warm_openapi_schema_cache",

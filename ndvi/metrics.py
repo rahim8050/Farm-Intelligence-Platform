@@ -340,3 +340,39 @@ spectral_shadow_comparison_diffs_total = Counter(
     "Count of shadow comparison diffs between legacy and spectral paths",
     labelnames=["engine", "index", "field"],
 )
+
+# ── NDMI-specific metrics ──────────────────────────────────────────────
+# Following the pattern of unified spectral_* metrics with index="NDMI"
+# label, but adding NDMI-specific counters for cardinal operations.
+
+ndmi_observations_ingested_total = Counter(
+    "ndmi_observations_ingested_total",
+    "Total NDMI V1 observations ingested",
+    labelnames=["engine", "status"],
+)
+
+ndmi_observations_null_total = Counter(
+    "ndmi_observations_null_total",
+    "Total NDMI observations rejected as null",
+    labelnames=["engine", "null_reason"],
+)
+
+ndmi_compute_duration_seconds = Histogram(
+    "ndmi_compute_duration_seconds",
+    "Duration of NDMI compute operations",
+    labelnames=["step"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
+)
+
+ndmi_cache_hit_ratio = Counter(
+    "ndmi_cache_hit_ratio",
+    "NDMI cache hits by cache level",
+    labelnames=["level"],
+)
+
+ndmi_job_duration_seconds = Histogram(
+    "ndmi_job_duration_seconds",
+    "Duration of NDMI Celery jobs",
+    labelnames=["queue", "status"],
+    buckets=(0.1, 0.3, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300),
+)
