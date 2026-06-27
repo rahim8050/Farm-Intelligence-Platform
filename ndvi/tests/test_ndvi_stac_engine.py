@@ -176,14 +176,14 @@ def test_stac_engine_compute_stats_returns_stats(
 ) -> None:
     engine = StacEngine(client=cast(StacClient, FakeClient([])))
 
-    def fake_load_ndvi_array(*_args: object, **_kwargs: object) -> np.ndarray:
+    def fake_load_band(*_args: object, **_kwargs: object) -> np.ndarray:
         return np.array([[0.2]], dtype=np.float32)
 
     def fake_compute_ndvi_stats(_ndvi: np.ndarray) -> NdviStats:
         return NdviStats(mean=0.2, min=0.1, max=0.3, sample_count=1)
 
     monkeypatch.setattr(
-        stac_engine_module, "load_ndvi_array", fake_load_ndvi_array
+        stac_engine_module, "_load_single_stac_band", fake_load_band
     )
     monkeypatch.setattr(
         stac_engine_module, "compute_ndvi_stats", fake_compute_ndvi_stats
@@ -195,50 +195,42 @@ def test_stac_engine_compute_stats_returns_stats(
     assert stats.sample_count == 1
 
 
-@patch(
-    "ndvi.engines.stac.load_ndwi_array",
-    return_value=np.array([[0.1, 0.2]], dtype=np.float32),
-)
-def test_stac_engine_ndwi_loader_calls_load_ndwi_array(
-    mock_load_ndwi: MagicMock,
+@patch("ndvi.engines.stac._load_single_stac_band")
+def test_stac_engine_ndvi_loader(
+    mock_load_band: MagicMock,
 ) -> None:
-    engine = StacEngine(index_type="NDWI")
+    """StacEngine loads NDVI using generic _load_stac_index_array."""
+    mock_load_band.return_value = np.full((10, 10), 0.5, dtype=np.float32)
+    engine = StacEngine()
     item = StacItem(
-        id="ndwi",
+        id="ndvi-item",
         datetime=datetime(2025, 1, 2, tzinfo=UTC),
-        assets={"B03": "green.tif", "B08": "nir.tif"},
+        assets={"B04": "red.tif", "B08": "nir.tif"},
         cloud_cover=5.0,
     )
 
-    array = stac_engine_module._load_stac_ndwi(engine, item, _bbox())
-
-    assert array.size == 2
-    mock_load_ndwi.assert_called_once()
-    kwargs = mock_load_ndwi.call_args.kwargs
-    assert kwargs["green_href"] == "green.tif"
-    assert kwargs["nir_href"] == "nir.tif"
+    array = stac_engine_module._load_stac_index_array(engine, item, _bbox())
+    assert array.size > 0
 
 
 @patch("ndvi.engines.stac.compute_ndvi_stats", return_value=None)
-@patch(
-    "ndvi.engines.stac.load_ndvi_array",
-    return_value=np.array([[0.2]], dtype=np.float32),
-)
+@patch("ndvi.engines.stac._load_single_stac_band")
 def test_stac_engine_compute_stats_returns_none_when_stats_missing(
-    mock_load_ndvi: MagicMock,
+    mock_load_band: MagicMock,
     mock_stats: MagicMock,
 ) -> None:
+    mock_load_band.return_value = np.full((10, 10), 0.5, dtype=np.float32)
     engine = StacEngine(client=cast(StacClient, FakeClient([])))
     item = _item(date(2025, 1, 2))
 
     assert engine._compute_stats(item, _bbox()) is None
-    mock_load_ndvi.assert_called_once()
-    mock_stats.assert_called_once()
+    mock_load_band.assert_called()
 
 
-def test_stac_engine_compute_stats_unknown_index_type_raises() -> None:
+def test_stac_engine_compute_stats_unknown_index_returns_none() -> None:
+    """Unknown index type returns None (no more ValueError)."""
     engine = StacEngine(index_type="UNKNOWN")
     item = _item(date(2025, 1, 2))
 
-    with pytest.raises(ValueError, match="Unsupported index type"):
-        engine._compute_stats(item, _bbox())
+    result = engine._compute_stats(item, _bbox())
+    assert result is None

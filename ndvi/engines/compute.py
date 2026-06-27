@@ -46,11 +46,16 @@ class SpectralComputeEngine(NDVIEngine):
         *,
         provider: DataProvider,
         formula: IndexDefinition,
+        engine_name: str | None = None,
     ) -> None:
         self.provider = provider
         self.formula = formula
         self.index_type = formula["name"]
-        self.engine_name = f"spectral_{provider.sensor_key}"
+        self.engine_name = (
+            engine_name
+            if engine_name is not None
+            else f"spectral_{provider.sensor_key}"
+        )
         self._band_map = BAND_REGISTRY.get(provider.sensor_key, {})
 
     def compute(

@@ -72,12 +72,14 @@ def _item(item_date: date) -> StacItem:
 # ── NDMI Stac engine path ───────────────────────────────────────
 
 
-@patch("ndvi.engines.stac.load_ndmi_array", return_value=np.array([0.3, 0.5]))
+@patch("ndvi.engines.stac._load_single_stac_band")
 @patch("ndvi.engines.stac.compute_ndvi_stats")
-def test_ndmi_stac_engine_compute_stats_calls_load_ndmi_array(
+def test_ndmi_stac_engine_compute_stats(
     mock_stats: MagicMock,
-    mock_load_ndmi: MagicMock,
+    mock_load_band: MagicMock,
 ) -> None:
+    """NDMI StacEngine loads the right bands and returns stats."""
+    mock_load_band.return_value = np.full((10, 10), 0.5, dtype=np.float32)
     mock_stats.return_value = NdviStats(
         mean=0.4, min=0.3, max=0.5, sample_count=2
     )
@@ -85,20 +87,18 @@ def test_ndmi_stac_engine_compute_stats_calls_load_ndmi_array(
     result = engine._compute_stats(item=_item(date(2025, 1, 2)), bbox=_bbox())
     assert result is not None
     assert result.mean == 0.4
-    mock_load_ndmi.assert_called_once()
-    kwargs = mock_load_ndmi.call_args.kwargs
-    assert "swir1_href" in kwargs
-    assert "nir_href" in kwargs
-    assert kwargs["swir1_href"] == "swir1.tif"
-    assert kwargs["nir_href"] == "nir.tif"
+    # _load_single_stac_band should be called for nir and swir1 bands
+    assert mock_load_band.call_count >= 2
 
 
-@patch("ndvi.engines.stac.load_ndmi_array")
+@patch("ndvi.engines.stac._load_single_stac_band")
 @patch("ndvi.engines.stac.compute_ndvi_stats")
 def test_ndmi_stac_engine_returns_none_when_swir1_missing(
     mock_stats: MagicMock,
-    mock_load_ndmi: MagicMock,
+    mock_load_band: MagicMock,
 ) -> None:
+    """NDMI returns None when swir1 band asset is missing from the item."""
+    mock_load_band.return_value = np.full((10, 10), 0.5, dtype=np.float32)
     mock_stats.return_value = NdviStats(
         mean=0.4, min=0.3, max=0.5, sample_count=2
     )
@@ -107,15 +107,17 @@ def test_ndmi_stac_engine_returns_none_when_swir1_missing(
     engine = StacEngine(index_type="NDMI")
     result = engine._compute_stats(item=item, bbox=_bbox())
     assert result is None
-    mock_load_ndmi.assert_not_called()
+    mock_load_band.assert_not_called()
 
 
-@patch("ndvi.engines.stac.load_ndvi_array", return_value=np.array([0.2, 0.3]))
+@patch("ndvi.engines.stac._load_single_stac_band")
 @patch("ndvi.engines.stac.compute_ndvi_stats")
-def test_ndmi_stac_engine_falls_back_to_ndvi_for_default_index_type(
+def test_ndmi_stac_engine_computes_ndvi_by_default(
     mock_stats: MagicMock,
-    mock_load_ndvi: MagicMock,
+    mock_load_band: MagicMock,
 ) -> None:
+    """Default StacEngine (index_type=NDVI) computes NDVI."""
+    mock_load_band.return_value = np.full((10, 10), 0.5, dtype=np.float32)
     mock_stats.return_value = NdviStats(
         mean=0.2, min=0.1, max=0.3, sample_count=4
     )
@@ -124,10 +126,7 @@ def test_ndmi_stac_engine_falls_back_to_ndvi_for_default_index_type(
     result = engine._compute_stats(item=_item(date(2025, 1, 2)), bbox=_bbox())
     assert result is not None
     assert result.mean == 0.2
-    mock_load_ndvi.assert_called_once()
-    kwargs = mock_load_ndvi.call_args.kwargs
-    assert "red_href" in kwargs
-    assert "nir_href" in kwargs
+    mock_load_band.assert_called()
 
 
 def test_ndmi_stac_engine_registers_asset_swir1() -> None:

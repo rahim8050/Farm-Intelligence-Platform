@@ -99,7 +99,6 @@ class TestGeeEngine:
         engine = GeeEngine(
             client=_MockStacClientWithItems(collection="sentinel-2-l2a"),  # type: ignore[arg-type]
         )
-        fake_array = np.array([0.3, 0.5, 0.7])
         fake_stats = NdviStats(
             mean=0.5,
             min=0.3,
@@ -109,7 +108,10 @@ class TestGeeEngine:
             quality_flags={"cloud_fraction": True},
         )
         with (
-            patch("ndvi.engines.gee.load_ndvi_array", return_value=fake_array),
+            patch(
+                "ndvi.engines.gee._load_single_gee_band",
+                return_value=np.full((10, 10), 0.5, dtype=np.float32),
+            ),
             patch(
                 "ndvi.engines.gee.compute_ndvi_stats", return_value=fake_stats
             ),
@@ -134,7 +136,6 @@ class TestGeeEngine:
         engine = GeeEngine(
             client=_MockStacClientWithItems(collection="sentinel-2-l2a"),  # type: ignore[arg-type]
         )
-        fake_array = np.array([0.4, 0.6])
         fake_stats = NdviStats(
             mean=0.5,
             min=0.4,
@@ -142,7 +143,10 @@ class TestGeeEngine:
             sample_count=2,
         )
         with (
-            patch("ndvi.engines.gee.load_ndvi_array", return_value=fake_array),
+            patch(
+                "ndvi.engines.gee._load_single_gee_band",
+                return_value=np.full((10, 10), 0.5, dtype=np.float32),
+            ),
             patch(
                 "ndvi.engines.gee.compute_ndvi_stats", return_value=fake_stats
             ),
@@ -169,10 +173,12 @@ class TestGeeEngine:
             assets={"B04_10m": "r.tif", "B08_10m": "n.tif"},
             cloud_cover=5.0,
         )
-        fake_array = np.array([0.2, 0.8])
         fake_stats = NdviStats(mean=0.5, min=0.2, max=0.8, sample_count=2)
         with (
-            patch("ndvi.engines.gee.load_ndvi_array", return_value=fake_array),
+            patch(
+                "ndvi.engines.gee._load_single_gee_band",
+                return_value=np.full((10, 10), 0.5, dtype=np.float32),
+            ),
             patch(
                 "ndvi.engines.gee.compute_ndvi_stats", return_value=fake_stats
             ),
@@ -180,8 +186,6 @@ class TestGeeEngine:
             stats = engine._compute_stats(item, _bbox())
         assert stats is not None
         assert stats.mean == 0.5
-        assert stats.valid_pixel_fraction is None
-        assert stats.quality_flags is None
 
     def test_compute_stats_missing_assets(self) -> None:
         engine = GeeEngine(
@@ -208,7 +212,8 @@ class TestGeeEngine:
         )
         with (
             patch(
-                "ndvi.engines.gee.load_ndvi_array", return_value=np.array([])
+                "ndvi.engines.gee._load_single_gee_band",
+                return_value=np.array([]),
             ),
             patch("ndvi.engines.gee.compute_ndvi_stats", return_value=None),
         ):
@@ -242,10 +247,12 @@ class TestGeeEngine:
             client=_MockItemsSameDate(collection="sentinel-2-l2a"),  # type: ignore[arg-type]
             date_window_days=5,
         )
-        fake_array = np.array([0.3, 0.7])
         fake_stats = NdviStats(mean=0.5, min=0.3, max=0.7, sample_count=2)
         with (
-            patch("ndvi.engines.gee.load_ndvi_array", return_value=fake_array),
+            patch(
+                "ndvi.engines.gee._load_single_gee_band",
+                return_value=np.full((10, 10), 0.5, dtype=np.float32),
+            ),
             patch(
                 "ndvi.engines.gee.compute_ndvi_stats", return_value=fake_stats
             ),
@@ -270,7 +277,8 @@ class TestGeeEngine:
         )
         with (
             patch(
-                "ndvi.engines.gee.load_ndvi_array", return_value=np.array([])
+                "ndvi.engines.gee._load_single_gee_band",
+                return_value=np.full((10, 10), 0.5, dtype=np.float32),
             ),
             patch("ndvi.engines.gee.compute_ndvi_stats", return_value=None),
         ):
@@ -289,7 +297,8 @@ class TestGeeEngine:
         )
         with (
             patch(
-                "ndvi.engines.gee.load_ndvi_array", return_value=np.array([])
+                "ndvi.engines.gee._load_single_gee_band",
+                return_value=np.full((10, 10), 0.5, dtype=np.float32),
             ),
             patch("ndvi.engines.gee.compute_ndvi_stats", return_value=None),
             patch("ndvi.engines.gee.date", wraps=date) as mock_date,

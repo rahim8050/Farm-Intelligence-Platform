@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ndvi.stac_client import StacClient
 
 from django.conf import settings
 from django.core.cache import caches
@@ -935,50 +938,182 @@ def _build_sentinelhub_engine() -> NDVIEngine:
     return SentinelHubEngine()
 
 
-@lru_cache(maxsize=1)
-def _build_stac_engine() -> NDVIEngine:
-    from .engines.stac import StacEngine
-
-    return StacEngine()
-
-
-@lru_cache(maxsize=1)
-def _build_gee_engine() -> NDVIEngine:
-    from .engines.gee import GeeEngine
-
-    return GeeEngine()
-
-
-@lru_cache(maxsize=1)
-def _build_landsat_engine() -> NDVIEngine:
-    from .engines.landsat import LandsatEngine
-
-    return LandsatEngine()
-
-
 def _build_ndwi_sentinelhub_engine() -> NDVIEngine:
     return SentinelHubEngine(index_type="NDWI")
 
 
+def _build_ndmi_sentinelhub_engine() -> NDVIEngine:
+    return SentinelHubEngine(index_type="NDMI")
+
+
+@lru_cache(maxsize=1)
+def _build_stac_engine() -> NDVIEngine:
+    from ndvi.engines.compute import SpectralComputeEngine
+    from ndvi.providers.stac import StacDataProvider
+    from science.formulas.registry import FORMULA_REGISTRY
+
+    provider = StacDataProvider(sensor_key="sentinel2_l2a")
+    return SpectralComputeEngine(
+        provider=provider,
+        formula=FORMULA_REGISTRY["NDVI"],
+        engine_name="stac",
+    )
+
+
 @lru_cache(maxsize=1)
 def _build_ndwi_stac_engine() -> NDVIEngine:
-    from .engines.stac import StacEngine
+    from ndvi.engines.compute import SpectralComputeEngine
+    from ndvi.providers.stac import StacDataProvider
+    from science.formulas.registry import FORMULA_REGISTRY
 
-    return StacEngine(index_type="NDWI")
+    provider = StacDataProvider(sensor_key="sentinel2_l2a")
+    return SpectralComputeEngine(
+        provider=provider,
+        formula=FORMULA_REGISTRY["NDWI"],
+        engine_name="stac",
+    )
+
+
+@lru_cache(maxsize=1)
+def _build_ndmi_stac_engine() -> NDVIEngine:
+    from ndvi.engines.compute import SpectralComputeEngine
+    from ndvi.providers.stac import StacDataProvider
+    from science.formulas.registry import FORMULA_REGISTRY
+
+    provider = StacDataProvider(sensor_key="sentinel2_l2a")
+    return SpectralComputeEngine(
+        provider=provider,
+        formula=FORMULA_REGISTRY["NDMI"],
+        engine_name="stac",
+    )
+
+
+def _gee_stac_client() -> StacClient:
+    from ndvi.stac_client import StacClient
+
+    return StacClient(
+        base_url=str(
+            getattr(
+                settings,
+                "NDVI_GEE_STAC_API_URL",
+                "https://stac.dataspace.copernicus.eu/v1/",
+            )
+        ),
+        collection=str(
+            getattr(
+                settings,
+                "NDVI_GEE_STAC_COLLECTION",
+                "sentinel-2-l2a",
+            )
+        ),
+    )
+
+
+def _landsat_stac_client() -> StacClient:
+    from ndvi.stac_client import StacClient
+
+    return StacClient(
+        base_url=str(
+            getattr(
+                settings,
+                "NDVI_LANDSAT_STAC_API_URL",
+                "https://planetarycomputer.microsoft.com/api/stac/v1/",
+            )
+        ),
+        collection=str(
+            getattr(
+                settings,
+                "NDVI_LANDSAT_STAC_COLLECTION",
+                "landsat-8-c2-l2",
+            )
+        ),
+    )
+
+
+def _with_provider_and_formula(
+    client: StacClient,
+    sensor_key: str,
+    index_key: str,
+    *,
+    engine_name: str,
+) -> NDVIEngine:
+    from ndvi.engines.compute import SpectralComputeEngine
+    from ndvi.providers.stac import StacDataProvider
+    from science.formulas.registry import FORMULA_REGISTRY
+
+    provider = StacDataProvider(client=client, sensor_key=sensor_key)
+    return SpectralComputeEngine(
+        provider=provider,
+        formula=FORMULA_REGISTRY[index_key],
+        engine_name=engine_name,
+    )
+
+
+@lru_cache(maxsize=1)
+def _build_gee_engine() -> NDVIEngine:
+    return _with_provider_and_formula(
+        _gee_stac_client(),
+        "sentinel2_l2a",
+        "NDVI",
+        engine_name="gee",
+    )
 
 
 @lru_cache(maxsize=1)
 def _build_ndwi_gee_engine() -> NDVIEngine:
-    from .engines.gee import GeeEngine
+    return _with_provider_and_formula(
+        _gee_stac_client(),
+        "sentinel2_l2a",
+        "NDWI",
+        engine_name="gee",
+    )
 
-    return GeeEngine(index_type="NDWI")
+
+@lru_cache(maxsize=1)
+def _build_ndmi_gee_engine() -> NDVIEngine:
+    return _with_provider_and_formula(
+        _gee_stac_client(),
+        "sentinel2_l2a",
+        "NDMI",
+        engine_name="gee",
+    )
+
+
+@lru_cache(maxsize=1)
+def _build_landsat_engine() -> NDVIEngine:
+    return _with_provider_and_formula(
+        _landsat_stac_client(),
+        "landsat89_l2",
+        "NDVI",
+        engine_name="landsat",
+    )
 
 
 @lru_cache(maxsize=1)
 def _build_ndwi_landsat_engine() -> NDVIEngine:
-    from .engines.landsat import LandsatEngine
+    return _with_provider_and_formula(
+        _landsat_stac_client(),
+        "landsat89_l2",
+        "NDWI",
+        engine_name="landsat",
+    )
 
-    return LandsatEngine(index_type="NDWI")
+
+@lru_cache(maxsize=1)
+def _build_ndmi_landsat_engine() -> NDVIEngine:
+    return _with_provider_and_formula(
+        _landsat_stac_client(),
+        "landsat89_l2",
+        "NDMI",
+        engine_name="landsat",
+    )
+
+
+@lru_cache(maxsize=1)
+def _build_modis_engine() -> NDVIEngine:
+    from .engines.modis import ModisEngine
+
+    return ModisEngine()
 
 
 @lru_cache(maxsize=1)
@@ -989,42 +1124,22 @@ def _build_ndwi_modis_engine() -> NDVIEngine:
 
 
 @lru_cache(maxsize=1)
-def _build_modis_engine() -> NDVIEngine:
-    from .engines.modis import ModisEngine
-
-    return ModisEngine()
-
-
-def _build_ndmi_sentinelhub_engine() -> NDVIEngine:
-    return SentinelHubEngine(index_type="NDMI")
-
-
-@lru_cache(maxsize=1)
-def _build_ndmi_stac_engine() -> NDVIEngine:
-    from .engines.stac import DEFAULT_ASSET_SWIR1_20M, StacEngine
-
-    return StacEngine(index_type="NDMI", asset_swir1=DEFAULT_ASSET_SWIR1_20M)
-
-
-@lru_cache(maxsize=1)
-def _build_ndmi_gee_engine() -> NDVIEngine:
-    from .engines.gee import GeeEngine
-
-    return GeeEngine(index_type="NDMI")
-
-
-@lru_cache(maxsize=1)
-def _build_ndmi_landsat_engine() -> NDVIEngine:
-    from .engines.landsat import LandsatEngine
-
-    return LandsatEngine(index_type="NDMI")
-
-
-@lru_cache(maxsize=1)
 def _build_ndmi_modis_engine() -> NDVIEngine:
-    from .engines.modis import ModisEngine
+    from ndvi.engines.compute import SpectralComputeEngine
+    from ndvi.providers.stac import StacDataProvider
+    from ndvi.stac_client import StacClient
+    from science.formulas.registry import FORMULA_REGISTRY
 
-    return ModisEngine(index_type="NDMI")
+    client = StacClient(
+        collection="modis-09ga-061",
+    )
+    provider = StacDataProvider(
+        client=client,
+        sensor_key="modis_09ga",
+    )
+    return SpectralComputeEngine(
+        provider=provider, formula=FORMULA_REGISTRY["NDMI"]
+    )
 
 
 ENGINE_FACTORIES: dict[str, Callable[[], NDVIEngine]] = {

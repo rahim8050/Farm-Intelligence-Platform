@@ -20,16 +20,14 @@ from django.conf import settings
 
 from ndvi.engines.base import BBox, NDVIEngine, NdviPoint
 from ndvi.stac_client import (
-    DEFAULT_STATS_SAMPLE_SIZE,
     NdviStats,
     StacClient,
     build_asset_candidates,
     compute_ndvi_stats,
-    load_ndvi_array,
-    load_ndwi_array,
     resolve_asset_href_candidates,
     select_best_item,
 )
+from science.formulas.registry import FORMULA_REGISTRY, compute_index
 
 logger = logging.getLogger(__name__)
 
@@ -43,71 +41,157 @@ DEFAULT_ASSET_NIR: Final[str] = "B08_10m"
 DEFAULT_ASSET_SCL: Final[str] = "SCL"
 DEFAULT_MASK_WATER: Final[bool] = False
 
-
-def _load_gee_ndvi(engine: GeeEngine, item: Any, bbox: BBox) -> np.ndarray:
-    nir_href = resolve_asset_href_candidates(
-        item,
-        build_asset_candidates(engine.asset_nir),
-    )
-    red_href = resolve_asset_href_candidates(
-        item,
-        build_asset_candidates(engine.asset_red),
-    )
-    scl_href = resolve_asset_href_candidates(
-        item,
-        build_asset_candidates(engine.asset_scl),
-    )
-    if not red_href or not nir_href:
-        logger.warning(
-            "gee.item.missing_assets item_id=%s",
-            getattr(item, "id", "-"),
-        )
-        return np.array([])
-    return load_ndvi_array(
-        red_href=red_href,
-        nir_href=nir_href,
-        bbox=bbox,
-        size=DEFAULT_STATS_SAMPLE_SIZE,
-        timeout_seconds=engine.timeout_seconds,
-        scl_href=scl_href,
-        mask_water=engine.mask_water,
-    )
-
-
-def _load_gee_ndwi(engine: GeeEngine, item: Any, bbox: BBox) -> np.ndarray:
-    nir_href = resolve_asset_href_candidates(
-        item,
-        build_asset_candidates(engine.asset_nir),
-    )
-    green_href = resolve_asset_href_candidates(
-        item,
-        build_asset_candidates(engine.asset_green),
-    )
-    scl_href = resolve_asset_href_candidates(
-        item,
-        build_asset_candidates(engine.asset_scl),
-    )
-    if not green_href or not nir_href:
-        logger.warning(
-            "gee.item.missing_assets item_id=%s",
-            getattr(item, "id", "-"),
-        )
-        return np.array([])
-    return load_ndwi_array(
-        green_href=green_href,
-        nir_href=nir_href,
-        bbox=bbox,
-        size=DEFAULT_STATS_SAMPLE_SIZE,
-        timeout_seconds=engine.timeout_seconds,
-        scl_href=scl_href,
-        mask_water=engine.mask_water,
-    )
-
-
-_INDEX_LOADERS: Final[dict[str, Any]] = {
-    "NDVI": _load_gee_ndvi,
-    "NDWI": _load_gee_ndwi,
+# Map abstract band names (from FORMULA_REGISTRY) to GeeEngine asset attributes
+_BAND_TO_ASSET_ATTR: Final[dict[str, str]] = {
+    "red": "asset_red",
+    "green": "asset_green",
+    "nir": "asset_nir",
 }
+
+
+def _load_gee_index_array(
+    engine: GeeEngine, item: Any, bbox: BBox
+) -> np.ndarray:
+    """Load and compute any spectral index using FORMULA_REGISTRY.
+
+    Resolves abstract band names from the formula registry to engine-specific
+    asset attributes, loads each band, computes the index via
+    ``compute_index()``, and applies SCL masking if available.
+    """
+    formula = FORMULA_REGISTRY.get(engine.index_type)
+    if formula is None:
+        logger.warning("gee.unknown_index index=%s", engine.index_type)
+        return np.array([])
+
+    # Resolve hrefs for required bands
+    band_hrefs: dict[str, str] = {}
+    for band_name in formula["bands"]:
+        attr_name = _BAND_TO_ASSET_ATTR.get(band_name)
+        if attr_name is None:
+            logger.warning(
+                "gee.band_not_mapped band=%s index=%s",
+                band_name,
+                engine.index_type,
+            )
+            return np.array([])
+        asset_key = getattr(engine, attr_name)
+        href = resolve_asset_href_candidates(
+            item, build_asset_candidates(asset_key)
+        )
+        if not href:
+            logger.warning(
+                "gee.item.missing_band band=%s item_id=%s",
+                band_name,
+                getattr(item, "id", "-"),
+            )
+            return np.array([])
+        band_hrefs[band_name] = href
+
+    # Resolve SCL href for masking
+    scl_href = resolve_asset_href_candidates(
+        item, build_asset_candidates(engine.asset_scl)
+    )
+
+    # Load bands individually
+    band_arrays: dict[str, np.ndarray] = {}
+    for band_name, href in band_hrefs.items():
+        arr = _load_single_gee_band(
+            href, bbox, timeout_seconds=engine.timeout_seconds
+        )
+        if arr.size == 0:
+            return np.array([])
+        band_arrays[band_name] = arr
+
+    # Compute the spectral index using the registered formula
+    index_array = compute_index(engine.index_type, **band_arrays)
+
+    # Apply SCL mask if available
+    if scl_href:
+        scl_arr = _load_single_gee_band(
+            scl_href, bbox, timeout_seconds=engine.timeout_seconds
+        )
+        if scl_arr.size > 0:
+            from ndvi.stac_client import apply_scl_mask
+
+            index_array, _, _ = apply_scl_mask(
+                index_array, scl_arr, mask_water=engine.mask_water
+            )
+
+    if index_array.size == 0:
+        return np.array([])
+    return index_array.astype(np.float32)
+
+
+def _load_single_gee_band(
+    href: str,
+    bbox: BBox,
+    timeout_seconds: float = 30.0,
+    size: int = 256,
+) -> np.ndarray:
+    """Load a single COG band as a numpy array.
+
+    Downloads remote COGs to a temp directory, then reads with rasterio.
+    Mirrors the per-band loading pattern in ``providers/stac.py``.
+    """
+    import os
+    import tempfile
+
+    import httpx
+    import rasterio
+    from rasterio.enums import Resampling
+    from rasterio.warp import transform_bounds
+
+    gdal_env: dict[str, object] = {
+        "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+        "GDAL_HTTP_TIMEOUT": int(timeout_seconds),
+        "GDAL_HTTP_CONNECTTIMEOUT": int(timeout_seconds),
+        "GDAL_HTTP_MAX_RETRY": 5,
+        "GDAL_HTTP_RETRY_DELAY": 2,
+        "GDAL_NUM_THREADS": "ALL_CPUS",
+        "GDAL_CACHEMAX": 256,
+    }
+
+    def _download(href: str, tmpdir: str) -> str:
+        if not href.startswith(("http://", "https://")):
+            return href
+        filename = os.path.basename(href.split("?")[0])
+        local_path = os.path.join(tmpdir, filename)
+        client = httpx.Client(timeout=timeout_seconds, follow_redirects=True)
+        try:
+            resp = client.get(href)
+            resp.raise_for_status()
+            with open(local_path, "wb") as f:
+                f.write(resp.content)
+        finally:
+            client.close()
+        return local_path
+
+    with tempfile.TemporaryDirectory(prefix="ndvi_gee_") as tmpdir:
+        local_path = _download(href, tmpdir)
+        with rasterio.Env(**gdal_env), rasterio.open(local_path) as src:
+            if src.crs is None:
+                return np.array([])
+            bounds = transform_bounds(
+                "EPSG:4326",
+                src.crs,
+                float(bbox.west),
+                float(bbox.south),
+                float(bbox.east),
+                float(bbox.north),
+                densify_pts=21,
+            )
+            out_shape = (
+                int(src.height * size / max(src.width, src.height)),
+                size,
+            )
+            window = src.window(*bounds)
+            data = src.read(
+                1,
+                window=window,
+                out_shape=out_shape,
+                resampling=Resampling.bilinear,
+            ).astype(np.float32)
+            return data
 
 
 def _str_setting(name: str, default: str) -> str:
@@ -292,10 +376,7 @@ class GeeEngine(NDVIEngine):
         return buckets
 
     def _compute_stats(self, item: Any, bbox: BBox) -> NdviStats | None:
-        index_loader = _INDEX_LOADERS.get(self.index_type)
-        if index_loader is None:
-            raise ValueError(f"Unsupported index type: {self.index_type}")
-        index_array = index_loader(self, item, bbox)
+        index_array = _load_gee_index_array(self, item, bbox)
         if index_array.size == 0:
             return None
 
@@ -303,14 +384,11 @@ class GeeEngine(NDVIEngine):
         if stats is None:
             return None
 
-        valid_pixel_fraction = stats.valid_pixel_fraction
-        quality_flags = stats.quality_flags
-
         return NdviStats(
             mean=stats.mean,
             min=stats.min,
             max=stats.max,
             sample_count=stats.sample_count,
-            valid_pixel_fraction=valid_pixel_fraction,
-            quality_flags=quality_flags,
+            valid_pixel_fraction=stats.valid_pixel_fraction,
+            quality_flags=stats.quality_flags,
         )
