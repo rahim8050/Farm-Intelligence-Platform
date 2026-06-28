@@ -134,7 +134,7 @@ class RadioHealthView(APIView):
 ### Celery Health Check Task
 
 `radio.tasks.check_all_stations_health` — registered in `CELERY_BEAT_SCHEDULE` as
-`radio-health-check` with schedule `RADIO_HEALTH_CHECK_INTERVAL_SECONDS` (default 300 s).
+`radio-health-check` with schedule `RADIO_HEALTH_CHECK_INTERVAL_SECONDS` (default 3600 s).
 
 ```python
 # radio/tasks.py — implemented in Phase 2
