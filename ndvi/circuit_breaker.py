@@ -1,14 +1,20 @@
-"""Generic circuit breaker for upstream service protection."""
+"""Generic circuit breaker for upstream service protection.
+
+Provides circuit breaker pattern for all data providers (STAC, SentinelHub,
+GEE, Landsat, MODIS) with Prometheus metrics integration.
+"""
 
 from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from ndvi.metrics import (
     ndvi_circuit_breaker_state,
     ndvi_circuit_breaker_transitions_total,
+    spectral_provider_circuit_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +49,28 @@ class CircuitOpenError(RuntimeError):
         )
 
 
+@dataclass(frozen=True)
+class ProviderHealth:
+    """Health status for a data provider.
+
+    Attributes:
+        provider: Provider name (e.g. ``"stac"``, ``"sentinelhub"``).
+        state: Circuit breaker state (``"closed"``, ``"open"``,
+            ``"half_open"``).
+        failure_count: Current consecutive failure count.
+        failure_threshold: Number of failures before circuit opens.
+        seconds_since_last_failure: Time since last failure.
+        is_healthy: ``True`` if state is ``CLOSED`` or ``HALF_OPEN``.
+    """
+
+    provider: str
+    state: str
+    failure_count: int
+    failure_threshold: int
+    seconds_since_last_failure: float
+    is_healthy: bool
+
+
 class CircuitBreaker:
     """Generic circuit breaker to stop retrying when an upstream is blocked.
 
@@ -61,6 +89,10 @@ class CircuitBreaker:
             reset_timeout_secs=300.0,
         )
 
+        # Using call() wrapper:
+        result = cb.call(make_request, arg1, arg2)
+
+        # Or manually:
         if cb.is_open():
             raise CircuitOpenError(...)
 
@@ -90,8 +122,11 @@ class CircuitBreaker:
         self._failure_count = 0
         self._last_failure_time = 0.0
 
-        # Initialize Prometheus gauge to 0 (CLOSED)
+        # Initialize Prometheus gauges to 0 (CLOSED)
         ndvi_circuit_breaker_state.labels(engine=engine).set(
+            _STATE_VALUES[self.CLOSED]
+        )
+        spectral_provider_circuit_state.labels(provider=engine).set(
             _STATE_VALUES[self.CLOSED]
         )
 
@@ -105,6 +140,9 @@ class CircuitBreaker:
             from_state=from_state,
             to_state=to_state,
         ).inc()
+        spectral_provider_circuit_state.labels(provider=self.engine).set(
+            _STATE_VALUES[to_state]
+        )
 
     @property
     def state(self) -> str:
@@ -166,6 +204,48 @@ class CircuitBreaker:
         """Check if the circuit is open (should block requests)."""
         return self.state == self.OPEN
 
+    def call(
+        self,
+        func: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute a function through the circuit breaker.
+
+        If the circuit is OPEN, raises ``CircuitOpenError`` immediately.
+        If HALF_OPEN, allows the call as a probe. On success, closes the
+        circuit. On failure, re-opens the circuit.
+
+        Args:
+            func: Callable to execute.
+            *args: Positional arguments for func.
+            **kwargs: Keyword arguments for func.
+
+        Returns:
+            The return value of func.
+
+        Raises:
+            CircuitOpenError: If the circuit is OPEN.
+            Any exception raised by func is propagated.
+        """
+        if self.is_open():
+            elapsed = 0.0
+            if self._last_failure_time > 0:
+                elapsed = time.monotonic() - self._last_failure_time
+            raise CircuitOpenError(
+                engine=self.engine,
+                timeout_secs=self._reset_timeout_secs,
+                elapsed=elapsed,
+            )
+
+        try:
+            result = func(*args, **kwargs)
+            self.record_success()
+            return result
+        except Exception:
+            self.record_failure()
+            raise
+
     def reset(self) -> None:
         """Manually reset the circuit breaker to CLOSED state."""
         old_state = self._state
@@ -194,6 +274,25 @@ class CircuitBreaker:
             "reset_timeout_secs": self._reset_timeout_secs,
             "seconds_since_last_failure": elapsed,
         }
+
+    def health(self) -> ProviderHealth:
+        """Return a structured health report for this circuit breaker.
+
+        Returns:
+            ``ProviderHealth`` with current state and health assessment.
+        """
+        current_state = self.state
+        elapsed = 0.0
+        if self._last_failure_time > 0:
+            elapsed = time.monotonic() - self._last_failure_time
+        return ProviderHealth(
+            provider=self.engine,
+            state=current_state,
+            failure_count=self._failure_count,
+            failure_threshold=self._failure_threshold,
+            seconds_since_last_failure=elapsed,
+            is_healthy=current_state != self.OPEN,
+        )
 
 
 # ---------------------------------------------------------------------------

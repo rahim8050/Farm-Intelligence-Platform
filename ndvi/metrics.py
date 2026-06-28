@@ -376,3 +376,19 @@ ndmi_job_duration_seconds = Histogram(
     labelnames=["queue", "status"],
     buckets=(0.1, 0.3, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300),
 )
+
+# ── Provider-level circuit breaker (Phase 3.2) ────────────────────────────
+# Tracks circuit breaker state per data provider.
+# Values: 0=CLOSED, 1=OPEN, 2=HALF_OPEN
+spectral_provider_circuit_state = Gauge(
+    "spectral_provider_circuit_state",
+    "Current circuit breaker state per data provider",
+    labelnames=["provider"],
+)
+
+# Dead letter queue metrics (Phase 3.3)
+spectral_job_dead_letter_total = Counter(
+    "spectral_job_dead_letter_total",
+    "Total dead-lettered jobs per queue",
+    labelnames=["queue"],
+)

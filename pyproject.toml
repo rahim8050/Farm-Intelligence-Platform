@@ -17,6 +17,7 @@ dependencies = [
   "matplotlib==3.10.8",
   "python-dotenv==1.2.2",
   "django-environ==0.12.1",
+  "django-simple-history==3.12.0",
 ]
 
 [dependency-groups]
@@ -60,6 +61,7 @@ dev = [
   "django-extensions==4.1",
   "django-prometheus==2.4.1",
   "django-redis==5.4.0",
+  "django-simple-history==3.12.0",
   "django-stubs==5.2.9",
   "django-stubs-ext==5.2.9",
   "django-timezone-field==7.2.1",

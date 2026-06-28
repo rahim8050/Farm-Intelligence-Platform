@@ -16,6 +16,7 @@ import httpx
 import numpy as np
 
 from ndvi.engines.base import BBox
+from ndvi.logging import StructuredLogger, Timer
 from ndvi.stac_client import (
     DEFAULT_STATS_SAMPLE_SIZE,
     StacClient,
@@ -26,6 +27,7 @@ from ndvi.stac_client import (
 )
 
 logger = logging.getLogger(__name__)
+slog = StructuredLogger(__name__)
 
 
 def _is_remote_href(href: str) -> bool:
@@ -133,12 +135,24 @@ class StacDataProvider:
         max_cloud: int,
     ) -> list[StacItem]:
         """Search the STAC API for items matching the query."""
-        return self.client.search(
+        timer = Timer()
+        items = self.client.search(
             bbox=bbox,
             start=start,
             end=end,
             max_cloud=max_cloud,
         )
+        slog.info(
+            "provider.search",
+            f"STAC search done sensor={self.sensor_key} items={len(items)}",
+            provider=self.sensor_key,
+            duration_ms=timer.elapsed_ms(),
+            item_count=len(items),
+            bbox=str(bbox),
+            start=str(start),
+            end=str(end),
+        )
+        return items
 
     def load_band(
         self,
@@ -147,6 +161,7 @@ class StacDataProvider:
         bbox: BBox,
     ) -> np.ndarray:
         """Load a single band array from a STAC item asset."""
+        timer = Timer()
         candidates = build_asset_candidates(band_asset_key)
         href = resolve_asset_href_candidates(item, candidates)
         if not href:
@@ -156,11 +171,21 @@ class StacDataProvider:
                 band_asset_key,
             )
             return np.array([])
-        return _load_single_band(
+        result = _load_single_band(
             href,
             bbox,
             timeout_seconds=self.timeout_seconds,
         )
+        slog.info(
+            "provider.load_band",
+            f"Band loaded sensor={self.sensor_key} "
+            f"asset={band_asset_key} size={result.size}",
+            provider=self.sensor_key,
+            duration_ms=timer.elapsed_ms(),
+            band_asset_key=band_asset_key,
+            band_size=result.size,
+        )
+        return result
 
     def get_latest(
         self,
@@ -169,6 +194,7 @@ class StacDataProvider:
         max_cloud: int,
     ) -> StacItem | None:
         """Return the most recent item within the lookback window."""
+        timer = Timer()
         today = date.today()
         start = today - timedelta(days=lookback_days)
         items = self.client.search(
@@ -177,8 +203,16 @@ class StacDataProvider:
             end=today,
             max_cloud=max_cloud,
         )
-        return select_best_item(
+        result = select_best_item(
             items,
             target_date=today,
             window_days=lookback_days,
         )
+        slog.info(
+            "provider.get_latest",
+            f"Latest item sensor={self.sensor_key} found={result is not None}",
+            provider=self.sensor_key,
+            duration_ms=timer.elapsed_ms(),
+            has_item=result is not None,
+        )
+        return result

@@ -11,13 +11,18 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
 from ndvi.engines.base import BBox, NdviPoint
-from ndvi.engines.compute import SpectralComputeEngine
+from ndvi.engines.compute import (
+    BatchComputeRequest,
+    BatchComputeResult,
+    SpectralComputeEngine,
+)
 from ndvi.providers.base import DataProvider
 from ndvi.providers.stac import (
     StacDataProvider,
@@ -594,3 +599,550 @@ class TestStacProviderHelpers:
             timeout_seconds=30.0,
         )
         assert result.size == 0
+
+
+# ──────────────────────────────────────────────
+# Batch compute tests (Phase 4.1)
+# ──────────────────────────────────────────────
+
+
+class FakeBatchProvider:
+    """DataProvider for batch compute tests with per-item band control."""
+
+    sensor_key: str = "sentinel2_l2a"
+
+    def __init__(
+        self,
+        items_map: dict[str, list[StacItem]] | None = None,
+    ) -> None:
+        self._items_map = items_map or {"default": [_make_item()]}
+        self._band_data: dict[str, np.ndarray] = {
+            "B08_10m": np.full((10, 10), 0.8, dtype=np.float32),
+            "B04_10m": np.full((10, 10), 0.2, dtype=np.float32),
+            "B03_10m": np.full((10, 10), 0.5, dtype=np.float32),
+            "B11_20m": np.full((10, 10), 0.3, dtype=np.float32),
+        }
+
+    def search(
+        self,
+        bbox: BBox,
+        start: date,
+        end: date,
+        max_cloud: int,
+    ) -> list[StacItem]:
+        key = f"{bbox.south}_{bbox.west}_{bbox.north}_{bbox.east}"
+        default_items = self._items_map.get("default", [])
+        return list(self._items_map.get(key, default_items))
+
+    def load_band(
+        self,
+        item: StacItem,
+        band_asset_key: str,
+        bbox: BBox,
+    ) -> np.ndarray:
+        if band_asset_key in self._band_data:
+            return self._band_data[band_asset_key].copy()
+        return np.array([])
+
+    def get_latest(
+        self,
+        bbox: BBox,
+        lookback_days: int,
+        max_cloud: int,
+    ) -> StacItem | None:
+        return None
+
+
+class TestBatchCompute:
+    """Tests for tensor-based batch compute (Phase 4.1)."""
+
+    def _make_bbox(self, offset: float = 0.0) -> BBox:
+        return BBox(
+            south=Decimal(f"{offset}"),
+            west=Decimal(f"{offset}"),
+            north=Decimal(f"{offset + 0.1}"),
+            east=Decimal(f"{offset + 0.1}"),
+        )
+
+    def _make_item(
+        self,
+        item_id: str = "batch-item",
+        cloud_cover: float = 5.0,
+        dt: datetime | None = None,
+    ) -> StacItem:
+        return StacItem(
+            id=item_id,
+            datetime=dt or datetime(2026, 6, 1, tzinfo=UTC),
+            assets={
+                "B08_10m": "http://fake/nir.tif",
+                "B04_10m": "http://fake/red.tif",
+                "B11_20m": "http://fake/swir1.tif",
+                "B03_10m": "http://fake/green.tif",
+            },
+            cloud_cover=cloud_cover,
+        )
+
+    # ── Dataclass tests ───────────────────────────────────────────
+
+    def test_batch_compute_request_creation(self) -> None:
+        """BatchComputeRequest stores farm parameters correctly."""
+        bbox = self._make_bbox()
+        req = BatchComputeRequest(
+            farm_id=1,
+            bbox=bbox,
+            start=date(2026, 6, 1),
+            end=date(2026, 6, 10),
+            step_days=5,
+            max_cloud=30,
+        )
+        assert req.farm_id == 1
+        assert req.bbox == bbox
+        assert req.start == date(2026, 6, 1)
+        assert req.end == date(2026, 6, 10)
+        assert req.step_days == 5
+        assert req.max_cloud == 30
+
+    def test_batch_compute_result_creation(self) -> None:
+        """BatchComputeResult stores farm_id and points."""
+        point = NdviPoint(date=date(2026, 6, 1), mean=0.5)
+        result = BatchComputeResult(farm_id=42, points=[point])
+        assert result.farm_id == 42
+        assert len(result.points) == 1
+        assert result.points[0].mean == 0.5
+
+    # ── Single farm batch ─────────────────────────────────────────
+
+    def test_compute_batch_single_farm(self) -> None:
+        """compute_batch with one farm returns correct NDVI."""
+        items = [self._make_item(dt=datetime(2026, 6, 1, tzinfo=UTC))]
+        provider = FakeBatchProvider(
+            items_map={"default": items},
+        )
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=self._make_bbox(),
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 1
+        assert results[0].farm_id == 1
+        assert len(results[0].points) == 1
+        # nir=0.8, red=0.2 -> NDVI = 0.6
+        assert results[0].points[0].mean == pytest.approx(0.6, abs=1e-5)
+
+    def test_compute_batch_ndmi_single_farm(self) -> None:
+        """compute_batch with NDMI formula and one farm."""
+        items = [self._make_item(dt=datetime(2026, 6, 1, tzinfo=UTC))]
+        provider = FakeBatchProvider(
+            items_map={"default": items},
+        )
+        formula = FORMULA_REGISTRY["NDMI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=self._make_bbox(),
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 1
+        assert len(results[0].points) == 1
+        # nir=0.8, swir1=0.3 -> NDMI = 0.4545...
+        expected = (0.8 - 0.3) / (0.8 + 0.3)
+        assert results[0].points[0].mean == pytest.approx(expected, abs=1e-5)
+
+    def test_compute_batch_ndwi_single_farm(self) -> None:
+        """compute_batch with NDWI formula and one farm."""
+        items = [self._make_item(dt=datetime(2026, 6, 1, tzinfo=UTC))]
+        provider = FakeBatchProvider(
+            items_map={"default": items},
+        )
+        formula = FORMULA_REGISTRY["NDWI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=self._make_bbox(),
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 1
+        assert len(results[0].points) == 1
+        # green=0.5, nir=0.8 -> NDWI = (0.5-0.8)/(0.5+0.8)
+        expected = (0.5 - 0.8) / (0.5 + 0.8)
+        assert results[0].points[0].mean == pytest.approx(expected, abs=1e-5)
+
+    # ── Multi-farm batch ──────────────────────────────────────────
+
+    def test_compute_batch_two_farms(self) -> None:
+        """compute_batch with two farms returns correct results."""
+        dt1 = datetime(2026, 6, 1, tzinfo=UTC)
+        dt2 = datetime(2026, 6, 1, tzinfo=UTC)
+        items1 = [self._make_item(item_id="farm1-item", dt=dt1)]
+        items2 = [self._make_item(item_id="farm2-item", dt=dt2)]
+
+        # Use bbox keys to serve different items per farm
+        bbox1 = self._make_bbox(0.0)
+        bbox2 = self._make_bbox(1.0)
+        bbox1_key = f"{bbox1.south}_{bbox1.west}_{bbox1.north}_{bbox1.east}"
+        bbox2_key = f"{bbox2.south}_{bbox2.west}_{bbox2.north}_{bbox2.east}"
+
+        provider = FakeBatchProvider(
+            items_map={
+                bbox1_key: items1,
+                bbox2_key: items2,
+            },
+        )
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=bbox1,
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+                BatchComputeRequest(
+                    farm_id=2,
+                    bbox=bbox2,
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 2
+        # Both farms should have 1 point each with NDVI=0.6
+        for result in results:
+            assert len(result.points) == 1
+            assert result.points[0].mean == pytest.approx(0.6, abs=1e-5)
+        assert results[0].farm_id == 1
+        assert results[1].farm_id == 2
+
+    # ── Edge cases ────────────────────────────────────────────────
+
+    def test_compute_batch_empty_items(self) -> None:
+        """compute_batch with no items returns empty results."""
+        provider = FakeBatchProvider(items_map={"default": []})
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=self._make_bbox(),
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 10),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 1
+        assert results[0].points == []
+
+    def test_compute_batch_no_requests(self) -> None:
+        """compute_batch with empty request list returns empty list."""
+        provider = FakeBatchProvider()
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch([])
+        assert results == []
+
+    def test_compute_batch_multi_bucket(self) -> None:
+        """compute_batch with multiple time buckets per farm."""
+        # Create items on different dates for multiple buckets
+        items = [
+            self._make_item(
+                item_id="item-1",
+                dt=datetime(2026, 6, 1, tzinfo=UTC),
+            ),
+            self._make_item(
+                item_id="item-2",
+                dt=datetime(2026, 6, 6, tzinfo=UTC),
+            ),
+        ]
+        provider = FakeBatchProvider(items_map={"default": items})
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=self._make_bbox(),
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 10),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 1
+        assert len(results[0].points) == 2
+        # Both points should have NDVI=0.6
+        for point in results[0].points:
+            assert point.mean == pytest.approx(0.6, abs=1e-5)
+
+    def test_compute_batch_partial_missing_items(self) -> None:
+        """compute_batch handles some farms with no matching items."""
+        dt = datetime(2026, 6, 1, tzinfo=UTC)
+        items1 = [self._make_item(item_id="farm1-item", dt=dt)]
+        bbox1 = self._make_bbox(0.0)
+        bbox2 = self._make_bbox(1.0)
+        bbox1_key = f"{bbox1.south}_{bbox1.west}_{bbox1.north}_{bbox1.east}"
+
+        provider = FakeBatchProvider(
+            items_map={
+                bbox1_key: items1,
+            },
+        )
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=bbox1,
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+                BatchComputeRequest(
+                    farm_id=2,
+                    bbox=bbox2,
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 2
+        assert len(results[0].points) == 1  # Farm 1 has data
+        assert results[0].points[0].mean == pytest.approx(0.6, abs=1e-5)
+        assert len(results[1].points) == 0  # Farm 2 has no data
+
+    def test_compute_batch_preserves_cloud_fraction(self) -> None:
+        """compute_batch preserves cloud cover metadata."""
+        items = [
+            self._make_item(
+                item_id="cloudy-item",
+                cloud_cover=15.0,
+                dt=datetime(2026, 6, 1, tzinfo=UTC),
+            ),
+        ]
+        provider = FakeBatchProvider(items_map={"default": items})
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=self._make_bbox(),
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 1
+        assert len(results[0].points) == 1
+        # 15% cloud cover → normalized to 0.15
+        cf = results[0].points[0].cloud_fraction
+        assert cf == pytest.approx(0.15, abs=1e-5)
+
+    # ── Edge: missing band key ────────────────────────────────────
+
+    def test_compute_batch_unknown_sensor_key(self) -> None:
+        """compute_batch with unknown sensor key returns empty."""
+        provider = FakeBatchProvider()
+        provider.sensor_key = "unknown_sensor"
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=self._make_bbox(),
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 1
+        assert len(results[0].points) == 0
+
+    # ── Edge: empty band array from provider ──────────────────────
+
+    def test_compute_batch_empty_band_array(self) -> None:
+        """compute_batch when provider returns empty band array."""
+        dt = datetime(2026, 6, 1, tzinfo=UTC)
+        items = [self._make_item(item_id="empty-item", dt=dt)]
+
+        class EmptyBandProvider(FakeBatchProvider):
+            """Provider that returns empty arrays for B04_10m."""
+
+            def load_band(
+                self,
+                item: StacItem,
+                band_asset_key: str,
+                bbox: BBox,
+            ) -> np.ndarray:
+                if band_asset_key == "B04_10m":
+                    return np.array([])
+                return super().load_band(item, band_asset_key, bbox)
+
+        provider = EmptyBandProvider(items_map={"default": items})
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=self._make_bbox(),
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 1
+        assert len(results[0].points) == 0
+
+    # ── Edge: all-NaN index array ─────────────────────────────────
+
+    def test_compute_batch_all_nan(self) -> None:
+        """compute_batch with bands causing all-NaN index."""
+        dt = datetime(2026, 6, 1, tzinfo=UTC)
+        items = [self._make_item(item_id="nan-item", dt=dt)]
+
+        class NanBandProvider(FakeBatchProvider):
+            """Provider that returns all-NaN bands."""
+
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                self._band_data = {
+                    "B08_10m": np.full((10, 10), np.nan, dtype=np.float32),
+                    "B04_10m": np.full((10, 10), np.nan, dtype=np.float32),
+                }
+
+        provider = NanBandProvider(items_map={"default": items})
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=self._make_bbox(),
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 1
+        assert len(results[0].points) == 0
+
+    # ── Edge: different bbox shapes (shape grouping) ──────────────
+
+    def test_compute_batch_different_shapes(self) -> None:
+        """compute_batch with farms having different bbox sizes."""
+        dt = datetime(2026, 6, 1, tzinfo=UTC)
+        items = [self._make_item(item_id="shape-item", dt=dt)]
+
+        class ShapeAwareProvider(FakeBatchProvider):
+            """Provider that returns different array sizes per bbox."""
+
+            def load_band(
+                self,
+                item: StacItem,
+                band_asset_key: str,
+                bbox: BBox,
+            ) -> np.ndarray:
+                # Use bbox to determine array size
+                size = int(float(bbox.east - bbox.west) * 100 + 10)
+                if size <= 0:
+                    size = 10
+                return np.full((size, size), 0.5, dtype=np.float32)
+
+        provider = ShapeAwareProvider(items_map={"default": items})
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+
+        # Two farms with different bbox sizes
+        bbox_small = BBox(
+            south=Decimal("0.0"),
+            west=Decimal("0.0"),
+            north=Decimal("0.05"),
+            east=Decimal("0.05"),
+        )
+        bbox_large = BBox(
+            south=Decimal("0.0"),
+            west=Decimal("0.0"),
+            north=Decimal("0.1"),
+            east=Decimal("0.1"),
+        )
+
+        results = engine.compute_batch(
+            [
+                BatchComputeRequest(
+                    farm_id=1,
+                    bbox=bbox_small,
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+                BatchComputeRequest(
+                    farm_id=2,
+                    bbox=bbox_large,
+                    start=date(2026, 6, 1),
+                    end=date(2026, 6, 1),
+                    step_days=5,
+                    max_cloud=30,
+                ),
+            ]
+        )
+        assert len(results) == 2
+        assert len(results[0].points) == 1
+        assert len(results[1].points) == 1

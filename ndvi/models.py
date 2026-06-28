@@ -6,6 +6,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import QuerySet
 from django.utils import timezone
+from simple_history.models import HistoricalRecords  # type: ignore
 
 from farms.models import Farm
 
@@ -185,6 +186,9 @@ class NdviObservation(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    # Track all mutations for provenance and audit
+    history = HistoricalRecords()
 
     class Meta:
         constraints = [

@@ -26,6 +26,7 @@ from ndvi.farm_state import (
     invalidate_farm_state_cache,
 )
 from ndvi.fusion_ndwi import run_ndwi_fusion
+from ndvi.logging import StructuredLogger, Timer
 from ndvi.raster.sentinelhub_engine import SentinelHubRasterError
 from ndvi.retry_policy import RetryDecision, should_retry
 from ndvi.stac_client import (
@@ -66,6 +67,7 @@ from .services import (
 )
 
 logger = logging.getLogger(__name__)
+slog = StructuredLogger(__name__)
 
 
 def _with_fresh_connection[T](func: Callable[[], T]) -> T:
@@ -265,6 +267,7 @@ def _handle_retryable_task_failure(
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def run_ndvi_job(self: Any, job_id: int) -> str:
+    timer = Timer()
     job = NdviJob.objects.select_related("farm", "owner").get(id=job_id)
     # Refresh to catch status changes from concurrent task execution
     job.refresh_from_db()
@@ -273,6 +276,16 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
     lock_timeout = get_lock_timeout_seconds()
     lock_key = f"{job.id}:{job.request_hash}"
     lock_token: str | None = None
+
+    slog.info(
+        "task.start",
+        "NDVI job started",
+        job_id=job.id,
+        index_type=job.index_type,
+        engine=job.engine,
+        job_type=job.job_type,
+    )
+
     try:
         if job.status == NdviJob.JobStatus.SUCCESS:
             logger.info("ndvi.job.already_successful job_id=%s", job.id)
@@ -419,9 +432,14 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
         _with_fresh_connection(
             lambda: job.mark_finished(NdviJob.JobStatus.SUCCESS)
         )
-        logger.info(
-            "NDVI raster job completed successfully for farm_id=%s",
-            job.farm_id,
+        slog.info(
+            "task.complete",
+            "NDVI job completed successfully",
+            job_id=job.id,
+            index_type=job.index_type,
+            engine=job.engine,
+            job_type=job.job_type,
+            duration_ms=timer.elapsed_ms(),
         )
         spectral_jobs_total.labels(
             index=job.index_type,
@@ -503,10 +521,15 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
             log_prefix="ndvi.job",
         )
     except Exception as exc:  # noqa: BLE001
-        logger.exception("ndvi.job.failed job_id=%s err=%s", job.id, exc)
-        logger.exception(
-            "NDVI raster job failed for farm_id=%s",
-            job.farm_id,
+        slog.error(
+            "task.failed",
+            "NDVI job failed",
+            job_id=job.id,
+            index_type=job.index_type,
+            engine=job.engine,
+            job_type=job.job_type,
+            duration_ms=timer.elapsed_ms(),
+            error=str(exc),
         )
         _mark_job_failed(job, exc)
         spectral_jobs_total.labels(

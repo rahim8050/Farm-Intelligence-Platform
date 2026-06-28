@@ -459,9 +459,7 @@ def test_run_ndvi_job_raster_success_saves_artifact_and_logs(
     assert artifact.image.name.endswith(".png")
     assert artifact.image.storage.exists(artifact.image.name)
     assert any("NDVI raster saved at path=" in m for m in caplog.messages)
-    assert any(
-        "NDVI raster job completed successfully" in m for m in caplog.messages
-    )
+    assert any("NDVI job completed successfully" in m for m in caplog.messages)
 
 
 @pytest.mark.django_db

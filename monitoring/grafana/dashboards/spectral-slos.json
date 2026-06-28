@@ -1,0 +1,306 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "title": "Spectral Index SLOs",
+  "uid": "spectral-slos-001",
+  "version": 1,
+  "timezone": "browser",
+  "editable": true,
+  "tags": ["spectral", "slo", "ndvi", "ndwi", "ndmi"],
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "title": "API Availability (5xx Ratio)",
+      "description": "SLO: 5xx responses must be < 1% of all requests per index type.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(django_http_responses_total{status=~\"5..\"}[5m])) / sum(rate(django_http_responses_total[5m]))",
+          "legendFormat": "5xx ratio"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 0.05,
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.02 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Observation Freshness (Max Age by Index Type)",
+      "description": "Max age in hours of the latest observation per farm. SLO: < 48 hours for NDVI/NDWI, < 12 hours for NDMI.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "max(ndvi_observation_latest_age_seconds{engine=~\"stac|sentinelhub|gee|landsat|modis\"}) / 3600",
+          "legendFormat": "NDVI"
+        },
+        {
+          "expr": "max(ndvi_observation_latest_age_seconds{engine=~\"ndwi_stac|ndwi_sentinelhub|ndwi_gee\"}) / 3600",
+          "legendFormat": "NDWI"
+        },
+        {
+          "expr": "max(ndvi_observation_latest_age_seconds{engine=~\"ndmi_stac|ndmi_sentinelhub|ndmi_gee\"}) / 3600",
+          "legendFormat": "NDMI"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h",
+          "min": 0,
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 24 },
+              { "color": "red", "value": 48 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Data Quality (V2 Confidence Pass Rate)",
+      "description": "Fraction of V2 observations with confidence >= 0.7. SLO: > 90% pass rate.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "1 - (rate(ndvi_v2_low_confidence_total[5m]) / rate(ndvi_v2_observation_total[5m]))",
+          "legendFormat": "Pass rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.85 },
+              { "color": "green", "value": 0.90 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Cache Hit Ratio (L2)",
+      "description": "L2 (Redis) cache hit ratio by cache level. SLO: > 80% hit rate.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "rate(ndmi_cache_hit_ratio{level=~\"l2_fresh\"}[5m]) / (rate(ndmi_cache_hit_ratio{level=~\"l2_fresh|ndmi_cache_hit_ratio{level=\\\"l2_miss\\\"}\"}[5m]) + 1)",
+          "legendFormat": "L2 hit ratio",
+          "hide": true
+        },
+        {
+          "expr": "rate(ndmi_cache_hit_ratio{level=\"l2_fresh\"}[5m])",
+          "legendFormat": "L2 fresh hits"
+        },
+        {
+          "expr": "rate(ndmi_cache_hit_ratio{level=\"l2_stale\"}[5m])",
+          "legendFormat": "L2 stale hits"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        }
+      }
+    },
+    {
+      "title": "Provider Availability",
+      "description": "Circuit breaker state per provider. 0=CLOSED, 1=OPEN, 2=HALF_OPEN. SLO: All providers CLOSED.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "spectral_provider_circuit_state{provider=\"stac\"}",
+          "legendFormat": "STAC"
+        },
+        {
+          "expr": "spectral_provider_circuit_state{provider=\"sentinelhub\"}",
+          "legendFormat": "SentinelHub"
+        },
+        {
+          "expr": "spectral_provider_circuit_state{provider=\"gee\"}",
+          "legendFormat": "GEE"
+        },
+        {
+          "expr": "spectral_provider_circuit_state{provider=\"landsat\"}",
+          "legendFormat": "Landsat"
+        },
+        {
+          "expr": "spectral_provider_circuit_state{provider=\"modis\"}",
+          "legendFormat": "MODIS"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 2,
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Raster PNG Generation Latency (P95)",
+      "description": "P95 latency for raster PNG generation. SLO: < 5 seconds.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(ndmi_compute_duration_seconds_bucket{step=\"raster_png\"}[5m]))",
+          "legendFormat": "p95 - NDMI"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(ndvi_task_runtime_seconds_bucket{task=\"render_raster\"}[5m]))",
+          "legendFormat": "p95 - NDVI"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 3 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Job Dead Letter Rate",
+      "description": "Rate of jobs moved to dead letter queue. SLO: < 1% dead letter rate.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "rate(spectral_job_dead_letter_total[5m])",
+          "legendFormat": "{{queue}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        }
+      }
+    },
+    {
+      "title": "Spectral Job Success Rate",
+      "description": "Job completion status by index type. SLO: > 95% success rate.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "sum(rate(spectral_jobs_total{status=\"success\"}[5m])) by (index) / (sum(rate(spectral_jobs_total[5m])) by (index) + 1)",
+          "legendFormat": "{{index}} success rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.90 },
+              { "color": "green", "value": 0.95 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "NDMI Compute Duration (P50/P95)",
+      "description": "NDMI compute operation latency distribution. SLO: P95 < 10s.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(ndmi_compute_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95 - {{step}}"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(ndmi_compute_duration_seconds_bucket[5m]))",
+          "legendFormat": "p50 - {{step}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        }
+      }
+    },
+    {
+      "title": "Cache Hit Ratio (L3 - S3/MinIO)",
+      "description": "L3 (S3/MinIO COG) cache hit/miss rate. SLO: > 70% hit rate.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "targets": [
+        {
+          "expr": "rate(ndmi_cache_hit_ratio{level=\"l3_hit\"}[5m])",
+          "legendFormat": "L3 hits"
+        },
+        {
+          "expr": "rate(ndmi_cache_hit_ratio{level=\"l3_miss\"}[5m])",
+          "legendFormat": "L3 misses"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        }
+      }
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  }
+}

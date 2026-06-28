@@ -128,6 +128,7 @@ INSTALLED_APPS = [
     "podcasts",
     "alerts",
     "django_celery_beat",
+    "simple_history",
 ]
 
 MIDDLEWARE = [
