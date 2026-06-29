@@ -198,7 +198,41 @@ class NdviObservation(models.Model):
 
 ---
 
-## 8. Validation & Calibration Strategy
+## 8. Performance & Scale Expectations
+
+To ensure system reliability under operational load, the following target performance thresholds are established for the Sentinel-1 pipeline:
+
+* **Ingestion Throughput:** Supporting $\ge 100$ farm ingestion request dispatches per minute during peak satellite overpass windows.
+* **Preprocessing Latency:** Total execution time of $\le 500$ milliseconds per farm bounding box subset for the entire Rust pipeline (from S3 streaming crop to speckle filter output).
+* **Rust Memory Usage:** Heap memory allocation constrained to $\le 64$ MB per execution thread (ensured via tiled processing loops and windowed COG range readings).
+* **Raster Processing Concurrency:** Support for at least 8 parallel processing worker threads per running microservice container.
+* **PostgreSQL Write Batching:** DB observation inserts executed in bulk chunks of 100+ items to reduce transactional load and connection hold times.
+* **Cache Sizing & TTL:**
+  * **L2 Cache (Redis):** Target hit ratio of $\ge 80\%$ (15-minute TTL).
+  * **L3 Cache (MinIO/S3):** Target hit ratio of $\ge 95\%$ for computed COG rasters.
+
+---
+
+## 9. Future Architecture Roadmap
+
+The implementation and integration of the agricultural sensor indices follow a structured 6-phase rollout:
+
+* **Phase 1: Optical Indices**
+  * Establish baseline NDVI, NDWI, and NDMI calculations from Sentinel-2 and Landsat.
+* **Phase 2: Parallel Radar Indices**
+  * Ingest Sentinel-1 RTC products and compute RVI and S1-SMI, keeping radar and optical data separate.
+* **Phase 3: Temporal Gap Filling**
+  * Use the radar time series to fill gaps in the timeline when optical sensors are blinded by cloud cover.
+* **Phase 4: Optical/Radar Fusion**
+  * Build a blended, calibrated single-curve estimation model combining structural (optical) and volumetric (radar) components.
+* **Phase 5: Machine-Learning Crop Health Models**
+  * Train and deploy ML models using fused S1/S2 features for predictive yield estimation and crop classification.
+* **Phase 6: Multi-Sensor Fusion**
+  * Implement fully integrated model-data fusion (Sentinel-2, Sentinel-1, Landsat, Planet, local weather, and high-resolution DEM elevations).
+
+---
+
+## 10. Validation & Calibration Strategy
 
 Radar indices **complement, not replace**, optical products. They measure different physical properties. The validation and calibration of S1-SMI and RVI are conducted through the following channels:
 
@@ -209,7 +243,7 @@ Radar indices **complement, not replace**, optical products. They measure differ
 
 ---
 
-## 9. Error Handling & Resiliency
+## 11. Error Handling & Resiliency
 
 To prevent pipeline failures, the Sentinel-1 compute pipeline defines strict error boundaries:
 
@@ -223,7 +257,7 @@ To prevent pipeline failures, the Sentinel-1 compute pipeline defines strict err
 
 ---
 
-## 10. UI Presentation & Fallback Strategy
+## 12. UI Presentation & Fallback Strategy
 
 At launch, **optical indices (NDVI/NDMI) and radar indices (RVI/S1-SMI) will be presented as independent, parallel data series** on the user dashboard:
 * **The Dashboard Layout:** Separate cards/charts for "Crop Biomass (NDVI vs. RVI)" and "Moisture Status (NDMI vs. S1-SMI)". This lets users compare optical and radar readings side-by-side to understand ground reality.
