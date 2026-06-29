@@ -7,6 +7,8 @@ Open-licensed, no API key required.
 
 from __future__ import annotations
 
+from typing import cast
+
 import requests
 
 from radio.providers.base import RadioProvider, StationData
@@ -38,12 +40,15 @@ class RadioBrowserProvider(RadioProvider):
         try:
             response = requests.get(
                 f"{RADIO_BROWSER_API_BASE}/stations/search",
-                params={
-                    "limit": self._limit,
-                    "hidebroken": "true",
-                    "order": "clickcount",
-                    "reverse": "true",
-                },
+                params=cast(
+                    "dict[str, str | int]",
+                    {
+                        "limit": self._limit,
+                        "hidebroken": "true",
+                        "order": "clickcount",
+                        "reverse": "true",
+                    },
+                ),
                 timeout=15,
             )
             response.raise_for_status()
@@ -69,8 +74,8 @@ class RadioBrowserProvider(RadioProvider):
                     ),
                     "format": (item.get("codec", "") or "").upper(),
                     "bitrate": item.get("bitrate", 128) or 128,
-                    "logo_url": item.get("favicon") or None,
-                    "website_url": item.get("homepage") or None,
+                    "logo_url": item.get("favicon") or "",
+                    "website_url": item.get("homepage") or "",
                 }
             )
         return stations

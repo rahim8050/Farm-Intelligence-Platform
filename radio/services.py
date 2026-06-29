@@ -17,7 +17,7 @@ import time
 from concurrent.futures import ALL_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from django.conf import settings
@@ -128,13 +128,15 @@ def probe_station(
     """
     _user_agent = "FarmIntelligencePlatform/1.0"
 
-    own_client = client is None
-    if own_client:
+    if client is None:
         client = httpx.Client(
             timeout=timeout_seconds,
             follow_redirects=False,
             headers={"User-Agent": _user_agent},
         )
+        own_client = True
+    else:
+        own_client = False
 
     start = time.monotonic()
     try:
@@ -387,7 +389,9 @@ def get_favorite(
     station_id: str,
 ) -> Favorite | None:
     """Return the user's favorite for ``station_id`` if it exists."""
-    return Favorite.objects.filter(user=user, station_id=station_id).first()
+    return Favorite.objects.filter(
+        user=cast(Any, user), station_id=station_id
+    ).first()
 
 
 def add_favorite(
@@ -402,7 +406,7 @@ def add_favorite(
         same (user, station) is safe and returns the original row.
     """
     favorite, created = Favorite.objects.get_or_create(
-        user=user, station=station
+        user=cast(Any, user), station=station
     )
     if created:
         logger.info(
@@ -428,7 +432,7 @@ def remove_favorite(
         ``True`` when a row was deleted; ``False`` when no row existed.
     """
     deleted, _ = Favorite.objects.filter(
-        user=user, station_id=station_id
+        user=cast(Any, user), station_id=station_id
     ).delete()
     if deleted:
         logger.info(
@@ -454,7 +458,7 @@ def list_favorites_for_user(
     The optional ``limit`` caps the result set; the default of ``None``
     returns the full list.
     """
-    qs = Favorite.objects.filter(user=user).select_related(
+    qs = Favorite.objects.filter(user=cast(Any, user)).select_related(
         "station", "station__provider"
     )
     if limit is not None:
@@ -491,7 +495,7 @@ def record_listening_session(
         user_agent = (request.META.get("HTTP_USER_AGENT") or "")[:200]
     try:
         return ListeningHistory.objects.create(
-            user=user,
+            user=cast(Any, user),
             station=station,
             ip_address=ip_address,
             user_agent=user_agent,
@@ -523,7 +527,9 @@ def stop_listening_session(
     (returns the row as-is).
     """
     try:
-        session = ListeningHistory.objects.get(id=session_id, user=user)
+        session = ListeningHistory.objects.get(
+            id=session_id, user=cast(Any, user)
+        )
     except ListeningHistory.DoesNotExist:
         return None
     if session.ended_at is None:
@@ -538,7 +544,7 @@ def list_history_for_user(
     limit: int | None = None,
 ) -> list[ListeningHistory]:
     """Return the user's listening history, newest first."""
-    qs = ListeningHistory.objects.filter(user=user).select_related(
+    qs = ListeningHistory.objects.filter(user=cast(Any, user)).select_related(
         "station", "station__provider"
     )
     if limit is not None:
@@ -626,9 +632,11 @@ def create_emergency_broadcast(
         starts_at=starts_at,
         ends_at=ends_at,
         is_active=is_active,
-        created_by=created_by
-        if getattr(created_by, "is_authenticated", False)
-        else None,
+        created_by=(
+            cast(Any, created_by)
+            if getattr(created_by, "is_authenticated", False)
+            else None
+        ),
     )
     logger.info(
         "radio_emergency_broadcast_created id=%s priority=%s "

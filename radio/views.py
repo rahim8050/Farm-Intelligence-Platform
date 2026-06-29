@@ -13,7 +13,7 @@ the standard DRF error envelope.
 from __future__ import annotations
 
 import datetime
-from typing import cast
+from typing import Any, cast
 
 import jwt as pyjwt
 from django.conf import settings
@@ -36,7 +36,7 @@ from config.api.pagination import (
     paginated_response,
     pagination_parameters,
 )
-from config.api.responses import success_response
+from config.api.responses import JSONValue, success_response
 from radio.metrics import timed
 from radio.models import (
     EmergencyBroadcast,
@@ -513,7 +513,7 @@ class SignedStreamView(APIView):
             pyjwt.encode(
                 {
                     "station_id": station.id,
-                    "user_id": str(user.id),
+                    "user_id": str(user.pk),
                     "exp": int(expires_at.timestamp()),
                     "iat": int(timezone.now().timestamp()),
                     "purpose": "stream_access",
@@ -573,7 +573,9 @@ class RadioHealthView(APIView):
             - data.timestamp: server time at which the snapshot was built
         """
         data = summarize_health()
-        return success_response(data, message="Radio health OK")
+        return success_response(
+            cast(JSONValue, data), message="Radio health OK"
+        )
 
 
 class StationHealthHistoryView(APIView):
@@ -643,7 +645,9 @@ class StationHealthHistoryView(APIView):
             }
             for r in rows
         ]
-        return success_response(payload, message="Station health history")
+        return success_response(
+            cast(JSONValue, payload), message="Station health history"
+        )
 
 
 class StationNowPlayingView(APIView):
@@ -825,7 +829,7 @@ class FavoriteListCreateView(APIView):
             AbstractBaseUser | AnonymousUser,
             getattr(request, "user", AnonymousUser()),
         )
-        qs = Favorite.objects.filter(user=user).select_related(
+        qs = Favorite.objects.filter(user=cast(Any, user)).select_related(
             "station", "station__provider"
         )
         return paginated_response(
@@ -964,9 +968,9 @@ class ListeningHistoryListView(APIView):
             AbstractBaseUser | AnonymousUser,
             getattr(request, "user", AnonymousUser()),
         )
-        qs = ListeningHistory.objects.filter(user=user).select_related(
-            "station", "station__provider"
-        )
+        qs = ListeningHistory.objects.filter(
+            user=cast(Any, user)
+        ).select_related("station", "station__provider")
         return paginated_response(
             qs,
             ListeningHistorySerializer,
@@ -1039,7 +1043,7 @@ class ListeningHistoryRecentView(APIView):
             getattr(request, "user", AnonymousUser()),
         )
         qs = (
-            ListeningHistory.objects.filter(user=user)
+            ListeningHistory.objects.filter(user=cast(Any, user))
             .select_related("station", "station__provider")
             .order_by("-started_at")[:limit]
         )
