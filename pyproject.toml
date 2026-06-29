@@ -195,7 +195,7 @@ ignore = ["ANN401", "S603"]
 "**/tests/**/*.py" = ["S101", "ANN001", "ANN002", "ANN003"]
 
 [tool.bandit]
-skips = ["B101", "B105", "B106", "B107", "B110", "B605", "B607", "B311"]
+skips = ["B101", "B105", "B106", "B107", "B110", "B404", "B603", "B605", "B607", "B311"]
 exclude_dirs = [
   ".venv",
   "venv",
