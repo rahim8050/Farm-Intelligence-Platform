@@ -11,19 +11,21 @@
 
 Optical satellite analytics (Sentinel-2, Landsat-8) are the backbone of the Farm Intelligence Platform but suffer from a fatal flaw: **cloud cover**. In tropical regions (e.g., Gatundu, Kenya), seasonal monsoons and constant cloud cover can create data blackouts lasting up to 45 consecutive days.
 
-This architecture document outlines the integration of **Sentinel-1 C-band Synthetic Aperture Radar (SAR)**. By combining all-weather radar observations with existing optical indices (NDVI, NDWI, NDMI), the platform will deliver:
+This architecture document outlines the integration of **Sentinel-1 C-band Synthetic Aperture Radar (SAR)** to complement optical data streams. By combining all-weather radar observations with existing optical indices (NDVI, NDWI, NDMI), the platform will deliver:
 1. **Zero-gap temporal continuity:** Cloud-penetrating observations every 6–12 days.
-2. **True surface soil moisture measurements:** Using co-polarized (VV) radar backscatter.
+2. **Radar-derived soil moisture estimation:** Physically based estimates of near-surface soil moisture derived from radar backscatter.
 3. **Advanced crop structure modeling:** Utilizing cross-polarized (VH) ratios to calculate the Radar Vegetation Index (RVI), which is immune to the canopy saturation that plagues optical NDVI.
 
 ---
 
-## 2. Scientific Foundations of Sentinel-1 (C-Band SAR)
+## 2. Scientific Foundations & Target Semantics
 
-### 2.1 Polarizations & Backscatter Semantics
-Sentinel-1 emits microwave pulses and measures the backscatter (reflected signal) in two dual-polarizations:
-* **VV (Vertical-transmit, Vertical-receive):** Strongly responsive to surface roughness and soil dielectric constant (directly proportional to **surface soil moisture**).
-* **VH (Vertical-transmit, Horizontal-receive):** Undergoes volume scattering when it interacts with the complex geometry of vegetation (leaves, stems, stalks). It is a direct indicator of **crop biomass and canopy structure**.
+### 2.1 Backscatter Coefficients as Soil Moisture Proxies
+A critical scientific distinction must be maintained: **Sentinel-1 does not directly measure soil moisture.** Instead, the sensor measures the radar backscatter coefficient ($\sigma^0$) in decibels. 
+
+Backscatter is directly influenced by the target's **dielectric constant**, which is dominated by water content. Hence, the platform treats radar backscatter as a **physical proxy or estimate** of near-surface soil moisture, rather than a direct volumetric measurement. 
+* **VV (Vertical-transmit, Vertical-receive) polarization:** Highly responsive to surface soil dielectric changes and soil surface roughness.
+* **VH (Vertical-transmit, Horizontal-receive) polarization:** Undergoes volume scattering as it interacts with the complex geometry of vegetation (leaves, stems, stalks), indicating canopy biomass and structure.
 
 ### 2.2 Core Radar Indices to Integrate
 
@@ -34,10 +36,14 @@ $$RVI = \frac{4 \cdot VH}{VV + VH}$$
 * **Crop Stages:** Ideal for monitoring crop development and identifying lodging (crops falling over).
 
 #### B. Sentinel-1 Soil Moisture Index (S1-SMI)
-Normalized index designed to estimate soil water content underneath vegetation by compensating for canopy attenuation:
+S1-SMI is a **configurable empirical retrieval model** rather than a universal scientific equation. It is formulated as a parametric regression model to estimate surface soil moisture underneath vegetation by compensating for canopy attenuation:
 $$S1\text{-}SMI = \alpha \cdot VV_{dB} + \beta \cdot VH_{dB} + \gamma$$
-* Utilizes VV to capture soil dielectric changes and VH (integrated into the formula weights $\alpha, \beta, \gamma$ calibrated per crop type) to subtract backscatter attenuation caused by the crop canopy.
-* **Range:** `0.0` (dry soil) to `1.0` (saturated soil capacity).
+
+* **Calibration Dependency:** The coefficients ($\alpha, \beta, \gamma$) are site-specific and depend heavily on:
+  * **Crop Type:** Different canopy architectures attenuate the radar signal uniquely.
+  * **Incidence Angle:** The local look geometry of the satellite path relative to the terrain.
+  * **Local Soil Properties:** Soil texture, bulk density, and organic carbon content, which determine the base dielectric range.
+  * **Regional Ground-Truth Datasets:** Local calibration data is required to map backscatter to actual soil moisture percentages.
 
 ---
 
@@ -67,26 +73,87 @@ To keep Django Celery workers thin, fast, and prevent memory spikes, **all heavy
 
 ---
 
-## 4. Code & Configuration Schemas
+## 4. Preprocessing Assumptions & Pipeline
 
-No code changes are required in the core engines. The integration is performed entirely through the declarative registries.
+The system assumes the use of **Sentinel-1 Radiometric Terrain Corrected (RTC)** data products. The preprocessing pipeline is split clearly between upstream providers and internal microservice steps to optimize efficiency:
 
-### 4.1 Band Registry Integration
+| Pipeline Step | Handled By | Description |
+| :--- | :---: | :--- |
+| **Radiometric Terrain Correction (RTC)** | **Upstream Provider** *(CDSE / MPC)* | Corrects geometric distortions (layover, foreshortening, shadow) and terrain-induced backscatter variation using a DEM. |
+| **Thermal-Noise Removal** | **Upstream Provider** *(CDSE / MPC)* | Subtracts background instrument noise, particularly critical for low-signal cross-polarized (VH) channels. |
+| **Border-Noise Removal** | **Upstream Provider** | Masks out invalid edge pixels at the start and end of the radar swaths. |
+| **Border Cropping & Spatial subsetting** | **Rust Microservice** | Crops the large 500MB+ scene down to the farm's bounding box coordinates. |
+| **Decibel (dB) Conversion** | **Rust Microservice** | Converts linear amplitude values to decibels ($dB = 10 \log_{10}(intensity)$). |
+| **Incidence-Angle Normalization** | **Rust Microservice** | Normalizes backscatter to a reference incidence angle (e.g., 40°) using a cosine correction model to ensure comparability across different orbits. |
+| **Speckle Filtering** | **Rust Microservice** | Applies a Refined Lee filter to suppress coherent speckle noise in the cropped farm subset. |
+| **Orbit Consistency Separation** | **Rust Microservice** | Flags and stores Ascending vs. Descending orbits as distinct tracks. |
+
+---
+
+## 5. Orbit Consistency Guidance
+
+Temporal analysis of radar backscatter is highly sensitive to orbit geometry. **The platform must strictly avoid mixing ascending and descending passes directly in the same time-series trend unless they are normalized.**
+
+### 5.1 Why Orbit Geometry Influences Backscatter
+* **Look Direction and Topography:** Ascending orbits look Eastward (from a northbound flight path), while Descending orbits look Westward (from a southbound flight path). In hilly terrains like Gatundu, slopes facing the radar will show high backscatter (foreshortening), while slopes facing away will show low backscatter.
+* **Diurnal Variations (Morning vs. Evening):** 
+  * Descending passes over Kenya occur in the **morning (~06:00 local time)**. They often capture heavy **morning dew** on crop leaves and high soil surface moisture before diurnal transpiration begins. This presence of free liquid water spikes the dielectric constant, leading to artificially elevated backscatter.
+  * Ascending passes occur in the **evening (~18:00 local time)**, capturing canopy conditions after a full day of transpiration and solar drying.
+
+---
+
+## 6. Rust Preprocessing Engine & Numerical Stability
+
+To ensure high-performance, memory-efficient processing of Sentinel-1 rasters, the Rust `ndvi-service` utilizes the following engineering patterns:
+
+### 6.1 Memory-Efficient Raster Streaming & Windowed Reading
+* **Cloud-Optimized GeoTIFF (COG) Windowed Reading:** The Rust service uses GDAL or `tiff` crates to perform **HTTP range requests**, downloading only the specific bounding box pixels needed for the farm's geometry, avoiding downloading the entire 500MB scene.
+* **Tiled Processing:** For larger areas, the raster is read and processed in smaller, spatial tiles (e.g., 256x256 blocks) to maintain a constant, low memory footprint.
+
+### 6.2 Parallelization & Acceleration
+* **Rayon Multithreading:** Speckle filtering (the Refined Lee kernel convolution) is parallelized across available CPU threads using the Rayon library.
+* **SIMD Optimizations:** Utilizing SIMD (Single Instruction, Multiple Data) compiler features (or auto-vectorization) to compute the decibel logarithmic conversion and convolution kernels at the hardware assembly level.
+
+### 6.3 Numerical Stability Safeguards
+* **NoData Handling:** Standard Sentinel-1 NoData border pixels (typically `0` or explicit metadata masks) are explicitly detected and converted to `NaN` masks, excluding them from mean and variance calculations.
+* **Divide-by-Zero Protection:** In RVI calculation, if the denominator ($VV + VH$) is equal to `0` (or extremely close to zero, e.g., $< 1e\text{-}6$), the pixel is masked out as `NaN` to prevent division-by-zero panics.
+* **Clamping decibel values:** Decibel values are clamped to a safe operational range (e.g., `-30.0 dB` to `0.0 dB`) to prevent log-math exceptions on noise floor values.
+* **NaN Propagation Policy:** The system uses a strict "Mask and Exclude" NaN policy. During spatial statistics rollup, `NaN` pixels are ignored (equivalent to `np.nanmean`), and the `valid_pixel_fraction` is adjusted down. If `valid_pixel_fraction` drops below `0.70`, the entire observation is marked as invalid.
+
+---
+
+## 7. Decoupled Calibration Registry Architecture
+
+To prevent code changes in the compute engine when calibration coefficients are tuned, the coefficients ($\alpha, \beta, \gamma$) are separated into a YAML configuration file.
+
+### 7.1 Calibration Configuration Schema (`science/thresholds/s1_smi_calibration.yaml`)
+```yaml
+# science/thresholds/s1_smi_calibration.yaml
+s1_smi_coefficients:
+  maize:
+    sandy_clay_loam:
+      ascending:  { alpha: 0.72, beta: -0.28, gamma: 0.45 }
+      descending: { alpha: 0.68, beta: -0.32, gamma: 0.52 }
+  wheat:
+    loam:
+      ascending:  { alpha: 0.81, beta: -0.19, gamma: 0.38 }
+      descending: { alpha: 0.75, beta: -0.25, gamma: 0.42 }
+  default:
+    ascending:  { alpha: 0.70, beta: -0.30, gamma: 0.50 }
+    descending: { alpha: 0.70, beta: -0.30, gamma: 0.50 }
+```
+
+### 7.2 Registry Integration
 Add mappings in [science/formulas/band_registry.py](file:///home/rahim/projects/Farm-Intelligence-Platform/science/formulas/band_registry.py):
-
 ```python
-# Add to BAND_REGISTRY in science/formulas/band_registry.py
 BAND_REGISTRY["sentinel1_rtc"] = {
     "vv": "vv",
     "vh": "vh",
 }
 ```
 
-### 4.2 Formula Registry Integration
 Add the radar-based calculations in [science/formulas/registry.py](file:///home/rahim/projects/Farm-Intelligence-Platform/science/formulas/registry.py):
-
 ```python
-# Add to FORMULA_REGISTRY in science/formulas/registry.py
 FORMULA_REGISTRY["RVI"] = {
     "name": "RVI",
     "formula": lambda vv, vh: (4 * vh) / (vv + vh),
@@ -101,9 +168,10 @@ FORMULA_REGISTRY["RVI"] = {
     "description": "Radar Vegetation Index for canopy structure monitoring.",
 }
 
+# The formula retrieves dynamic coefficients loaded at runtime based on farm metadata
 FORMULA_REGISTRY["S1_SMI"] = {
     "name": "S1_SMI",
-    "formula": lambda vv, vh: 0.7 * vv - 0.3 * vh + 0.5, # Calibrated baseline weights
+    "formula": lambda vv, vh, alpha=0.70, beta=-0.30, gamma=0.50: alpha * vv + beta * vh + gamma,
     "bands": ["vv", "vh"],
     "range": (0.0, 1.0),
     "default_colormap": "Blues",
@@ -112,40 +180,51 @@ FORMULA_REGISTRY["S1_SMI"] = {
     "sensor_band_map": {
         "sentinel1_rtc": {"vv": "vv", "vh": "vh"},
     },
-    "description": "Sentinel-1 Surface Soil Moisture Index.",
+    "description": "Sentinel-1 Soil Moisture Index (estimated surface soil moisture).",
 }
 ```
 
-### 4.3 Database Migration Settings
-To allow the database to accept RVI and S1-SMI data, modify the model options:
-
-```diff
-# ndvi/models.py
+And update the DB model choices in `ndvi/models.py`:
+```python
 class NdviObservation(models.Model):
     INDEX_CHOICES = [
         ("NDVI", "NDVI"),
         ("NDWI", "NDWI"),
         ("NDMI", "NDMI"),
-+       ("RVI", "Radar Vegetation Index"),
-+       ("S1_SMI", "Sentinel-1 Soil Moisture Index"),
+        ("RVI", "Radar Vegetation Index"),
+        ("S1_SMI", "Sentinel-1 Soil Moisture Index"),
     ]
 ```
 
 ---
 
-## 5. UI Presentation & Fallback Strategy
+## 8. Validation & Calibration Strategy
+
+Radar indices **complement, not replace**, optical products. They measure different physical properties. The validation and calibration of S1-SMI and RVI are conducted through the following channels:
+
+1. **In-situ Soil Moisture Probes (When Available):** Directly comparing depth-specific soil moisture measurements (at 5cm, 10cm, 20cm) against S1-SMI output to calibrate the local linear coefficients ($\alpha, \beta, \gamma$).
+2. **Weather Station Precipitation Correlation:** Cross-correlating local precipitation events (from Open-Meteo or NASA POWER) with sudden spikes in the S1-SMI backscatter proxy.
+3. **Cross-Sensor Optical Correlation:** Correlating RVI with NDVI (canopy structure) and S1-SMI with NDMI (canopy moisture) during clear-sky days to ensure physical alignment.
+4. **Historical Baseline Anomaly Isolation:** Building multi-year seasonal baselines of RVI and S1-SMI to isolate structural crop anomalies from natural climate variations.
+
+---
+
+## 9. Error Handling & Resiliency
+
+To prevent pipeline failures, the Sentinel-1 compute pipeline defines strict error boundaries:
+
+| Failure Scenario | Action / Remediation | System State |
+| :--- | :--- | :--- |
+| **Missing VV or VH bands** | Log warning `stac.polarization_incomplete`, abort RVI/S SMI calculation for that scene, continue with other indices. | Graceful degradation (Missing data point) |
+| **Incomplete STAC metadata** | If orbit direction (ascending/descending) metadata is missing, assume descending as default, log a warning `stac.metadata_missing`. | Graceful degradation |
+| **Raster window failure** | Catch CRS transformation exceptions, fallback to checking boundary intersections. If farm lies outside swath, mark `valid_pixel_fraction = 0.0` and skip. | Skip / Log Warning |
+| **Corrupt COG encountered** | Capture GDAL/network exceptions, trigger a retry with exponential backoff. After 3 retries, push job to **Dead Letter Queue (DLQ)**. | Retry / Queue in DLQ |
+| **Formula out-of-range output** | Clip RVI output to `[0.0, 1.0]` and S1-SMI to `[0.0, 1.0]`. If $> 5\%$ of pixels require clipping, flag observation as `state = "WARNING"`. | Flagged Save |
+
+---
+
+## 10. UI Presentation & Fallback Strategy
 
 At launch, **optical indices (NDVI/NDMI) and radar indices (RVI/S1-SMI) will be presented as independent, parallel data series** on the user dashboard:
 * **The Dashboard Layout:** Separate cards/charts for "Crop Biomass (NDVI vs. RVI)" and "Moisture Status (NDMI vs. S1-SMI)". This lets users compare optical and radar readings side-by-side to understand ground reality.
 * **Future Evolution:** In later phases, after gathering sufficient ground-truth calibration data, we will introduce a blended temporal fusion curve.
-
----
-
-## 6. Implementation Checklist (Definition of Done)
-
-- [ ] **Data Model:** Generate Django database migrations for the `"RVI"` and `"S1_SMI"` model choices.
-- [ ] **Provider Configuration:** Register `sentinel-1-rtc` in settings and environment.
-- [ ] **Rust Integration:** Implement Refined Lee speckle filter and dB calculation in `ndvi-service`.
-- [ ] **Registries:** Wire `sentinel1_rtc` into `band_registry` and `formula_registry`.
-- [ ] **Schedules:** Define `enqueue_daily_rvi_refresh` beat task in `config/settings.py`.
-- [ ] **Nextcloud UI:** Synchronize schema to automatically generate RVI & S1-SMI graphs and maps on the user dashboard.
