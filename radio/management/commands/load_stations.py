@@ -1,3 +1,5 @@
+from typing import Any
+
 from django.core.management.base import BaseCommand
 
 from radio.models import Provider, ProviderType, Station
@@ -244,15 +246,17 @@ class Command(BaseCommand):
             provider = RadioBrowserProvider()
             rb_stations = provider.get_stations()
             for s in rb_stations:
-                s["provider"] = radiobrowser_provider
-                s["is_active"] = True
+                s_data: dict[str, Any] = dict(s)
+                s_data["provider"] = radiobrowser_provider
+                s_data["is_active"] = True
                 for field, maxlen in field_maxlen.items():
-                    if field in s and isinstance(s.get(field), str):
-                        s[field] = _trunc(s[field], maxlen)
+                    val = s_data.get(field)
+                    if val is not None and isinstance(val, str):
+                        s_data[field] = _trunc(val, maxlen)
                 try:
                     Station.objects.update_or_create(
-                        id=s["id"],
-                        defaults=s,
+                        id=s_data["id"],
+                        defaults=s_data,
                     )
                     radiobrowser_count += 1
                 except Exception:

@@ -252,6 +252,10 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = ["radio.*"]
+ignore_errors = false
+
+[[tool.mypy.overrides]]
+module = ["radio.tests.*"]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
