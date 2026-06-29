@@ -1215,6 +1215,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "radio.tasks.refresh_now_playing",
         "schedule": RADIO_NOW_PLAYING_REFRESH_INTERVAL_SECONDS,
     },
+    "radio-agent-morning": {
+        "task": "radio.tasks.run_opencode_agent_task",
+        "schedule": crontab(hour=10, minute=15),
+    },
+    "radio-agent-afternoon": {
+        "task": "radio.tasks.run_opencode_agent_task",
+        "schedule": crontab(hour=16, minute=0),
+    },
 }
 CELERY_ENABLE_UTC = True
 CELERY_TIMEZONE = "Africa/Nairobi"

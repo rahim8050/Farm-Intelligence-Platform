@@ -137,6 +137,7 @@ app.conf.update(
         "ndvi_recompute": {},
         "ndvi_analysis": {},
         "podcasts_ingestion": {},
+        "agent_execution": {},  # Single-concurrency queue for opencode agents
     },
     task_routes={
         "ndvi.tasks.run_ndvi_job": {"queue": "ndvi_ingestion"},
@@ -157,6 +158,7 @@ app.conf.update(
             "queue": "podcasts_ingestion"
         },
         "alerts.tasks.dispatch_one_alert": {"queue": "default"},
+        "radio.tasks.run_opencode_agent_task": {"queue": "agent_execution"},
     },
 )
 

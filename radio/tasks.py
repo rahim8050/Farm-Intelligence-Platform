@@ -36,12 +36,15 @@ Auth: Celery task isolation; no request context.
 from __future__ import annotations
 
 import logging
+import subprocess
 import time
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from celery import shared_task
 from django.conf import settings
+from django.core.mail import send_mail
 from django.db import DatabaseError, OperationalError
 from django.utils import timezone
 
@@ -269,3 +272,86 @@ def refresh_now_playing_task(station_id: str | None = None) -> dict[str, int]:
     broken station does not block the rest of the poll.
     """
     return refresh_now_playing(station_id=station_id)
+
+
+# --- Opencode agent automation --------------------------------------------
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+AGENT_SCRIPT = str(BASE_DIR / ".opencode" / "run-agent.sh")
+
+
+@shared_task(
+    bind=True,
+    queue="agent_execution",
+    time_limit=3600,
+    soft_time_limit=3540,
+    max_retries=0,
+)
+def run_opencode_agent_task(self: Any) -> dict[str, Any]:
+    """Execute ``.opencode/run-agent.sh`` via subprocess.
+
+    Designed for single-concurrency execution (queue ``agent_execution``
+    must have ``-c 1``) to avoid git/S3 conflicts.
+
+    Logs stdout/stderr, records exit code, and sends an email summary
+    when SMTP is configured.
+    """
+    logger.info("Starting opencode agent: %s", AGENT_SCRIPT)
+    before = subprocess.run(
+        ["/usr/bin/git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=BASE_DIR,
+    ).stdout.strip()
+
+    proc = subprocess.run(
+        [AGENT_SCRIPT],
+        capture_output=True,
+        text=True,
+        cwd=BASE_DIR,
+        timeout=3500,
+    )
+    exit_code = proc.returncode
+    stdout_log = proc.stdout
+    stderr_log = proc.stderr
+
+    after = subprocess.run(
+        ["/usr/bin/git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=BASE_DIR,
+    ).stdout.strip()
+
+    report = (
+        f"Opencode agent finished.\n"
+        f"Exit code: {exit_code}\n"
+        f"Before: {before}\n"
+        f"After:  {after}\n\n"
+        f"=== STDOUT ===\n{stdout_log}\n\n"
+        f"=== STDERR ===\n{stderr_log}"
+    )
+    logger.info(
+        "Opencode agent exit_code=%s before=%s after=%s",
+        exit_code,
+        before,
+        after,
+    )
+
+    # Email notification
+    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", None)
+    if from_email:
+        try:
+            send_mail(
+                subject="[Automation] Opencode agent finished",
+                message=report,
+                from_email=from_email,
+                recipient_list=["rahimranxx8050@gmail.com"],
+                fail_silently=False,
+            )
+        except Exception as exc:
+            logger.warning("Failed to send agent report email: %s", exc)
+
+    if exit_code != 0:
+        raise RuntimeError(f"Opencode agent failed with exit code {exit_code}")
+
+    return {"exit_code": exit_code, "before": before, "after": after}
