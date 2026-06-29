@@ -472,19 +472,9 @@ class TestLandsatEngine:
         engine = LandsatEngine(
             client=_MockStacClientWithItems(collection="landsat-8-c2-l2"),  # type: ignore[arg-type]
         )
-        fake_point = NdviPoint(
-            date=date(2025, 1, 12),
-            mean=0.5,
-            min=0.3,
-            max=0.7,
-            sample_count=2,
-            cloud_fraction=10.0,
-            valid_pixel_fraction=1.0,
-            quality_flags={"phase3": True},
-        )
         with patch(
-            "ndvi.engines.compute.SpectralComputeEngine._compute_for_item",
-            return_value=fake_point,
+            "ndvi.engines.compute.SpectralComputeEngine._compute_batch_tensor",
+            return_value=[np.array([0.5, 0.5]), np.array([0.5, 0.5])],
         ):
             result = engine.get_timeseries(
                 bbox=BBox(
@@ -586,8 +576,8 @@ class TestLandsatEngine:
             date_window_days=15,
         )
         with patch(
-            "ndvi.engines.compute.SpectralComputeEngine._compute_for_item",
-            return_value=None,
+            "ndvi.engines.compute.SpectralComputeEngine._compute_batch_tensor",
+            return_value=[None, None],
         ):
             result = engine.get_timeseries(
                 bbox=BBox(
