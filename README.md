@@ -38,7 +38,7 @@ flowchart LR
   end
 
   subgraph Django API
-    Auth[JWT | API Key | HMAC]
+    Auth["JWT | API Key | HMAC"]
     Throttle[Throttling]
     Gateway[Django DRF]
 
