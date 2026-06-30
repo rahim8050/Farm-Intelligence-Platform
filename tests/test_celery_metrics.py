@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from config import celery as celery_config
+from config.celery import app as celery_app
 from config.celery_metrics import (
     _counter_key,
     _in_progress_key,
@@ -83,3 +84,19 @@ def test_worker_metrics_server_starts_once() -> None:
         8003, registry=mock_registry.return_value
     )
     celery_config._metrics_server_started = False
+
+
+def test_agent_execution_queue_defined() -> None:
+    """agent_execution queue is registered in Celery config."""
+    queues = celery_app.conf.task_queues
+    assert isinstance(queues, dict)
+    assert "agent_execution" in queues
+
+
+def test_agent_task_routed_to_agent_queue() -> None:
+    """run_opencode_agent_task routes to agent_execution queue."""
+    routes = celery_app.conf.task_routes or {}
+    assert isinstance(routes, dict)
+    assert routes.get("radio.tasks.run_opencode_agent_task") == {
+        "queue": "agent_execution"
+    }

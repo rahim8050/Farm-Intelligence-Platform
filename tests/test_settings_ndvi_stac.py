@@ -21,6 +21,29 @@ def _load_settings_module(module_name: str) -> ModuleType:
     return module
 
 
+def test_celery_beat_schedule_includes_agent_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CELERY_BEAT_SCHEDULE has radio-agent-morning and -afternoon entries."""
+    monkeypatch.setenv("DJANGO_SECRET_KEY", "test-secret")
+
+    module = _load_settings_module("temp_settings_beat")
+    try:
+        schedule = module.CELERY_BEAT_SCHEDULE
+        assert "radio-agent-morning" in schedule
+        assert "radio-agent-afternoon" in schedule
+        assert (
+            schedule["radio-agent-morning"]["task"]
+            == "radio.tasks.run_opencode_agent_task"
+        )
+        assert (
+            schedule["radio-agent-afternoon"]["task"]
+            == "radio.tasks.run_opencode_agent_task"
+        )
+    finally:
+        sys.modules.pop("temp_settings_beat", None)
+
+
 def test_ndvi_stac_settings_read_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

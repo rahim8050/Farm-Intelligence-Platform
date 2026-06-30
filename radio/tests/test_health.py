@@ -8,7 +8,10 @@ import httpx
 from django.test import TestCase, override_settings
 
 from radio.models import Provider, Station, StationHealthCheck
-from radio.tasks import check_all_stations_health
+from radio.tasks import (
+    check_all_stations_health,
+    run_opencode_agent_task,
+)
 
 
 def _mock_client_factory(
@@ -134,6 +137,54 @@ class StationStreamHealthGateTestCase(TestCase):
         self.station.save(update_fields=["is_available"])
         response = self.client.get("/api/v1/radio/stations/bbc_1xtra/stream/")
         self.assertEqual(response.status_code, 200)
+
+
+class RunOpencodeAgentTaskTestCase(TestCase):
+    """Tests for ``radio.tasks.run_opencode_agent_task``."""
+
+    def setUp(self) -> None:
+        self.mock_subprocess = patch("radio.tasks.subprocess.run").start()
+        self.mock_send_mail = patch("radio.tasks.send_mail").start()
+
+        self.mock_subprocess.return_value.returncode = 0
+        self.mock_subprocess.return_value.stdout = ""
+        self.mock_subprocess.return_value.stderr = ""
+
+    def tearDown(self) -> None:
+        patch.stopall()
+
+    @override_settings(DEFAULT_FROM_EMAIL="ci@test.local")
+    def test_runs_agent_script_and_sends_email(self) -> None:
+        """Happy path: exit_code=0, email sent."""
+        result = run_opencode_agent_task()
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn("before", result)
+        self.assertIn("after", result)
+        self.assertEqual(self.mock_subprocess.call_count, 3)
+        self.mock_send_mail.assert_called_once()
+
+    @override_settings(DEFAULT_FROM_EMAIL=None)
+    def test_skips_email_when_no_from_email(self) -> None:
+        """When DEFAULT_FROM_EMAIL is unset, no email is sent."""
+        result = run_opencode_agent_task()
+        self.assertEqual(result["exit_code"], 0)
+        self.mock_send_mail.assert_not_called()
+
+    @override_settings(DEFAULT_FROM_EMAIL="ci@test.local")
+    def test_raises_on_nonzero_exit(self) -> None:
+        """Non-zero exit code raises RuntimeError."""
+        self.mock_subprocess.return_value.returncode = 1
+        with self.assertRaises(RuntimeError):
+            run_opencode_agent_task()
+        self.mock_send_mail.assert_called_once()
+
+    @override_settings(DEFAULT_FROM_EMAIL="ci@test.local")
+    def test_logs_warning_on_email_failure(self) -> None:
+        """When send_mail fails, warning is logged (task still succeeds)."""
+        self.mock_send_mail.side_effect = RuntimeError("SMTP down")
+        result = run_opencode_agent_task()
+        self.assertEqual(result["exit_code"], 0)
+        self.mock_send_mail.assert_called_once()
 
 
 class CheckAllStationsHealthTaskTestCase(TestCase):
