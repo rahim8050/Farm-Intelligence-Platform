@@ -31,26 +31,71 @@ For project documentation, start with [docs/README.md](docs/README.md).
 
 ```mermaid
 flowchart LR
-  User[Nextcloud Workspace] -->|HMAC| Django[Django API Gateway]
-  Django -->|DB Store| DB[(MySQL/SQLite)]
-  Django -->|Cache / Streams| Redis[(Redis)]
-  Django -->|Loads Calibration| CalYAML[s1_smi_calibration.yaml]
-  Django -->|Celery tasks| Celery[Celery worker/beat]
-
-  subgraph Local Microservices
-    Django -->|NDVI Math| RustNDVI[Rust ndvi-service]
-    Django -->|Forecast| RustWeather[Rust weather-service]
+  subgraph Clients
+    Browser[Mobile / Web Browser]
+    S2S[Service-to-Service]
+    NC[Nextcloud]
   end
 
-  subgraph Observability
-    Django & Celery & RustNDVI -->|Logs / Metrics| Obs[Loki / Prometheus / Grafana]
+  subgraph Django API
+    Auth[JWT | API Key | HMAC]
+    Throttle[Throttling]
+    Gateway[Django DRF]
+
+    subgraph Apps
+      Accounts[Accounts]
+      Farms[Farms]
+      Activities[Activities]
+      NDVI[NDVI]
+      Weather[Weather]
+      Radio[Radio]
+      Podcasts[Podcasts]
+      Alerts[Alerts]
+    end
   end
 
-  subgraph External Data Sources
-    RustNDVI -->|Optical & Radar| STAC[STAC API / Sentinel Hub]
-    RustWeather -->|Weather & Climate| WeatherAPIs[Open-Meteo / NASA]
-    Django -->|Radio Metadata| RadioAPIs[Radio-Browser / SomaFM]
+  subgraph Data
+    DB[(MySQL / SQLite)]
+    Redis[(Redis Cache / Broker)]
+    Streams[(Redis Streams + DLQ)]
   end
+
+  subgraph Background
+    Celery[Celery Worker + Beat]
+    Tasks[NDVI Refresh / Backfill /<br/>Raster Render / Activity Exec]
+  end
+
+  subgraph External
+    SH[Sentinel Hub / STAC API]
+    WM[Open-Meteo / NASA POWER]
+    RB[Radio-Browser / SomaFM]
+    RSS[RSS Feeds]
+  end
+
+  Browser -->|JWT| Auth
+  S2S -->|X-API-Key| Auth
+  NC -->|HMAC| Auth
+  Auth --> Throttle --> Gateway
+
+  Gateway --> Accounts & Farms
+  Gateway --> Activities -->|Schedule| Celery
+  Gateway --> NDVI -->|Queue| Streams
+  Gateway --> Weather & Radio & Podcasts
+
+  Accounts & Farms & Activities & NDVI --> DB
+  Weather & Radio & Podcasts & Alerts --> DB
+  Accounts & Farms & Activities & NDVI --> Redis
+  Weather & Radio & Podcasts & Alerts --> Redis
+
+  Streams --> Celery
+  Celery --> Tasks
+  Tasks --> NDVI & Activities
+  Activities --> Alerts
+
+  NDVI --> SH
+  Weather --> WM
+  Radio --> RB
+  Podcasts --> RSS
 ```
 
 See [NDVI Pipeline Evolution](docs/architecture/ndvi-pipeline-evolution.md) for the planned Redis Sentinel + Streams rollout and operational checkpoints.
