@@ -30,17 +30,36 @@ For project documentation, start with [docs/README.md](docs/README.md).
 ## Architecture
 
 ```mermaid
-flowchart LR
-  Client -->|JWT Bearer / X-API-Key| Django[Django + DRF API]
-  Django -->|DB| DB[(SQLite/MySQL)]
-  Django -->|cache| Cache[(Redis or LocMemCache)]
-  Django -->|/metrics| Prometheus[Prometheus scrape]
-  Django -->|Celery tasks| Celery[Celery worker/beat]
+flowchart TD
+  User[Nextcloud Workspace Portal] -->|HMAC + JWT/API-Key| Django[Django API Gateway]
+  
+  Django -->|DB Store & Anomaly Stats| DB[(MySQL/SQLite)]
+  Django -->|Cache / Streams| Redis[(Redis Sentinel / Streams)]
+  Django -->|Loads Calibration| CalYAML[s1_smi_calibration.yaml]
+  
+  Django -->|Enqueues Tasks| Celery[Celery Workers & Beat]
+  Celery -->|Health Check Pings| ExtStreams[Stream URL Pings]
+  
+  subgraph Local Microservices
+    Django -->|Send BBox & Raw Arrays| RustNDVI[Rust ndvi-service]
+    Django -->|Proxy Forecast| RustWeather[Rust weather-service]
+  end
 
-  Django -->|NDVI| Sentinel[Sentinel Hub APIs]
-  Django -->|Weather| OpenMeteo[Open-Meteo API]
-  Django -->|Weather| NasaPower[NASA POWER API]
-  Django -->|Radio metadata| Radio[Radio providers / stations]
+  subgraph Observability Stack
+    Django & Celery & RustNDVI -->|Structured Logs| Loki[Loki Log Aggregator]
+    Django & Celery & RustNDVI -->|/metrics Scrape| Prometheus[Prometheus Metrics]
+    Grafana[Grafana Dashboard] -->|Queries| Prometheus
+    Grafana -->|Queries| Loki
+  end
+
+  subgraph External Data Sources
+    RustNDVI -->|Optical: Sentinel-2 / Landsat-8| STAC[STAC API / CDSE]
+    RustNDVI -->|Radar: sentinel-1-rtc| STAC
+    RustNDVI -->|WCS| Sentinel[Sentinel Hub APIs]
+    RustWeather -->|Forecasts| OpenMeteo[Open-Meteo API]
+    RustWeather -->|Climatology| NasaPower[NASA POWER API]
+    Django -->|Scrapes Metadata| RadioAPIs[Radio-Browser, SomaFM, TuneIn]
+  end
 ```
 
 See [NDVI Pipeline Evolution](docs/architecture/ndvi-pipeline-evolution.md) for the planned Redis Sentinel + Streams rollout and operational checkpoints.
