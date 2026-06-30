@@ -295,6 +295,10 @@ def run_opencode_agent_task(self: Any) -> dict[str, Any]:
 
     Logs stdout/stderr, records exit code, and sends an email summary
     when SMTP is configured.
+
+    Fallback: when Celery is down, ``scripts/agent-watchdog.sh``
+    (installed via crontab by ``scripts/install-agent-watchdog.sh``)
+    detects the missing worker ``pong`` and runs the agent directly.
     """
     logger.info("Starting opencode agent: %s", AGENT_SCRIPT)
     before = subprocess.run(
