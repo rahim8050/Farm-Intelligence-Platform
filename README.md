@@ -30,35 +30,26 @@ For project documentation, start with [docs/README.md](docs/README.md).
 ## Architecture
 
 ```mermaid
-flowchart TD
-  User[Nextcloud Workspace Portal] -->|HMAC + JWT/API-Key| Django[Django API Gateway]
-  
-  Django -->|DB Store & Anomaly Stats| DB[(MySQL/SQLite)]
-  Django -->|Cache / Streams| Redis[(Redis Sentinel / Streams)]
+flowchart LR
+  User[Nextcloud Workspace] -->|HMAC| Django[Django API Gateway]
+  Django -->|DB Store| DB[(MySQL/SQLite)]
+  Django -->|Cache / Streams| Redis[(Redis)]
   Django -->|Loads Calibration| CalYAML[s1_smi_calibration.yaml]
-  
-  Django -->|Enqueues Tasks| Celery[Celery Workers & Beat]
-  Celery -->|Health Check Pings| ExtStreams[Stream URL Pings]
-  
+  Django -->|Celery tasks| Celery[Celery worker/beat]
+
   subgraph Local Microservices
-    Django -->|Send BBox & Raw Arrays| RustNDVI[Rust ndvi-service]
-    Django -->|Proxy Forecast| RustWeather[Rust weather-service]
+    Django -->|NDVI Math| RustNDVI[Rust ndvi-service]
+    Django -->|Forecast| RustWeather[Rust weather-service]
   end
 
-  subgraph Observability Stack
-    Django & Celery & RustNDVI -->|Structured Logs| Loki[Loki Log Aggregator]
-    Django & Celery & RustNDVI -->|/metrics Scrape| Prometheus[Prometheus Metrics]
-    Grafana[Grafana Dashboard] -->|Queries| Prometheus
-    Grafana -->|Queries| Loki
+  subgraph Observability
+    Django & Celery & RustNDVI -->|Logs / Metrics| Obs[Loki / Prometheus / Grafana]
   end
 
   subgraph External Data Sources
-    RustNDVI -->|Optical: Sentinel-2 / Landsat-8| STAC[STAC API / CDSE]
-    RustNDVI -->|Radar: sentinel-1-rtc| STAC
-    RustNDVI -->|WCS| Sentinel[Sentinel Hub APIs]
-    RustWeather -->|Forecasts| OpenMeteo[Open-Meteo API]
-    RustWeather -->|Climatology| NasaPower[NASA POWER API]
-    Django -->|Scrapes Metadata| RadioAPIs[Radio-Browser, SomaFM, TuneIn]
+    RustNDVI -->|Optical & Radar| STAC[STAC API / Sentinel Hub]
+    RustWeather -->|Weather & Climate| WeatherAPIs[Open-Meteo / NASA]
+    Django -->|Radio Metadata| RadioAPIs[Radio-Browser / SomaFM]
   end
 ```
 
