@@ -385,6 +385,34 @@ class TestSpectralComputeEngine:
         result = engine._compute_for_item(item, _bbox(), date(2026, 6, 1))
         assert result is None
 
+    def test_compute_with_all_nan_returns_empty(self) -> None:
+        """compute() with all-NaN bands hits stats-is-None path."""
+        provider = FakeProvider(
+            band_array=np.full((10, 10), np.nan, dtype=np.float32)
+        )
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+        points = engine.compute(
+            bbox=_bbox(),
+            start=date(2026, 6, 1),
+            end=date(2026, 6, 1),
+            step_days=5,
+            max_cloud=30,
+        )
+        assert points == []
+
+    def test_get_latest_empty_band_returns_none(self) -> None:
+        """get_latest with empty band array via _load_band_arrays."""
+        provider = FakeProvider(band_array=np.array([]))
+        formula = FORMULA_REGISTRY["NDVI"]
+        engine = SpectralComputeEngine(provider=provider, formula=formula)
+        result = engine.get_latest(
+            bbox=_bbox(),
+            lookback_days=14,
+            max_cloud=30,
+        )
+        assert result is None
+
     def test_get_timeseries_uses_provider_window(self) -> None:
         """get_timeseries delegates to compute with correct args."""
         provider = FakeMultiBandProvider(
