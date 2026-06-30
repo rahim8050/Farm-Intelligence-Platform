@@ -30,7 +30,7 @@ For project documentation, start with [docs/README.md](docs/README.md).
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
   subgraph Clients
     Browser[Mobile / Web Browser]
     S2S[Service-to-Service]
@@ -62,7 +62,7 @@ flowchart LR
 
   subgraph Background
     Celery[Celery Worker + Beat]
-    Tasks[NDVI Refresh / Backfill /<br/>Raster Render / Activity Exec]
+    Tasks[NDVI Refresh / Backfill<br/>Raster Render / Activity Exec]
   end
 
   subgraph External
@@ -72,24 +72,17 @@ flowchart LR
     RSS[RSS Feeds]
   end
 
-  Browser -->|JWT| Auth
-  S2S -->|X-API-Key| Auth
-  NC -->|HMAC| Auth
-  Auth --> Throttle --> Gateway
+  Browser & S2S & NC --> Auth --> Throttle --> Gateway
 
-  Gateway --> Accounts & Farms
-  Gateway --> Activities -->|Schedule| Celery
-  Gateway --> NDVI -->|Queue| Streams
-  Gateway --> Weather & Radio & Podcasts
+  Gateway --> Accounts & Farms & Weather & Radio & Podcasts
+  Gateway --> Activities -->|schedule| Celery
+  Gateway --> NDVI -->|queue| Streams
 
-  Accounts & Farms & Activities & NDVI --> DB
-  Weather & Radio & Podcasts & Alerts --> DB
-  Accounts & Farms & Activities & NDVI --> Redis
-  Weather & Radio & Podcasts & Alerts --> Redis
+  Accounts & Farms & Activities & NDVI --> DB & Redis
+  Weather & Radio & Podcasts & Alerts --> DB & Redis
 
   Streams --> Celery
-  Celery --> Tasks
-  Tasks --> NDVI & Activities
+  Celery --> Tasks --> NDVI & Activities
   Activities --> Alerts
 
   NDVI --> SH
