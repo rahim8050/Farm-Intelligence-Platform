@@ -8,43 +8,33 @@ cd /home/rahim/projects/Farm-Intelligence-Platform
 # Stash any pre-existing dirt so agent starts clean
 git stash --include-untracked --quiet || true
 
-AGENT="spectral-metrics"
-PROMPT="Migrate Prometheus metrics from per-index metric families (ndvi_*, ndwi_*, ndmi_*) to the unified spectral_index_* pattern. The TODOs and definitions are in ndvi/metrics.py (lines 292-298). The old metric families need their consumers replaced with the unified versions that carry an index=\"NDVI\" label.
-
-What to do:
-
-1) Read ndvi/metrics.py to understand the old vs new metric signatures (labels differ — the new ones add an index label).
-
-2) For each old metric that has consumers, replace with the spectral_* equivalent:
-   - ndvi_upstream_requests_total → spectral_upstream_requests_total (add index=\"NDVI\")
-   - ndvi_upstream_latency_seconds → spectral_upstream_latency_seconds (add index=\"NDVI\")
-   - ndvi_jobs_total → spectral_jobs_total (add index=\"NDVI\")
-   - ndvi_task_runtime_seconds → spectral_task_runtime_seconds (add index=\"NDVI\") — only remaining at ndvi/tasks.py:758
-   - ndvi_farms_stale_total → spectral_farms_stale_total (add index=\"NDVI\") — ndvi/views.py:1024,1037
-   - ndmi_cache_hit_ratio → add a new spectral_cache_hit_total counter in metrics.py with index and level labels, then update ndvi/cache.py consumers
-
-3) For dead metrics defined but never incremented (ndvi_backfill_rows_total, ndmi_observations_ingested_total, ndmi_observations_null_total, ndmi_compute_duration_seconds, ndmi_job_duration_seconds), remove the definitions and update test assertions in ndvi/tests/test_ndmi_phase2.py that only check they exist.
-
-4) Update Grafana dashboards under monitoring/grafana/dashboards/ that query old metric names. Replace each PromQL query with the equivalent spectral_* query (the metric name changes, but labels carry the same cardinality info).
-
-5) Update ndvi/README.md metrics table to reference spectral_* names instead of old names.
-
-6) Run these verification commands:
-   - uv run ruff check ndvi/
-   - uv run mypy ndvi/
-   - uv run pytest ndvi/tests/test_no_regression.py -x -q
-   - uv run pytest ndvi/tests/test_ndmi_phase2.py -x -q
-   - uv run pytest ndvi/tests/test_ndwi.py -x -q
-   - uv run pytest ndvi/tests/test_ndmi_views.py -x -q
-
-IMPORTANT SAFETY RULES:
-- Do NOT remove the old metric definitions in metrics.py yet — only replace the consumers. Removing definitions would break Prometheus metric registration.
-- The old metric definitions stay but become unused — add a comment \"# DEPRECATED — use spectral_* instead\" above each.
-- Keep all existing label values (engine, status, etc.) — just add the new index label where needed.
-- Do NOT modify labelnames of the unified metrics (they already exist with the right labels).
-- For spectral_upstream_requests_total and spectral_upstream_latency_seconds which are defined but have zero consumers — this is the migration that activates them.
-- Read each file before editing it to see exact formatting/indentation."
+AGENT="bugfix-radio"
 TIMEOUT_SECONDS=$((60 * 60))
+PROMPT="Fix the 6 bugs listed in prompts/radio-app-bug-audit.md (High + Medium severity). Before fixing each bug, first check if it has already been resolved by reading the relevant lines of code — if the issue pattern no longer exists, skip it and move on. This ensures idempotent runs.
+
+Read prompts/radio-app-bug-audit.md first for full descriptions. The bugs to check and fix:
+
+1) Race condition in FavoriteListCreateView.post — radio/views.py around line 865. Check if Station.objects.get() is still called after serializer validation. If so, replace with filter().first() + NotFound fallback.
+
+2) Hardcoded email in run_opencode_agent_task — radio/tasks.py around line 352. Check if \"rahimranxx8050@gmail.com\" still appears. If so, replace with settings.AGENT_NOTIFICATION_EMAIL (add the setting to config/settings.py with a default of empty string, and conditionally skip email if unset).
+
+3) 200 vs 204 in FavoriteDeleteView.delete — radio/views.py around line 923. Check if success_response is used (returns 200) but the docstring says 204. If so, add status_code=status.HTTP_204_NO_CONTENT and remove the response body (204 has no body).
+
+4) Missing request_id in StationStreamView error — radio/views.py lines 390-401. Check if the hand-crafted Response dict is missing request_id. If so, replace with a call to error_response() from config.api.responses, or add request_id to the dict using the project's request_id helper.
+
+5) total_duration_seconds never populated — radio/services.py around line 775. Check if StationAnalytics rollup sets total_duration_seconds in the defaults dict. If not, add Sum('duration_seconds') to the annotation and include it in the defaults.
+
+6) Broken pagination in ListeningHistoryRecentView — radio/views.py lines 1045-1057. Check if the queryset is pre-sliced with [:limit]. If so, remove the slice and let paginated_response handle the limit via its page_size parameter.
+
+Verification: after all fixes, run:
+   uv run ruff check radio/
+   uv run python manage.py test radio.tests.test_favorites radio.tests.test_health radio.tests.test_services --verbosity=1
+
+IMPORTANT RULES:
+- Read each file before editing to see exact formatting and indent style.
+- Fix each bug at most once. If you already fixed Bug 1 but the run errors out before completing, check each bug site first before re-fixing.
+- Do NOT modify files outside radio/ (except config/settings.py for Bug 2).
+- Keep the same code style as the surrounding code."
 
 LOG_FILE="/tmp/opencode-${AGENT}-$(date +%Y%m%d-%H%M).log"
 REPORT_FILE="/tmp/opencode-report-${AGENT}-$(date +%Y%m%d-%H%M).txt"
@@ -124,7 +114,7 @@ timed_out = '$TIMED_OUT' == 'true'
 subject_prefix = '[TIMEOUT] ' if timed_out else ''
 try:
     sent = send_mail(
-        subject=subject_prefix + 'Sentinel-1 docs agent finished',
+        subject=subject_prefix + AGENT + ' agent finished',
         message=body,
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=['rahimranxx8050@gmail.com'],
