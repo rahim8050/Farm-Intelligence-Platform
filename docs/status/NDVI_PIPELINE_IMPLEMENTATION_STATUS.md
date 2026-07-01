@@ -204,7 +204,7 @@ Default remains `celery`; stream mode is opt-in.
   - `ndvi_stream_consumer_failures_total{consumer, failure_type}`
 - ✅ **Upstream request and latency metrics** for SentinelHub, STAC,
   and Raster engines (`ndvi/metrics.py:11-22`).
-- ✅ **NDVI task runtime histogram** `ndvi_task_runtime_seconds{task,
+- ✅ **NDVI task runtime histogram** `spectral_task_runtime_seconds{task,
   engine}` (`ndvi/metrics.py:30`).
 - ✅ **Grafana panels** for stream lag and consumer health added to
   `grafana/dashboards/farm-intelligence-platform-ndvi.json` (lines 290, 319, 348, 377).

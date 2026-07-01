@@ -1142,6 +1142,47 @@ def _build_ndmi_modis_engine() -> NDVIEngine:
     )
 
 
+def _build_s1_stac_client() -> StacClient:
+    from ndvi.stac_client import StacClient
+
+    return StacClient(
+        base_url=str(
+            getattr(
+                settings,
+                "NDVI_S1_STAC_API_URL",
+                "https://planetarycomputer.microsoft.com/api/stac/v1/",
+            )
+        ),
+        collection=str(
+            getattr(
+                settings,
+                "NDVI_S1_STAC_COLLECTION",
+                "sentinel-1-rtc",
+            )
+        ),
+    )
+
+
+def _build_s1_stac_engine(index_type: str = "RVI") -> NDVIEngine:
+    from ndvi.engines.compute import SpectralComputeEngine
+    from ndvi.providers.stac import StacDataProvider
+    from science.formulas.registry import FORMULA_REGISTRY
+
+    client = _build_s1_stac_client()
+    provider = StacDataProvider(
+        client=client,
+        sensor_key="sentinel1_rtc",
+    )
+    formula = FORMULA_REGISTRY.get(index_type)
+    if formula is None:
+        raise ValueError(f"Unknown S1 index type: {index_type}")
+    return SpectralComputeEngine(
+        provider=provider,
+        formula=formula,
+        engine_name="stac",
+    )
+
+
 ENGINE_FACTORIES: dict[str, Callable[[], NDVIEngine]] = {
     "gee": _build_gee_engine,
     "sentinelhub": _build_sentinelhub_engine,
@@ -1158,6 +1199,8 @@ ENGINE_FACTORIES: dict[str, Callable[[], NDVIEngine]] = {
     "ndmi_stac": _build_ndmi_stac_engine,
     "ndmi_landsat": _build_ndmi_landsat_engine,
     "ndmi_modis": _build_ndmi_modis_engine,
+    "rvi_stac": lambda: _build_s1_stac_engine("RVI"),
+    "s1_smi_stac": lambda: _build_s1_stac_engine("S1_SMI"),
 }
 
 
@@ -1165,7 +1208,16 @@ def get_engine(
     engine_name: str | None = None, *, index_type: str = "NDVI"
 ) -> NDVIEngine:
     engine = resolve_ndvi_engine_name(engine_name)
-    prefix = {"NDWI": "ndwi", "NDMI": "ndmi"}.get(index_type)
+    radar_prefixes = {
+        "RVI": "rvi",
+        "S1_SMI": "s1_smi",
+        "VH_VV_RATIO": "vh_vv_ratio",
+        "VV_DB": "vv_db",
+    }
+    prefix = radar_prefixes.get(index_type) or {
+        "NDWI": "ndwi",
+        "NDMI": "ndmi",
+    }.get(index_type)
     factory_key = f"{prefix}_{engine}" if prefix else engine
     factory = ENGINE_FACTORIES.get(factory_key)
     if not factory:

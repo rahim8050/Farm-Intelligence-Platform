@@ -5,7 +5,7 @@
 - `/metrics` is exposed by Django via `django_prometheus.urls`.
 - Django Prometheus middleware is enabled, providing request, response, and DB metrics.
 - Custom metrics:
-  - NDVI: `ndvi_jobs_total`, `ndvi_upstream_requests_total`, `ndvi_upstream_latency_seconds`, `ndvi_cache_hit_total`, `ndvi_farms_stale_total`
+  - NDVI: `spectral_jobs_total{index="NDVI"}`, `spectral_upstream_requests_total{index="NDVI"}`, `spectral_upstream_latency_seconds{index="NDVI"}`, `spectral_cache_hit_total{index="NDVI"}`, `spectral_farms_stale_total{index="NDVI"}`
   - NDVI stream consumer: `redis_stream_pending_entries`, `redis_stream_pending_age_max`, `ndvi_stream_consumer_heartbeat`, `ndvi_stream_consumer_failures_total`
   - Weather: `weather_provider_requests_total`, `weather_provider_errors_total`, `weather_provider_latency_seconds`, `weather_cache_hits_total`, `weather_cache_misses_total`
   - Celery: `celery_tasks_total`, `celery_tasks_in_progress`, `celery_task_runtime_seconds`
@@ -123,7 +123,7 @@ Alert rules live in `monitoring/prometheus/alerts.yml` and cover:
 - RPS by method: `sum by (method) (rate(django_http_requests_total_by_view_transport_method_total{job="django"}[5m]))`
 - p95 latency by view: `histogram_quantile(0.95, sum by (le, view) (rate(django_http_requests_latency_seconds_by_view_method_bucket{job="django"}[5m])))`
 - 4xx/5xx by status: `sum by (status) (rate(django_http_responses_total_by_status_total{job="django",status=~"4..|5.."}[5m]))`
-- NDVI jobs by status: `sum by (status) (increase(ndvi_jobs_total[15m]))`
+- NDVI jobs by status: `sum by (status) (increase(spectral_jobs_total{index="NDVI"}[15m]))`
 - Weather provider errors: `sum by (provider) (rate(weather_provider_errors_total[10m]))`
 
 **Nextcloud + Proxy**

@@ -114,7 +114,7 @@
 |------|-------|------|
 | `run_ndvi_job` unchanged (same params, same behavior) | 1 | `test_no_regression.py` |
 | `enqueue_daily_refresh` unchanged (still triggers NDVI refresh) | 1 | `test_no_regression.py` |
-| `ndvi_jobs_total` metric unchanged | 1 | `test_no_regression.py` |
+| `spectral_jobs_total{index="NDVI"}` metric unchanged | 1 | `test_no_regression.py` |
 | NDVI Celery Beat schedule unchanged | 1 | `test_no_regression.py` |
 | NDWI refresh does not create NDVI jobs | 1 | `test_no_regression.py` |
 | NDWI task does not modify NDVI observations | 1 | `test_no_regression.py` |
@@ -221,11 +221,11 @@ N/A for Phase 4. No DB changes.
 - Future: migrate NDVI alerts to `spectral_index_*{index="NDVI"}` at own pace
 
 ### Verification tests
-- [ ] `ndvi_jobs_total{index="NDVI"}` exists and increments
+- [ ] `spectral_jobs_total{index="NDVI"}` exists and increments
 - [ ] `spectral_jobs_total{index="NDWI"}` exists and increments
-- [ ] `spectral_jobs_total{index="NDVI"}` exists and increments (same value as `ndvi_jobs_total`)
+- [ ] `spectral_jobs_total{index="NDVI"}` exists and increments
 - [ ] Dashboard query `rate(spectral_jobs_total{index="NDWI"}[5m])` returns non-zero
-- [ ] Dashboard query `rate(ndvi_jobs_total[5m])` returns same as pre-deployment
+- [ ] Dashboard query `rate(spectral_jobs_total{index="NDVI"}[5m])` returns non-zero
 
 ---
 

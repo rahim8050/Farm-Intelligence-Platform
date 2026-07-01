@@ -313,6 +313,69 @@ class SpectralComputeEngine(NDVIEngine):
         bucket_date: date,
     ) -> NdviPoint | None:
         """Load bands, compute index, and return stats for a single item."""
+        if getattr(self.provider, "sensor_key", None) == "sentinel1_rtc":
+            import httpx
+            from django.conf import settings
+
+            from ndvi.stac_client import (
+                build_asset_candidates,
+                resolve_asset_href_candidates,
+            )
+
+            vv_href = resolve_asset_href_candidates(
+                item, build_asset_candidates("vv")
+            )
+            vh_href = resolve_asset_href_candidates(
+                item, build_asset_candidates("vh")
+            )
+            if not vv_href or not vh_href:
+                return None
+
+            rust_url = getattr(
+                settings, "NDVI_RUST_SERVICE_URL", "http://127.0.0.1:8081"
+            )
+            payload = {
+                "bbox": {
+                    "south": float(bbox.south),
+                    "west": float(bbox.west),
+                    "north": float(bbox.north),
+                    "east": float(bbox.east),
+                },
+                "vv_href": vv_href,
+                "vh_href": vh_href,
+                "orbit": getattr(item, "orbit_direction", "ascending"),
+                "index_type": self.index_type,
+            }
+            try:
+                with httpx.Client(timeout=60.0) as client:
+                    resp = client.post(
+                        f"{rust_url}/api/v1/preprocess", json=payload
+                    )
+                    resp.raise_for_status()
+            except httpx.RequestError as exc:
+                logger.error(
+                    "s1.rust_request_failed item_id=%s error=%s",
+                    getattr(item, "id", "-"),
+                    exc,
+                )
+                return None
+
+            result = resp.json()
+            if result.get("status") != 0 or not result.get("data"):
+                return None
+            data = result["data"]
+
+            return NdviPoint(
+                date=bucket_date,
+                mean=data.get("mean"),
+                min=data.get("min"),
+                max=data.get("max"),
+                sample_count=data.get("sample_count", 0),
+                cloud_fraction=0.0,
+                valid_pixel_fraction=data.get("valid_pixel_fraction", 0.0),
+                quality_flags=data.get("quality_flags", []),
+            )
+
         index_array = self._compute_index_array(item, bbox)
         if index_array is None:
             return None

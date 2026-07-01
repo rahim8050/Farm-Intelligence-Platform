@@ -115,7 +115,7 @@
 **Mitigation:**
 - NDWI tasks go to a separate `ndwi_*` Celery queue.
 - Worker pools can be scaled independently.
-- Monitor `ndwi_task_runtime_seconds` and `ndvi_task_runtime_seconds` during peak.
+- Monitor `ndwi_task_runtime_seconds` and `spectral_task_runtime_seconds{index="NDVI"}` during peak.
 - Stagger NDWI and NDVI refresh schedules (NDVI at 00:00 UTC, NDWI at 06:00 UTC).
 
 ### R8: Dashboards need update for `ndwi_*` metrics

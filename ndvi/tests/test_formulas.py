@@ -86,6 +86,22 @@ class TestComputeIndex:
         expected = (green - nir) / (green + nir)
         np.testing.assert_allclose(result, expected)
 
+    def test_compute_rvi(self) -> None:
+        vv = np.array([0.5, 0.6], dtype=np.float32)
+        vh = np.array([0.1, 0.2], dtype=np.float32)
+        result = compute_index(index_type="RVI", vv=vv, vh=vh)
+        expected = (4 * vh) / (vv + vh)
+        np.testing.assert_allclose(result, expected)
+
+    def test_compute_s1_smi(self) -> None:
+        vv = np.array([0.5, 0.6], dtype=np.float32)
+        vh = np.array([0.1, 0.2], dtype=np.float32)
+        result = compute_index(index_type="S1_SMI", vv=vv, vh=vh)
+        vv_db = 10.0 * np.log10(vv)
+        vh_db = 10.0 * np.log10(vh)
+        expected = 0.70 * vv_db - 0.30 * vh_db + 0.50
+        np.testing.assert_allclose(result, expected)
+
     def test_compute_ndmi_handles_zeros(self) -> None:
         nir = np.array([0.0, 0.0], dtype=np.float32)
         swir1 = np.array([0.0, 0.0], dtype=np.float32)
@@ -133,6 +149,8 @@ class TestBandRegistry:
         with pytest.raises(KeyError):
             get_band_asset_key("sentinel2_l2a", "unknown_band")
 
-    def test_all_sensors_have_nir(self) -> None:
+    def test_all_optical_sensors_have_nir(self) -> None:
         for sensor_key, bands in BAND_REGISTRY.items():
+            if "sentinel1" in sensor_key:
+                continue
             assert "nir" in bands, f"{sensor_key} missing nir"

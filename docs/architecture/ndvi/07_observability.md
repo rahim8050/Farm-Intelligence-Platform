@@ -11,11 +11,11 @@
 
 ## Metrics already present
 
-- `ndvi_jobs_total{status,type,engine}`
-- `ndvi_upstream_requests_total{engine,outcome}`
-- `ndvi_upstream_latency_seconds{engine}`
-- `ndvi_cache_hit_total{layer}`
-- `ndvi_farms_stale_total{engine}`
+- `spectral_jobs_total{index,status,type,engine}`
+- `spectral_upstream_requests_total{index,engine,outcome}`
+- `spectral_upstream_latency_seconds{index,engine}`
+- `spectral_cache_hit_total{index,level}`
+- `spectral_farms_stale_total{index,engine}`
 - `ndvi_circuit_breaker_state{engine}`
 - `ndvi_circuit_breaker_transitions_total{engine,from_state,to_state}`
 
@@ -27,7 +27,7 @@
 - `ndvi_source_usage_total{source,endpoint}`
 - `ndvi_source_disagreement_total{pair}`
 - `ndvi_v2_suppressed_observations_total{reason}`
-- `ndvi_backfill_rows_total{engine,status}`
+- `spectral_backfill_rows_total{index,engine,status}`
 - `ndvi_stream_dlq_total{consumer}`
 
 ## Logging fields
