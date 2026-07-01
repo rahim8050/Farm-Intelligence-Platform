@@ -31,64 +31,43 @@ For project documentation, start with [docs/README.md](docs/README.md).
 
 ```mermaid
 flowchart TD
-  subgraph Clients
-    Browser[Mobile / Web Browser]
-    S2S[Service-to-Service]
-    NC[Nextcloud]
+  %% Layer 1: Client Gateway
+  User[Nextcloud Workspace Portal] -->|HMAC & JWT/API-Key| Django[Django API Gateway]
+
+  %% Layer 2: Orchestration & State
+  subgraph Orchestration [Orchestration & State Management]
+    Django -->|Relational State| DB[(PostgreSQL)]
+    Django -->|Pub/Sub & Cache| Redis[(Redis Sentinel / Streams)]
+    Django -->|Enqueues Tasks| Celery[Celery Workers & Beat]
   end
 
-  subgraph Django API
-    Auth["JWT | API Key | HMAC"]
-    Throttle[Throttling]
-    Gateway[Django DRF]
-
-    subgraph Apps
-      Accounts[Accounts]
-      Farms[Farms]
-      Activities[Activities]
-      NDVI[NDVI]
-      Weather[Weather]
-      Radio[Radio]
-      Podcasts[Podcasts]
-      Alerts[Alerts]
-    end
+  %% Layer 3: Local Acceleration
+  subgraph Microservices [High-Performance Offloading]
+    Django -->|Proxy / Ingest API| RustNDVI[Rust ndvi-service]
+    Django -->|Proxy / Forecast API| RustWeather[Rust weather-service]
+    
+    %% Internal Rust Logic Note
+    RustNDVI -.->|Lee Speckle Filter\nDecibel Conversion\nCOG Windowed Reads| RustNDVI
   end
 
-  subgraph Data
-    DB[(MySQL / SQLite)]
-    Redis[(Redis Cache / Broker)]
-    Streams[(Redis Streams + DLQ)]
+  %% Layer 4: Observability
+  subgraph Observability [Telemetry & Trace Logs]
+    Django & Celery & RustNDVI -->|Structured Logs| Loki[Loki Log Aggregator]
+    Django & Celery & RustNDVI -->|Scrape Metrics| Prometheus[Prometheus Metrics]
+    Grafana[Grafana Dashboard] -->|Query| Prometheus
+    Grafana -->|Query| Loki
   end
 
-  subgraph Background
-    Celery[Celery Worker + Beat]
-    Tasks[NDVI Refresh / Backfill<br/>Raster Render / Activity Exec]
+  %% Layer 5: Data Providers
+  subgraph DataSources [External Data Sources]
+    RustNDVI -->|Sentinel-2 Optical / Sentinel-1 Radar| STAC[STAC API / CDSE]
+    RustNDVI -->|WCS| Sentinel[Sentinel Hub APIs]
+    RustWeather -->|Forecasts| OpenMeteo[Open-Meteo]
+    RustWeather -->|Climatology| NasaPower[NASA POWER]
+    Django -->|Metadata| RadioAPIs[Radio-Browser / SomaFM / TuneIn]
+    Django -->|Podcast RSS feeds| RSS[Podcast RSS Feeds]
+    Celery -->|Pings| Streams[Stream URL Pings]
   end
-
-  subgraph External
-    SH[Sentinel Hub / STAC API]
-    WM[Open-Meteo / NASA POWER]
-    RB[Radio-Browser / SomaFM]
-    RSS[RSS Feeds]
-  end
-
-  Browser & S2S & NC --> Auth --> Throttle --> Gateway
-
-  Gateway --> Accounts & Farms & Weather & Radio & Podcasts
-  Gateway --> Activities -->|schedule| Celery
-  Gateway --> NDVI -->|queue| Streams
-
-  Accounts & Farms & Activities & NDVI --> DB & Redis
-  Weather & Radio & Podcasts & Alerts --> DB & Redis
-
-  Streams --> Celery
-  Celery --> Tasks --> NDVI & Activities
-  Activities --> Alerts
-
-  NDVI --> SH
-  Weather --> WM
-  Radio --> RB
-  Podcasts --> RSS
 ```
 
 See [NDVI Pipeline Evolution](docs/architecture/ndvi-pipeline-evolution.md) for the planned Redis Sentinel + Streams rollout and operational checkpoints.
