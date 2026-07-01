@@ -1222,7 +1222,7 @@
       },
       "targets": [
         {
-          "expr": "rate(ndvi_upstream_requests_total{outcome=\"error\"}[5m]) or vector(0)",
+          "expr": "rate(spectral_upstream_requests_total{index=\"NDVI\", outcome=\"error\"}[5m]) or vector(0)",
           "legendFormat": "{{engine}}",
           "refId": "A"
         }

@@ -144,7 +144,7 @@ groups:
       - alert: NdviJobFailuresHigh
         expr: |
           sum by (engine, type) (
-            increase(ndvi_jobs_total{status="FAILED"}[15m])
+            increase(spectral_jobs_total{index="NDVI", status="FAILED"}[15m])
           ) > 5
         for: 15m
         labels:
@@ -155,7 +155,7 @@ groups:
 
       - alert: NdviNoSuccessfulJobsRecently
         expr: |
-          sum(increase(ndvi_jobs_total{status="SUCCESS"}[6h])) < 1
+          sum(increase(spectral_jobs_total{index="NDVI", status="SUCCESS"}[6h])) < 1
         for: 6h
         labels:
           severity: warning
