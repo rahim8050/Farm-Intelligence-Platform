@@ -45,13 +45,14 @@ def _s1_smi_fn(vv: np.ndarray, vh: np.ndarray) -> np.ndarray:
     vv_db = 10.0 * np.log10(np.maximum(vv_f, 1e-10))
     vh_db = 10.0 * np.log10(np.maximum(vh_f, 1e-10))
     calib = _load_s1_smi_calibration()
-    alpha = calib.get("alpha", 0.5)
-    beta = calib.get("beta", -0.3)
-    gamma = calib.get("gamma", -10.0)
+    default_calib = calib.get("s1_smi_coefficients", {}).get("default", {}).get("ascending", {})
+    alpha = default_calib.get("alpha", 0.70)
+    beta = default_calib.get("beta", -0.30)
+    gamma = default_calib.get("gamma", 0.50)
     return alpha * vv_db + beta * vh_db + gamma
 
 
-def _load_s1_smi_calibration() -> dict[str, float]:
+def _load_s1_smi_calibration() -> dict[str, Any]:
     path = (
         Path(__file__).resolve().parent.parent
         / "thresholds"

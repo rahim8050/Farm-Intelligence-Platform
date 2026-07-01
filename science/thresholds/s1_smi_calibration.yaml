@@ -6,6 +6,11 @@
 # starting values for tropical agricultural soils (clay-loam, moderate
 # vegetation cover). Tune per region/crop using ground-truth data.
 
-alpha: 0.5
-beta: -0.3
-gamma: -10.0
+s1_smi_coefficients:
+  maize:
+    sandy_clay_loam:
+      ascending:  { alpha: 0.72, beta: -0.28, gamma: 0.45 }
+      descending: { alpha: 0.68, beta: -0.32, gamma: 0.52 }
+  default:
+    ascending:  { alpha: 0.70, beta: -0.30, gamma: 0.50 }
+    descending: { alpha: 0.70, beta: -0.30, gamma: 0.50 }
