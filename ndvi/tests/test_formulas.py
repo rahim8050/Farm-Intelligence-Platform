@@ -10,6 +10,8 @@ Covers:
 
 from __future__ import annotations
 
+from unittest.mock import mock_open, patch
+
 import numpy as np
 import pytest
 
@@ -102,6 +104,34 @@ class TestComputeIndex:
         expected = 0.70 * vv_db - 0.30 * vh_db + 0.50
         np.testing.assert_allclose(result, expected)
 
+    def test_compute_rvi_handles_zeros(self) -> None:
+        vv = np.array([0.0, -0.1], dtype=np.float32)
+        vh = np.array([0.0, -0.2], dtype=np.float32)
+        result = compute_index(index_type="RVI", vv=vv, vh=vh)
+        expected = np.array([0.0, 0.0], dtype=np.float32)
+        np.testing.assert_allclose(result, expected)
+
+    def test_compute_s1_smi_handles_zeros(self) -> None:
+        vv = np.array([0.0, -1.0], dtype=np.float32)
+        vh = np.array([0.0, -2.0], dtype=np.float32)
+        result = compute_index(index_type="S1_SMI", vv=vv, vh=vh)
+        vv_db = 10.0 * np.log10(1e-10)
+        vh_db = 10.0 * np.log10(1e-10)
+        expected_val = 0.70 * vv_db - 0.30 * vh_db + 0.50
+        expected = np.array([expected_val, expected_val], dtype=np.float32)
+        np.testing.assert_allclose(result, expected)
+
+    @patch("science.formulas.registry._load_s1_smi_calibration")
+    def test_compute_s1_smi_fallback_defaults(self, mock_load) -> None:
+        mock_load.return_value = {}
+        vv = np.array([0.5, 0.6], dtype=np.float32)
+        vh = np.array([0.1, 0.2], dtype=np.float32)
+        result = compute_index(index_type="S1_SMI", vv=vv, vh=vh)
+        vv_db = 10.0 * np.log10(vv)
+        vh_db = 10.0 * np.log10(vh)
+        expected = 0.70 * vv_db - 0.30 * vh_db + 0.50
+        np.testing.assert_allclose(result, expected)
+
     def test_compute_ndmi_handles_zeros(self) -> None:
         nir = np.array([0.0, 0.0], dtype=np.float32)
         swir1 = np.array([0.0, 0.0], dtype=np.float32)
@@ -116,6 +146,21 @@ class TestComputeIndex:
     def test_compute_index_raises_for_unknown_type(self) -> None:
         with pytest.raises(KeyError):
             compute_index(index_type="FAKE", nir=np.array([0.5]))
+
+    @patch("science.formulas.registry.Path.exists")
+    def test_load_s1_smi_calibration_missing(self, mock_exists) -> None:
+        mock_exists.return_value = False
+        from science.formulas.registry import _load_s1_smi_calibration
+
+        assert _load_s1_smi_calibration() == {}
+
+    @patch(
+        "science.formulas.registry.open", new_callable=mock_open, read_data=""
+    )
+    def test_load_s1_smi_calibration_empty(self, mock_file) -> None:
+        from science.formulas.registry import _load_s1_smi_calibration
+
+        assert _load_s1_smi_calibration() == {}
 
 
 class TestBandRegistry:
