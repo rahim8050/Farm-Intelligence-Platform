@@ -360,11 +360,16 @@ Celery beat schedules are configured in `config/settings.py` under
 
 Prometheus metrics (from code: `ndvi/metrics.py`):
 
-- `ndvi_jobs_total{status,type,engine}`
-- `ndvi_upstream_requests_total{engine,outcome}`
-- `ndvi_upstream_latency_seconds{engine}`
-- `ndvi_cache_hit_total{layer}`
-- `ndvi_farms_stale_total{engine}`
+- `spectral_jobs_total{index,status,type,engine}`
+- `spectral_upstream_requests_total{index,engine,outcome}`
+- `spectral_upstream_latency_seconds{index,engine}`
+- `spectral_cache_hit_total{index,level}`
+- `spectral_farms_stale_total{index,engine}`
+- `spectral_task_runtime_seconds{index,task,engine}`
+- `spectral_backfill_rows_total{index,engine,status}`
+- `spectral_shadow_comparison_diffs_total{engine,index,field}`
+- `spectral_provider_circuit_state{provider}`
+- `spectral_job_dead_letter_total{queue}`
 - `ndvi_v2_null_output_total{engine,reason}`
 - `ndvi_v2_low_confidence_total{engine,reason}`
 - `ndvi_v2_fallback_total{engine,reason}`

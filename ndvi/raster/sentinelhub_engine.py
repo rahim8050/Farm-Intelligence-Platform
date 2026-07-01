@@ -22,8 +22,8 @@ from ndvi.engines.sentinelhub import (
     get_default_timeout_seconds,
 )
 from ndvi.metrics import (
-    ndvi_upstream_latency_seconds,
-    ndvi_upstream_requests_total,
+    spectral_upstream_latency_seconds,
+    spectral_upstream_requests_total,
 )
 from ndvi.retry_policy import UpstreamFailureError, classify_status_code
 
@@ -287,12 +287,14 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                     headers=headers,
                     timeout=self._timeout,
                 )
-                ndvi_upstream_latency_seconds.labels(
-                    engine="sentinelhub_raster"
+                spectral_upstream_latency_seconds.labels(
+                    index="NDVI", engine="sentinelhub_raster"
                 ).observe(time.monotonic() - started)
                 response.raise_for_status()
-                ndvi_upstream_requests_total.labels(
-                    engine="sentinelhub_raster", outcome="success"
+                spectral_upstream_requests_total.labels(
+                    index="NDVI",
+                    engine="sentinelhub_raster",
+                    outcome="success",
                 ).inc()
                 self._circuit_breaker.record_success()
                 return response
@@ -301,8 +303,8 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                 status_code = (
                     exc.response.status_code if exc.response else None
                 )
-                ndvi_upstream_requests_total.labels(
-                    engine="sentinelhub_raster", outcome="error"
+                spectral_upstream_requests_total.labels(
+                    index="NDVI", engine="sentinelhub_raster", outcome="error"
                 ).inc()
                 if status_code in (401, 403):
                     raise SentinelHubAuthError(status_code) from exc
@@ -320,8 +322,10 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                 raise SentinelHubRasterError(status_code, snippet) from exc
             except httpx.RequestError as exc:
                 last_error = exc
-                ndvi_upstream_requests_total.labels(
-                    engine="sentinelhub_raster", outcome="network"
+                spectral_upstream_requests_total.labels(
+                    index="NDVI",
+                    engine="sentinelhub_raster",
+                    outcome="network",
                 ).inc()
                 if attempt < max_attempts:
                     time.sleep(0.5 * attempt)

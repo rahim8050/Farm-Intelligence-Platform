@@ -38,7 +38,6 @@ from science.fusion.ndmi import run_ndmi_fusion
 from science.quality.ndmi import process_ndmi_v1_to_v2
 
 from .metrics import (
-    ndvi_task_runtime_seconds,
     spectral_backfill_rows_total,
     spectral_jobs_total,
     spectral_task_runtime_seconds,
@@ -755,7 +754,8 @@ def compute_farm_state_coverage(
         invalidate_farm_state_cache(farm_id=farm.id, engine=resolved_engine)
         return "ok"
     finally:
-        ndvi_task_runtime_seconds.labels(
+        spectral_task_runtime_seconds.labels(
+            index="NDVI",
             task="compute_farm_state_coverage",
             engine=resolved_engine,
         ).observe(max(time.monotonic() - started_at, 0.0))

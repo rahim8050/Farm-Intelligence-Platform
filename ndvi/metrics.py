@@ -2,18 +2,21 @@ from __future__ import annotations
 
 from prometheus_client import Counter, Gauge, Histogram
 
+# DEPRECATED — use spectral_* instead
 ndvi_jobs_total = Counter(
     "ndvi_jobs_total",
     "Total NDVI jobs processed",
     labelnames=["status", "type", "engine"],
 )
 
+# DEPRECATED — use spectral_* instead
 ndvi_upstream_requests_total = Counter(
     "ndvi_upstream_requests_total",
     "Count of upstream NDVI engine requests",
     labelnames=["engine", "outcome"],
 )
 
+# DEPRECATED — use spectral_* instead
 ndvi_upstream_latency_seconds = Histogram(
     "ndvi_upstream_latency_seconds",
     "Latency of upstream NDVI engine requests",
@@ -21,12 +24,14 @@ ndvi_upstream_latency_seconds = Histogram(
     buckets=(0.1, 0.3, 0.5, 1, 2, 5, 10, 20, 30),
 )
 
+# DEPRECATED — use spectral_* instead
 ndvi_cache_hit_total = Counter(
     "ndvi_cache_hit_total",
     "Cache hits by NDVI layer",
     labelnames=["layer"],
 )
 
+# DEPRECATED — use spectral_* instead
 ndvi_task_runtime_seconds = Histogram(
     "ndvi_task_runtime_seconds",
     "Runtime of NDVI Celery tasks",
@@ -58,6 +63,7 @@ ndvi_stream_consumer_failures_total = Counter(
     labelnames=["consumer", "failure_type"],
 )
 
+# DEPRECATED — use spectral_* instead
 ndvi_farms_stale_total = Gauge(
     "ndvi_farms_stale_total",
     "Gauge of farms missing fresh NDVI observations",
@@ -275,13 +281,6 @@ ndvi_v2_suppressed_observations_total = Counter(
     labelnames=["reason"],
 )
 
-# Backfill rows processed
-ndvi_backfill_rows_total = Counter(
-    "ndvi_backfill_rows_total",
-    "Count of backfill rows processed by engine and status",
-    labelnames=["engine", "status"],
-)
-
 # DLQ messages
 ndvi_stream_dlq_total = Counter(
     "ndvi_stream_dlq_total",
@@ -341,40 +340,17 @@ spectral_shadow_comparison_diffs_total = Counter(
     labelnames=["engine", "index", "field"],
 )
 
-# ── NDMI-specific metrics ──────────────────────────────────────────────
-# Following the pattern of unified spectral_* metrics with index="NDMI"
-# label, but adding NDMI-specific counters for cardinal operations.
-
-ndmi_observations_ingested_total = Counter(
-    "ndmi_observations_ingested_total",
-    "Total NDMI V1 observations ingested",
-    labelnames=["engine", "status"],
-)
-
-ndmi_observations_null_total = Counter(
-    "ndmi_observations_null_total",
-    "Total NDMI observations rejected as null",
-    labelnames=["engine", "null_reason"],
-)
-
-ndmi_compute_duration_seconds = Histogram(
-    "ndmi_compute_duration_seconds",
-    "Duration of NDMI compute operations",
-    labelnames=["step"],
-    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
-)
-
+# DEPRECATED — use spectral_* instead
 ndmi_cache_hit_ratio = Counter(
     "ndmi_cache_hit_ratio",
     "NDMI cache hits by cache level",
     labelnames=["level"],
 )
 
-ndmi_job_duration_seconds = Histogram(
-    "ndmi_job_duration_seconds",
-    "Duration of NDMI Celery jobs",
-    labelnames=["queue", "status"],
-    buckets=(0.1, 0.3, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300),
+spectral_cache_hit_total = Counter(
+    "spectral_cache_hit_total",
+    "Cache hits per spectral index and level",
+    labelnames=["index", "level"],
 )
 
 # ── Provider-level circuit breaker (Phase 3.2) ────────────────────────────

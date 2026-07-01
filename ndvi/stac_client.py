@@ -28,8 +28,8 @@ from ndvi.circuit_breaker import (
 )
 from ndvi.engines.base import BBox
 from ndvi.metrics import (
-    ndvi_upstream_latency_seconds,
-    ndvi_upstream_requests_total,
+    spectral_upstream_latency_seconds,
+    spectral_upstream_requests_total,
 )
 from ndvi.retry_policy import (
     RetryCategory,
@@ -441,23 +441,27 @@ def _local_asset_context(
                     started = time.monotonic()
                     try:
                         resp = client.get(href)
-                        ndvi_upstream_latency_seconds.labels(
-                            engine="stac_raster"
+                        spectral_upstream_latency_seconds.labels(
+                            index="NDVI", engine="stac_raster"
                         ).observe(time.monotonic() - started)
                         resp.raise_for_status()
-                        ndvi_upstream_requests_total.labels(
-                            engine="stac_raster", outcome="success"
+                        spectral_upstream_requests_total.labels(
+                            index="NDVI",
+                            engine="stac_raster",
+                            outcome="success",
                         ).inc()
                         with open(local_path, "wb") as f:
                             f.write(resp.content)
                     except httpx.HTTPStatusError:
-                        ndvi_upstream_requests_total.labels(
-                            engine="stac_raster", outcome="error"
+                        spectral_upstream_requests_total.labels(
+                            index="NDVI", engine="stac_raster", outcome="error"
                         ).inc()
                         raise
                     except httpx.RequestError:
-                        ndvi_upstream_requests_total.labels(
-                            engine="stac_raster", outcome="network"
+                        spectral_upstream_requests_total.labels(
+                            index="NDVI",
+                            engine="stac_raster",
+                            outcome="network",
                         ).inc()
                         raise
                     local_paths.append(local_path)
@@ -1151,19 +1155,19 @@ class StacClient:
         started = time.monotonic()
         try:
             response = self._http.request(method, url, json=json)
-            ndvi_upstream_latency_seconds.labels(engine="stac").observe(
-                time.monotonic() - started
-            )
+            spectral_upstream_latency_seconds.labels(
+                index="NDVI", engine="stac"
+            ).observe(time.monotonic() - started)
             response.raise_for_status()
-            ndvi_upstream_requests_total.labels(
-                engine="stac", outcome="success"
+            spectral_upstream_requests_total.labels(
+                index="NDVI", engine="stac", outcome="success"
             ).inc()
             return response
         except httpx.HTTPStatusError as exc:
             self._circuit_breaker.record_failure()
             status_code = exc.response.status_code if exc.response else None
-            ndvi_upstream_requests_total.labels(
-                engine="stac", outcome="error"
+            spectral_upstream_requests_total.labels(
+                index="NDVI", engine="stac", outcome="error"
             ).inc()
             snippet = self._response_snippet(exc.response)
             message = f"STAC request failed status={status_code}"
@@ -1175,8 +1179,8 @@ class StacClient:
             ) from exc
         except httpx.RequestError as exc:
             self._circuit_breaker.record_failure()
-            ndvi_upstream_requests_total.labels(
-                engine="stac", outcome="network"
+            spectral_upstream_requests_total.labels(
+                index="NDVI", engine="stac", outcome="network"
             ).inc()
             raise StacUpstreamError(
                 f"STAC request failed: {exc}",

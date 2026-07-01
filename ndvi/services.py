@@ -30,10 +30,8 @@ from .engines.base import BBox, NDVIEngine, NdviPoint
 from .engines.sentinelhub import SentinelHubEngine
 from .metrics import (
     ndvi_append_only_writes_total,
-    ndvi_cache_hit_total,
     ndvi_constraint_collision_total,
     ndvi_idempotent_hit_total,
-    ndvi_jobs_total,
     ndvi_lock_contention_total,
     ndvi_long_lock_wait_total,
     ndvi_recompute_failure_total,
@@ -42,6 +40,8 @@ from .metrics import (
     ndvi_starvation_events_total,
     ndvi_supersession_total,
     ndvi_transaction_duration_seconds,
+    spectral_cache_hit_total,
+    spectral_jobs_total,
 )
 from .models import NdviJob, NdviObservation
 from .raster.base import ColormapNormalization
@@ -1406,7 +1406,7 @@ def get_cached_timeseries_response(
     )
     cached = cache.get(key)
     if cached:
-        ndvi_cache_hit_total.labels(layer="timeseries").inc()
+        spectral_cache_hit_total.labels(index="NDVI", level="timeseries").inc()
     return cached
 
 
@@ -1438,7 +1438,7 @@ def get_cached_latest_response(
     )
     cached = cache.get(key)
     if cached:
-        ndvi_cache_hit_total.labels(layer="latest").inc()
+        spectral_cache_hit_total.labels(index="NDVI", level="latest").inc()
     return cached
 
 
@@ -1472,7 +1472,7 @@ def get_cached_ndwi_timeseries_response(
     )
     cached = cache.get(key)
     if cached:
-        ndvi_cache_hit_total.labels(layer="ndwi_timeseries").inc()
+        spectral_cache_hit_total.labels(index="NDWI", level="timeseries").inc()
     return cached
 
 
@@ -1504,7 +1504,7 @@ def get_cached_ndwi_latest_response(
     )
     cached = cache.get(key)
     if cached:
-        ndvi_cache_hit_total.labels(layer="ndwi_latest").inc()
+        spectral_cache_hit_total.labels(index="NDWI", level="latest").inc()
     return cached
 
 
@@ -1538,7 +1538,7 @@ def get_cached_ndmi_timeseries_response(
     )
     cached = cache.get(key)
     if cached:
-        ndvi_cache_hit_total.labels(layer="ndmi_timeseries").inc()
+        spectral_cache_hit_total.labels(index="NDMI", level="timeseries").inc()
     return cached
 
 
@@ -1570,7 +1570,7 @@ def get_cached_ndmi_latest_response(
     )
     cached = cache.get(key)
     if cached:
-        ndvi_cache_hit_total.labels(layer="ndmi_latest").inc()
+        spectral_cache_hit_total.labels(index="NDMI", level="latest").inc()
     return cached
 
 
@@ -2060,8 +2060,11 @@ def enqueue_job(
         lookback_days=params.get("lookback_days"),
         index_type=index_type,
     )
-    ndvi_jobs_total.labels(
-        status=job.status, type=job_type, engine=resolved_engine
+    spectral_jobs_total.labels(
+        index=index_type,
+        status=job.status,
+        type=job_type,
+        engine=resolved_engine,
     ).inc()
     logger.info(
         "ndvi.job.enqueued job_id=%s type=%s metrics_engine=%s "

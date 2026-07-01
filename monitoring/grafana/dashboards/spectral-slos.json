@@ -104,16 +104,16 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "targets": [
         {
-          "expr": "rate(ndmi_cache_hit_ratio{level=~\"l2_fresh\"}[5m]) / (rate(ndmi_cache_hit_ratio{level=~\"l2_fresh|ndmi_cache_hit_ratio{level=\\\"l2_miss\\\"}\"}[5m]) + 1)",
+          "expr": "rate(spectral_cache_hit_total{index=\"NDMI\", level=~\"l2_fresh\"}[5m]) / (rate(spectral_cache_hit_total{index=\"NDMI\", level=~\"l2_fresh|l2_miss\"}[5m]) + 1)",
           "legendFormat": "L2 hit ratio",
           "hide": true
         },
         {
-          "expr": "rate(ndmi_cache_hit_ratio{level=\"l2_fresh\"}[5m])",
+          "expr": "rate(spectral_cache_hit_total{index=\"NDMI\", level=\"l2_fresh\"}[5m])",
           "legendFormat": "L2 fresh hits"
         },
         {
-          "expr": "rate(ndmi_cache_hit_ratio{level=\"l2_stale\"}[5m])",
+          "expr": "rate(spectral_cache_hit_total{index=\"NDMI\", level=\"l2_stale\"}[5m])",
           "legendFormat": "L2 stale hits"
         }
       ],
@@ -173,11 +173,11 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, rate(ndmi_compute_duration_seconds_bucket{step=\"raster_png\"}[5m]))",
+          "expr": "histogram_quantile(0.95, rate(spectral_task_runtime_seconds_bucket{index=\"NDMI\", task=\"render_raster\"}[5m]))",
           "legendFormat": "p95 - NDMI"
         },
         {
-          "expr": "histogram_quantile(0.95, rate(ndvi_task_runtime_seconds_bucket{task=\"render_raster\"}[5m]))",
+          "expr": "histogram_quantile(0.95, rate(spectral_task_runtime_seconds_bucket{index=\"NDVI\", task=\"render_raster\"}[5m]))",
           "legendFormat": "p95 - NDVI"
         }
       ],
@@ -246,12 +246,12 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, rate(ndmi_compute_duration_seconds_bucket[5m]))",
-          "legendFormat": "p95 - {{step}}"
+          "expr": "histogram_quantile(0.95, rate(spectral_task_runtime_seconds_bucket{index=\"NDMI\"}[5m]))",
+          "legendFormat": "p95 - {{task}}"
         },
         {
-          "expr": "histogram_quantile(0.50, rate(ndmi_compute_duration_seconds_bucket[5m]))",
-          "legendFormat": "p50 - {{step}}"
+          "expr": "histogram_quantile(0.50, rate(spectral_task_runtime_seconds_bucket{index=\"NDMI\"}[5m]))",
+          "legendFormat": "p50 - {{task}}"
         }
       ],
       "fieldConfig": {
@@ -268,11 +268,11 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
       "targets": [
         {
-          "expr": "rate(ndmi_cache_hit_ratio{level=\"l3_hit\"}[5m])",
+          "expr": "rate(spectral_cache_hit_total{index=\"NDMI\", level=\"l3_hit\"}[5m])",
           "legendFormat": "L3 hits"
         },
         {
-          "expr": "rate(ndmi_cache_hit_ratio{level=\"l3_miss\"}[5m])",
+          "expr": "rate(spectral_cache_hit_total{index=\"NDMI\", level=\"l3_miss\"}[5m])",
           "legendFormat": "L3 misses"
         }
       ],

@@ -21,8 +21,8 @@ from django.conf import settings
 
 from ndvi.engines.base import BBox, NDVIEngine, NdviPoint
 from ndvi.metrics import (
-    ndvi_upstream_latency_seconds,
-    ndvi_upstream_requests_total,
+    spectral_upstream_latency_seconds,
+    spectral_upstream_requests_total,
 )
 from ndvi.stac_client import (
     DEFAULT_STATS_SAMPLE_SIZE,
@@ -273,12 +273,12 @@ def _download_asset(href: str, tmpdir: str, timeout_seconds: float) -> str:
     client = httpx.Client(timeout=timeout_seconds, follow_redirects=True)
     started = time.monotonic()
     resp = client.get(href)
-    ndvi_upstream_latency_seconds.labels(engine="modis_raster").observe(
-        time.monotonic() - started
-    )
+    spectral_upstream_latency_seconds.labels(
+        index="NDVI", engine="modis_raster"
+    ).observe(time.monotonic() - started)
     resp.raise_for_status()
-    ndvi_upstream_requests_total.labels(
-        engine="modis_raster", outcome="success"
+    spectral_upstream_requests_total.labels(
+        index="NDVI", engine="modis_raster", outcome="success"
     ).inc()
     with open(local_path, "wb") as f:
         f.write(resp.content)

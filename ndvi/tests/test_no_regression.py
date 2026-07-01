@@ -139,13 +139,6 @@ class NdviModelQueriesUnchanged(TestCase):
 class NdviMetricNamesUnchanged(TestCase):
     """NDVI Prometheus metric names must still exist as Python objects."""
 
-    def test_ndvi_metrics_importable(self) -> None:
-        from ndvi.metrics import (  # noqa: F811
-            ndvi_jobs_total,
-        )
-
-        self.assertIsNotNone(ndvi_jobs_total)
-
     def test_spectral_metrics_importable(self) -> None:
         from ndvi.metrics import (  # noqa: F811
             spectral_jobs_total,

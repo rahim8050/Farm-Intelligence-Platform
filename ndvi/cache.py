@@ -40,7 +40,7 @@ from typing import Any
 from django.core.cache import caches
 
 from ndvi.logging import StructuredLogger
-from ndvi.metrics import ndmi_cache_hit_ratio
+from ndvi.metrics import spectral_cache_hit_total
 
 logger = logging.getLogger(__name__)
 slog = StructuredLogger(__name__)
@@ -136,7 +136,9 @@ class CacheManager:
             value, cached_at = raw
             age = time.monotonic() - cached_at
             if age < DEFAULT_L2_TTL_SECONDS:
-                ndmi_cache_hit_ratio.labels(level="l2_fresh").inc()
+                spectral_cache_hit_total.labels(
+                    index="NDVI", level="l2_fresh"
+                ).inc()
                 slog.debug(
                     "cache.hit",
                     "L2 cache fresh hit",
@@ -146,7 +148,9 @@ class CacheManager:
                 )
                 return value, False
             if age < STALE_TTL_SECONDS:
-                ndmi_cache_hit_ratio.labels(level="l2_stale").inc()
+                spectral_cache_hit_total.labels(
+                    index="NDVI", level="l2_stale"
+                ).inc()
                 slog.debug(
                     "cache.stale_hit",
                     "L2 cache stale hit",
@@ -165,7 +169,7 @@ class CacheManager:
             return None, False
 
         # Legacy format (no timestamp) — treat as fresh
-        ndmi_cache_hit_ratio.labels(level="l2_fresh").inc()
+        spectral_cache_hit_total.labels(index="NDVI", level="l2_fresh").inc()
         slog.debug(
             "cache.hit",
             "L2 cache hit (legacy format)",
@@ -205,10 +209,12 @@ class CacheManager:
             client = _get_s3_client()
             bucket = _get_s3_bucket()
             response = client.get_object(Bucket=bucket, Key=key)
-            ndmi_cache_hit_ratio.labels(level="l3_hit").inc()
+            spectral_cache_hit_total.labels(index="NDVI", level="l3_hit").inc()
             return response["Body"].read()
         except client.exceptions.NoSuchKey:
-            ndmi_cache_hit_ratio.labels(level="l3_miss").inc()
+            spectral_cache_hit_total.labels(
+                index="NDVI", level="l3_miss"
+            ).inc()
             return None
         except Exception:
             logger.exception("L3 get failed key=%s", key)

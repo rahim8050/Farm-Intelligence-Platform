@@ -19,9 +19,9 @@ from ndvi.circuit_breaker import (
     register_circuit_breaker,
 )
 from ndvi.metrics import (
-    ndvi_cache_hit_total,
-    ndvi_upstream_latency_seconds,
-    ndvi_upstream_requests_total,
+    spectral_cache_hit_total,
+    spectral_upstream_latency_seconds,
+    spectral_upstream_requests_total,
 )
 from ndvi.retry_policy import (
     RetryCategory,
@@ -319,12 +319,12 @@ class SentinelHubEngine(NDVIEngine):
                     headers=headers,
                     timeout=self.timeout_seconds,
                 )
-                ndvi_upstream_latency_seconds.labels(
-                    engine=self.engine_name
+                spectral_upstream_latency_seconds.labels(
+                    index="NDVI", engine=self.engine_name
                 ).observe(time.monotonic() - started)
                 response.raise_for_status()
-                ndvi_upstream_requests_total.labels(
-                    engine=self.engine_name, outcome="success"
+                spectral_upstream_requests_total.labels(
+                    index="NDVI", engine=self.engine_name, outcome="success"
                 ).inc()
                 self._circuit_breaker.record_success()
                 return response
@@ -333,8 +333,8 @@ class SentinelHubEngine(NDVIEngine):
                 status_code = (
                     exc.response.status_code if exc.response else None
                 )
-                ndvi_upstream_requests_total.labels(
-                    engine=self.engine_name, outcome="error"
+                spectral_upstream_requests_total.labels(
+                    index="NDVI", engine=self.engine_name, outcome="error"
                 ).inc()
                 if status_code in (401, 403):
                     raise SentinelHubAuthError(status_code) from exc
@@ -349,8 +349,8 @@ class SentinelHubEngine(NDVIEngine):
                 raise
             except httpx.RequestError as exc:
                 last_error = exc
-                ndvi_upstream_requests_total.labels(
-                    engine=self.engine_name, outcome="network"
+                spectral_upstream_requests_total.labels(
+                    index="NDVI", engine=self.engine_name, outcome="network"
                 ).inc()
                 if attempt < max_attempts:
                     time.sleep(0.5 * attempt)
@@ -370,7 +370,7 @@ class SentinelHubEngine(NDVIEngine):
         key = f"ndvi:sentinelhub:token:{self.client_id}"
         cached = self.cache.get(key)
         if cached:
-            ndvi_cache_hit_total.labels(layer="sentinel_token").inc()
+            spectral_cache_hit_total.labels(index="NDVI", level="token").inc()
             return str(cached)
 
         data = {
