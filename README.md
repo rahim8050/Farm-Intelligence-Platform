@@ -32,13 +32,20 @@ For project documentation, start with [docs/README.md](docs/README.md).
 ```mermaid
 flowchart TD
   %% Layer 1: Client Gateway
-  User[Nextcloud Workspace Portal] -->|HMAC & JWT/API-Key| Django[Django API Gateway]
+  User[Nextcloud Workspace Portal / Browser] -->|HMAC & JWT/API-Key| Django[Django ASGI Gateway]
+  User <-->|WebSockets| Django
 
   %% Layer 2: Orchestration & State
   subgraph Orchestration [Orchestration & State Management]
-    Django -->|Relational State| DB[(PostgreSQL)]
-    Django -->|Pub/Sub & Cache| Redis[(Redis Sentinel / Streams)]
-    Django -->|Enqueues Tasks| Celery[Celery Workers & Beat]
+    Django -->|Relational State| DB[(MySQL / SQLite)]
+    Django -->|Pub/Sub, Channels & Cache| Redis[(Redis Sentinel / Streams)]
+    Django -->|Enqueues Tasks| Celery[Celery Workers]
+    
+    %% Celery Beat reads schedules from DB (django_celery_beat)
+    CeleryBeat[Celery Beat] -->|Reads Schedules| DB
+    CeleryBeat -->|Triggers| Celery
+    
+    Django -->|Audio Alerts| TTS[TTS Engine]
   end
 
   %% Layer 3: Local Acceleration
