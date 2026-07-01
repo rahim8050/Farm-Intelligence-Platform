@@ -5,6 +5,9 @@ export PATH="/home/rahim/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
 
 cd /home/rahim/projects/Farm-Intelligence-Platform
 
+# Stash any pre-existing dirt so agent starts clean
+git stash --include-untracked --quiet || true
+
 AGENT="spectral-metrics"
 PROMPT="Migrate Prometheus metrics from per-index metric families (ndvi_*, ndwi_*, ndmi_*) to the unified spectral_index_* pattern. The TODOs and definitions are in ndvi/metrics.py (lines 292-298). The old metric families need their consumers replaced with the unified versions that carry an index=\"NDVI\" label.
 
