@@ -29,6 +29,11 @@ BAND_REGISTRY: Final[dict[str, dict[str, str]]] = {
         "swir1": "sur_refl_b06",
         "qa": "state_1km",
     },
+    "sentinel1_rtc": {
+        "vv": "VV",
+        "vh": "VH",
+        "angle": "local_incidence_angle",
+    },
 }
 
 

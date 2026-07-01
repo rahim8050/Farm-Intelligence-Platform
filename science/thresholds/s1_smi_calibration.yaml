@@ -1,0 +1,11 @@
+# Sentinel-1 Soil Moisture Index (S1-SMI) Calibration Coefficients
+#
+# Formula: SMI = alpha * VV_dB + beta * VH_dB + gamma
+#
+# These are site-specific empirical coefficients. Defaults below are
+# starting values for tropical agricultural soils (clay-loam, moderate
+# vegetation cover). Tune per region/crop using ground-truth data.
+
+alpha: 0.5
+beta: -0.3
+gamma: -10.0

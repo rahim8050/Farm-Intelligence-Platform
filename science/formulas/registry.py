@@ -6,9 +6,11 @@ sensor-specific band mappings, and metadata.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+import yaml
 
 IndexDefinition = dict[str, Any]
 
@@ -29,6 +31,36 @@ def _ndmi_fn(nir: np.ndarray, swir1: np.ndarray) -> np.ndarray:
     return (nir.astype(np.float32) - swir1.astype(np.float32)) / (
         nir.astype(np.float32) + swir1.astype(np.float32)
     )
+
+
+def _rvi_fn(vv: np.ndarray, vh: np.ndarray) -> np.ndarray:
+    denom = vv.astype(np.float32) + vh.astype(np.float32)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(denom > 0, (4 * vh.astype(np.float32)) / denom, 0.0)
+
+
+def _s1_smi_fn(vv: np.ndarray, vh: np.ndarray) -> np.ndarray:
+    vv_f = vv.astype(np.float32)
+    vh_f = vh.astype(np.float32)
+    vv_db = 10.0 * np.log10(np.maximum(vv_f, 1e-10))
+    vh_db = 10.0 * np.log10(np.maximum(vh_f, 1e-10))
+    calib = _load_s1_smi_calibration()
+    alpha = calib.get("alpha", 0.5)
+    beta = calib.get("beta", -0.3)
+    gamma = calib.get("gamma", -10.0)
+    return alpha * vv_db + beta * vh_db + gamma
+
+
+def _load_s1_smi_calibration() -> dict[str, float]:
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "thresholds"
+        / "s1_smi_calibration.yaml"
+    )
+    if path.exists():
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    return {}
 
 
 FORMULA_REGISTRY: dict[str, IndexDefinition] = {
@@ -79,6 +111,38 @@ FORMULA_REGISTRY: dict[str, IndexDefinition] = {
         },
         "scl_mask": [0, 1, 2, 3, 8, 9, 10, 11],
         "description": "Normalized Difference Moisture Index",
+    },
+    "RVI": {
+        "name": "RVI",
+        "formula": _rvi_fn,
+        "bands": ["vv", "vh"],
+        "range": (0.0, 1.0),
+        "default_colormap": "YlGn",
+        "default_min": 0.0,
+        "default_max": 1.0,
+        "sensor_band_map": {
+            "sentinel1_rtc": {"vv": "VV", "vh": "VH"},
+        },
+        "description": (
+            "Radar Vegetation Index — measures canopy structural"
+            " complexity using C-band SAR polarimetry"
+        ),
+    },
+    "S1_SMI": {
+        "name": "S1_SMI",
+        "formula": _s1_smi_fn,
+        "bands": ["vv", "vh"],
+        "range": (-50.0, 0.0),
+        "default_colormap": "Blues",
+        "default_min": -30.0,
+        "default_max": -5.0,
+        "sensor_band_map": {
+            "sentinel1_rtc": {"vv": "VV", "vh": "VH"},
+        },
+        "description": (
+            "Sentinel-1 Soil Moisture Index — empirical retrieval of"
+            " near-surface soil moisture from C-band SAR backscatter"
+        ),
     },
 }
 

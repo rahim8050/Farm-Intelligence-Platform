@@ -117,7 +117,13 @@ class NdviObservation(models.Model):
 
     index_type = models.CharField(
         max_length=16,
-        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI"), ("NDMI", "NDMI")],
+        choices=[
+            ("NDVI", "NDVI"),
+            ("NDWI", "NDWI"),
+            ("NDMI", "NDMI"),
+            ("RVI", "RVI"),
+            ("S1_SMI", "S1_SMI"),
+        ],
         default="NDVI",
         db_index=True,
         help_text="Spectral index discriminator (NDVI, NDWI, NDMI, etc.)",
@@ -291,7 +297,13 @@ class NdviJob(models.Model):
     )
     index_type = models.CharField(
         max_length=16,
-        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI"), ("NDMI", "NDMI")],
+        choices=[
+            ("NDVI", "NDVI"),
+            ("NDWI", "NDWI"),
+            ("NDMI", "NDMI"),
+            ("RVI", "RVI"),
+            ("S1_SMI", "S1_SMI"),
+        ],
         default="NDVI",
         help_text="Spectral index discriminator (NDVI, NDWI, NDMI, etc.)",
     )
@@ -369,7 +381,13 @@ class NdviRasterArtifact(models.Model):
     owner_id = models.IntegerField(db_index=True)
     index_type = models.CharField(
         max_length=16,
-        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI"), ("NDMI", "NDMI")],
+        choices=[
+            ("NDVI", "NDVI"),
+            ("NDWI", "NDWI"),
+            ("NDMI", "NDMI"),
+            ("RVI", "RVI"),
+            ("S1_SMI", "S1_SMI"),
+        ],
         default="NDVI",
         help_text="Spectral index discriminator (NDVI, NDWI, NDMI, etc.)",
     )
@@ -428,7 +446,13 @@ class NdviDerivedObservation(models.Model):
     )
     index_type = models.CharField(
         max_length=16,
-        choices=[("NDVI", "NDVI"), ("NDWI", "NDWI"), ("NDMI", "NDMI")],
+        choices=[
+            ("NDVI", "NDVI"),
+            ("NDWI", "NDWI"),
+            ("NDMI", "NDMI"),
+            ("RVI", "RVI"),
+            ("S1_SMI", "S1_SMI"),
+        ],
         default="NDVI",
         help_text="Spectral index discriminator (NDVI, NDWI, NDMI, etc.)",
     )
