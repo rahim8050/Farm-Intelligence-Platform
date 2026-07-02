@@ -43,3 +43,6 @@ prompts/
 # AI agent config (local workspace only)
 .opencode/
 .qwen/
+
+# arXiv paper drafts
+arxiv/
